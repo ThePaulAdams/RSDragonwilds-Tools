@@ -541,74 +541,88 @@ local MapIconCompClass = nil
 -- Texture Cache
 local CachedResourceTextures = {}
 local function GetResourceTexture(path)
-    if not path then return nil end
-    if CachedResourceTextures[path] then return CachedResourceTextures[path] end
+    if not path or path == "" then return nil end
+    if CachedResourceTextures[path] and CachedResourceTextures[path]:IsValid() then
+        return CachedResourceTextures[path]
+    end
     local tex = StaticFindObject(path)
     if not tex or not tex:IsValid() then
-        if StaticLoadObject then
-            pcall(function() tex = StaticLoadObject(nil, nil, path) end)
+        local texClass = StaticFindObject("/Script/Engine.Texture2D")
+        if StaticLoadObject and texClass and texClass:IsValid() then
+            pcall(function() tex = StaticLoadObject(texClass, nil, path) end)
         end
     end
     if tex and tex:IsValid() then
         CachedResourceTextures[path] = tex
+        return tex
     end
-    return tex
+    return nil
+end
+
+local DefaultUMGMat = nil
+local function GetDefaultUMGMaterial()
+    if DefaultUMGMat and DefaultUMGMat:IsValid() then
+        return DefaultUMGMat
+    end
+    DefaultUMGMat = StaticFindObject("/MinimapPlugin/Materials/Icons/M_UMG_MapIcon.M_UMG_MapIcon")
+    if not DefaultUMGMat or not DefaultUMGMat:IsValid() then
+        local matClass = StaticFindObject("/Script/Engine.Material")
+        if StaticLoadObject and matClass and matClass:IsValid() then
+            pcall(function()
+                DefaultUMGMat = StaticLoadObject(matClass, nil, "/MinimapPlugin/Materials/Icons/M_UMG_MapIcon.M_UMG_MapIcon")
+            end)
+        end
+    end
+    return DefaultUMGMat
 end
 
 local ResourceTypeConfig = {
     Copper = {
         TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Copper_Ore_Medium_01.T_Icon_Copper_Ore_Medium_01",
         Fallback = "/Game/Art/UI/Icons/T_Resources_CopperOre.T_Resources_CopperOre",
-        Color = { R = 1.0, G = 0.55, B = 0.25, A = 1.0 },
         Size = 22.0,
         Label = "Copper Ore"
     },
     Tin = {
-        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Tin_Ore_Medium_01.T_Icon_Tin_Ore_Medium_01",
-        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Tin.T_Icon_Resource_Ore_Tin",
-        Color = { R = 0.85, G = 0.90, B = 0.95, A = 1.0 },
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Tin.T_Icon_Resource_Ore_Tin",
+        Fallback = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Tin_Ore_Medium_01.T_Icon_Tin_Ore_Medium_01",
         Size = 22.0,
         Label = "Tin Ore"
     },
     Iron = {
         TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Iron_Ore_Medium_01.T_Icon_Iron_Ore_Medium_01",
         Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Iron.T_Icon_Resource_Ore_Iron",
-        Color = { R = 0.70, G = 0.50, B = 0.40, A = 1.0 },
         Size = 22.0,
         Label = "Iron Ore"
     },
     Silver = {
         TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Silver_Ore_Medium_01.T_Icon_Silver_Ore_Medium_01",
         Fallback = "/Game/Art/UI/Icons/T_Resources_SilverOre.T_Resources_SilverOre",
-        Color = { R = 0.95, G = 0.95, B = 1.0, A = 1.0 },
         Size = 22.0,
         Label = "Silver Ore"
     },
     Gold = {
         TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Gold_Ore_Medium_01.T_Icon_Gold_Ore_Medium_01",
         Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Gold.T_Icon_Resource_Ore_Gold",
-        Color = { R = 1.0, G = 0.84, B = 0.0, A = 1.0 },
         Size = 22.0,
         Label = "Gold Ore"
     },
     Clay = {
         TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Clay_Ore_Medium_01.T_Icon_Clay_Ore_Medium_01",
         Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resources_Clay.T_Icon_Resources_Clay",
-        Color = { R = 0.82, G = 0.52, B = 0.35, A = 1.0 },
         Size = 22.0,
         Label = "Clay"
     },
     AnimaVent = {
         TexturePath = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
-        Fallback = "/Game/Art/UI/Icons/T_Icon_Rune_Fire.T_Icon_Rune_Fire",
-        Color = { R = 0.3, G = 0.85, B = 1.0, A = 1.0 },
+        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Fire.T_Icons_Rune_Fire",
         Size = 26.0,
         Label = "Anima Vent"
     },
     RuneEssence = {
         TexturePath = "/Game/Art/UI/Icons/T_Resources_Coal.T_Resources_Coal",
-        Color = { R = 0.8, G = 0.6, B = 1.0, A = 1.0 },
-        Size = 22.0,
+        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Size = 24.0,
         Label = "Rune Essence"
     }
 }
@@ -652,32 +666,65 @@ local function SetupResourceIcon(actor, resType)
 
     local cfg = ResourceTypeConfig[resType] or ResourceTypeConfig.Copper
     local tex = GetResourceTexture(cfg.TexturePath) or GetResourceTexture(cfg.Fallback)
+    local umgMat = GetDefaultUMGMaterial()
 
+    -- Look for existing component on actor first (e.g. if reloaded in active session)
     local comp = nil
-    local ok, res = pcall(function()
-        return actor:AddComponentByClass(MapIconCompClass, false, {
-            Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
-            Translation = { X = 0, Y = 0, Z = 150.0 },
-            Scale3D = { X = 1, Y = 1, Z = 1 }
-        }, false)
-    end)
-    if ok and res and res:IsValid() then
-        comp = res
+    if actor.GetComponentByClass then
+        pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
+    end
+
+    if not comp or not comp:IsValid() then
+        local ok, res = pcall(function()
+            return actor:AddComponentByClass(MapIconCompClass, false, {
+                Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+                Translation = { X = 0, Y = 0, Z = 150.0 },
+                Scale3D = { X = 1, Y = 1, Z = 1 }
+            }, true)
+        end)
+        if ok and res and res:IsValid() then
+            comp = res
+        end
     end
 
     if comp and comp:IsValid() then
         pcall(function()
-            if comp.RegisterComponent then comp:RegisterComponent() end
+            -- Set base UMG material so WBP_Dominion_MinimapInternal_Icon creates MID_M_UMG_MapIcon
+            -- instead of rendering an untextured fallback white brush
+            if umgMat and umgMat:IsValid() then
+                comp.IconMaterial_UMG = umgMat
+                comp.InitialIconMaterial_UMG = umgMat
+            end
+
+            -- Set texture
+            if tex and tex:IsValid() then
+                comp.IconTexture = tex
+            end
+
+            -- Appearance properties: Screen-space unit (0), pure white draw color (natural colors)
+            comp.IconSize = cfg.Size
+            comp.IconSizeUnit = 0
+            comp.IconDrawColor = { R = 1.0, G = 1.0, B = 1.0, A = 1.0 }
+            comp.bIconRotates = false
+            comp.IconZOrder = 10
+            comp.bHideOwnerInsideFog = false
+            comp.bIconVisible = ResourceIconsEnabled
+            comp.IconTooltipText = cfg.Label
+
+            -- Finish registration (triggers MapTrackerComponent to notify maps)
+            if comp.RegisterComponent then
+                comp:RegisterComponent()
+            end
+
+            -- Native setters to guarantee live refresh
             if tex and tex:IsValid() and comp.SetIconTexture then
                 comp:SetIconTexture(tex)
             end
+            if comp.SetIconDrawColor then
+                comp:SetIconDrawColor({ R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
+            end
             if comp.SetIconSize then
                 comp:SetIconSize(cfg.Size, 0)
-            else
-                comp.IconSize = cfg.Size
-            end
-            if comp.SetIconDrawColor then
-                comp:SetIconDrawColor(cfg.Color)
             end
             if comp.SetIconVisible then
                 comp:SetIconVisible(ResourceIconsEnabled)
@@ -691,24 +738,9 @@ local function SetupResourceIcon(actor, resType)
             if comp.SetIconTooltipText then
                 comp:SetIconTooltipText(cfg.Label)
             end
-            comp.bHideOwnerInsideFog = false
-        end)
-
-        pcall(function()
-            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
-                MinimapWidget:AddMapIcon(comp)
-            end
-            local official = GetOfficialMap()
-            if official and official:IsValid() and official.AddMapIcon then
-                official:AddMapIcon(comp)
-            end
         end)
 
         TrackedResourceActors[addr] = comp
-        local loc = actor:K2_GetActorLocation()
-        Log(string.format("[RESOURCE] Added map icon for %s at (%.0f, %.0f)", resType, loc.X, loc.Y))
-    else
-        Log(string.format("[RESOURCE ERR] Could not add MapIconComponent to %s: %s", actor:GetFullName(), tostring(res)))
     end
 end
 
