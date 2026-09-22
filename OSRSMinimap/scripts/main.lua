@@ -429,11 +429,8 @@ local function UpdateMinimapTerrain(PC)
     if not MinimapWidget or not MinimapWidget:IsValid() or MinimapWidget:GetVisibility() ~= 0 then
         return
     end
-
     local Pawn = PC and PC.Pawn
     if not Pawn or not Pawn:IsValid() then return end
-
-    -- Hide Clouds / Fog Overlays continuously
     pcall(function()
         if MinimapWidget.Overlay_Fogs and MinimapWidget.Overlay_Fogs:IsValid() then
             if MinimapWidget.Overlay_Fogs:GetVisibility() ~= 2 then
@@ -441,41 +438,79 @@ local function UpdateMinimapTerrain(PC)
             end
         end
     end)
-
     pcall(function()
         if MinimapWidget.Canvas_Backgrounds and MinimapWidget.Canvas_Backgrounds:IsValid() then
             local zoomFactor = 8.0
             MinimapWidget.Canvas_Backgrounds:SetRenderScale({ X = zoomFactor, Y = zoomFactor })
-            
             local Official = GetOfficialMap()
             if Official and Official:IsValid() then
                 if Official:GetVisibility() ~= 0 then
                     Official.AutoLocateMapView = 2
                 end
-                
                 local nativeOffset = Official.MapOffset
                 if nativeOffset then
                     MinimapWidget.Canvas_Backgrounds:SetRenderTranslation({ X = nativeOffset.X * zoomFactor, Y = nativeOffset.Y * zoomFactor })
                 end
             end
-            
             MinimapWidget.Canvas_Backgrounds:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
             local PawnRot = Pawn:K2_GetActorRotation()
             if PawnRot then
                 MinimapWidget.Canvas_Backgrounds:SetRenderAngle(-PawnRot.Yaw)
             end
         end
-        
         if MinimapWidget.Widget_PlayerIcon and MinimapWidget.Widget_PlayerIcon:IsValid() then
             MinimapWidget.Widget_PlayerIcon:SetRenderAngle(0.0)
         end
-        
         if MinimapWidget.Widget_Camera and MinimapWidget.Widget_Camera:IsValid() then
             MinimapWidget.Widget_Camera:SetRenderTranslation({ X = 0.0, Y = 0.0 })
         end
     end)
 end
-
+local function CheckMainMapVisibility()
+    if not MinimapWidget or not MinimapWidget:IsValid() then return end
+    local Official = GetOfficialMap()
+    local MainMapOpen = false
+    if Official and Official:IsValid() then
+        local ok, isVis = pcall(function() return Official:IsVisible() end)
+        if ok then
+            MainMapOpen = isVis
+        else
+            MainMapOpen = (Official:GetVisibility() == 0)
+        end
+    end
+    if MainMapOpen ~= LastMainMapOpen then
+        LastMainMapOpen = MainMapOpen
+        Log("[VIS] MainMapOpen changed to " .. tostring(MainMapOpen))
+        if MainMapOpen and Official and Official:IsValid() then
+            pcall(function()
+                if Official.InitFillBackground then
+                    Official:InitFillBackground()
+                end
+            end)
+        elseif not MainMapOpen and MinimapWidget and MinimapWidget:IsValid() then
+            pcall(function()
+                if MinimapWidget.InitFillBackground then
+                    MinimapWidget:InitFillBackground()
+                end
+            end)
+        end
+    end
+    if MinimapWidget and MinimapWidget:IsValid() then
+        local ok, err = pcall(function()
+            local ims = MinimapWidget.InitialMapSize
+            if (not ims or ims.X <= 0 or ims.Y <= 0) and UpdateTick >= NextSizeRetryTick then
+                NextSizeRetryTick = UpdateTick + 20
+                if MinimapWidget.RetryMapSize then
+                    MinimapWidget:RetryMapSize()
+                end
+            end
+        end)
+    end
+    local desiredVisibility = (IsMinimapVisible and not MainMapOpen) and 0 or 2
+    if MinimapWidget:GetVisibility() ~= desiredVisibility then
+        MinimapWidget:SetVisibility(desiredVisibility)
+    end
+end
 
 -- 6. Keybinds
 pcall(function()
@@ -598,4 +633,3 @@ LoopAsync(50, function()
 end)
 
 Log("OSRS Minimap ready. F6: toggle, F7: recreate widget, PageUp/Down: zoom, [/]: size.")
-
