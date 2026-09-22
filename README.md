@@ -6,28 +6,72 @@ A suite of modding tools and HUD replacements for RS-Dragonwilds.
 This mod replaces the native HUD minimap with an Old School RuneScape style minimap. 
 
 ### Core Features & Spec
-1. **OSRS Compass Style:** The map texture translates and rotates around the player. The player is always locked to the center, and the player icon always points UP (Rotation 0.0), acting as a true compass.
+1. **OSRS Compass Style:** The map texture translates and rotates underneath the player. The player is always locked to the center, and the player icon always points UP (Rotation 0.0), acting as a true compass.
 2. **Square Masking:** The minimap is shaped in a classic square instead of a circle.
-3. **No Main Map Interference:** The minimap operates completely independently of the Main Map (M). Opening the main map will hide the minimap, and the main map will function normally without any stolen widgets or broken zoom limits.
+3. **No Main Map Interference:** The minimap operates completely independently of the Main Map (M). Opening the main map hides the minimap, and the main map functions normally without any missing panels, broken widgets, or destroyed zoom limits.
 4. **Delayed Loading:** The minimap waits until the player spawns into the world before attempting to load or track locations, preventing startup crashes.
 5. **Local Resource Tracking (Planned):** Will display pins for nearby harvestable resources.
 
+---
+
 ### The Mathematics & Architecture (CRITICAL DEVELOPER NOTES)
 
-To avoid breaking the Main Map or losing tracking accuracy, the following architectural rules **MUST** be adhered to:
+#### 1. Why the Main Map Went Missing (The "Orphan Cleanup" Pitfall)
+The native Main Map UI is `WBP_TopNav_Map_C` (named `MapPanel` in the In-Game TopNav menu). Its inner map viewer is an instance of `WBP_DominionMinimap_C` owned directly by `BP_DominionGameInstance_C`.
+- **The Historical Bug:** A previous cleanup routine searched `FindAllOf("WBP_DominionMinimap_C")` and removed any widget whose full name did not contain `"MapPanel"`. Because the native map instance is owned by `BP_DominionGameInstance_C` (and does NOT contain `"MapPanel"` in its object path), the cleanup script literally detached the Official Map from its Canvas and collapsed it (`Visibility = 2`) on every reload!
+- **The True Fix:** 
+  1. Never detach or collapse `BP_DominionGameInstance_C` minimap instances.
+  2. Mod minimap widgets are owned by `BP_PlayerController_C`. The cleanup routine only cleans up orphaned `BP_PlayerController_C` instances.
+  3. The mod actively re-anchors `topNav.Map` into `topNav.WidgetTree.CanvasPanel_0` if it is ever missing, guaranteeing the Main Map is always 100% functional.
 
-#### 1. The MapTrackerComp Stealing Bug
-The native widget WBP_DominionMinimap_C utilizes a component called MapTrackerComp which pools the background map images. If you call MinimapWidget:InitFillBackground() while the tracker is attached, it will physically steal the image widgets from the Main Map, leaving the Main Map blank.
-**The Fix:** We swap the backgrounds back and forth! When the user opens the Main Map, we call Official:InitFillBackground() to return the images to the Official map. When they close it, we call MinimapWidget:InitFillBackground() to pull them back to the minimap.
+#### 2. Native Background Populating (No Stealing Required)
+- `WBP_DominionMinimap_C:InitFillBackground()` does not generate new backgrounds for secondary widgets.
+- Calling `Widget:AddMapBackground(bg)` for each `bg` in `MapTrackerComponent.MapBackgrounds` creates brand new, independent `WBP_Dominion_MinimapInternal_Background_C` widgets inside `Canvas_Backgrounds` using native `CreateWidget` calls. This completely eliminates background "stealing" and allows both the Main Map and the HUD Minimap to own their own background layers simultaneously.
 
-#### 2. The MapViewComponent & GPS Math
-Never manually calculate PlayerU and PlayerV using static World Bounds. The world bounds might change or be inaccurate, resulting in the player appearing to stand in the water.
-Furthermore, never call MinimapWidget:AutoFindMapView() on our standalone minimap, as it will steal the native MapViewComponent from the Official map, breaking its zoom limits.
-**The Fix:** The Official Map natively calculates flawless GPS translation into a property called MapOffset. We simply read Official.MapOffset continuously in our tick loop, scale it by our Minimap Zoom Factor (e.g., 8.0x), and apply it directly to MinimapWidget.Canvas_Backgrounds:SetRenderTranslation.
+#### 3. GPS Coordinate Projection Math (`GetViewCoordinates`)
+- Do not use `Official.MapOffset`. In this engine plugin, `MapOffset` is an internal mouse-drag pan accumulator; while the map is closed, `MapOffset` is permanently `(0.0, 0.0)`.
+- Do not use hardcoded bounding box math, which easily results in inaccurate projections (e.g. appearing to stand in water).
+- **The Engine-Native Solution:** The plugin C++ class `MapViewComponent` provides:
+  ```lua
+  local out = {}
+  AreaMapView:GetViewCoordinates(PawnLocation, false, out, {})
+  local u = out.U  -- Normalized horizontal coordinate [0.0, 1.0] (West to East)
+  local v = out.V  -- Normalized vertical coordinate   [0.0, 1.0] (North to South)
+  ```
+  This is the exact mathematical projection function written into the game's C++ code, guaranteeing 100% pinpoint accuracy anywhere in the world.
 
-#### 3. Forcing Background Tracking
-Because we rely on the Official Map's MapOffset, we must force the Official Map to continue tracking the player even when it is closed.
-**The Fix:** Inside the tick loop, whenever the Official Map is hidden (closed), we set Official.AutoLocateMapView = 2 (Always Follow Player). This ensures the GPS coordinates continue to update flawlessly in the background for our minimap to read.
+#### 4. OSRS Compass Transformation Math
+To make the map rotate around the player while keeping the player centered and pointing straight UP:
+1. **Pivot Point:** We set the `RenderTransformPivot` of `Canvas_Backgrounds` and the icon layers directly to the player's normalized coordinates:
+   $$\text{Pivot} = (u,\ v)$$
+   Because the affine transform pivot is on the player, scaling and rotation occur strictly around the player.
+2. **Translation:** Since the player coordinate is at $(u \times W,\ v \times H)$ on the map canvas, shifting the player to the center $(W/2,\ H/2)$ of the minimap window requires a translation of:
+   $$\text{Translation.X} = (0.5 - u) \times W$$
+   $$\text{Translation.Y} = (0.5 - v) \times H$$
+3. **Rotation:** Set the canvas angle to $-\text{PlayerYaw}$ to counteract player heading.
+4. **Player Icon:** Lock `Widget_Camera` rotation to $0.0^\circ$ and translation to $(0, 0)$.
+
+#### 5. Main Map Aspect Ratio & Fog of War Alignment Mathematics
+- **The Visual Disconnect:** When pressing 'M', players previously observed that the Fog of War appeared positioned in a crisp square, but the terrain landmass underneath it was stretched horizontally into a wide oval.
+- **The Mathematical Cause:**
+  - **World Bounds (`BP_MapBackground_C`):** Extent $X = 210,000$, Extent $Y = 210,000$. Total area = $420,000 \times 420,000$ Unreal units. The world aspect ratio is strictly $1:1$ (a perfect square).
+  - **Fog of War:** The game's Fog of War projection natively renders as a $1:1$ square matching this $420,000 \times 420,000$ bounding box. On a widescreen monitor (e.g. $2580 \times 1080$), the fog covers an un-distorted $1080 \times 1080$ square centered horizontally between $X = 750$ and $X = 1830$.
+  - **The Stretch Bug:** The Main Map widget (`WBP_DominionMinimap_C`) was anchored with `Anchors = (0, 0) to (1, 1)` and `Offsets = (0, 0, 0, 0)` across the full $2580 \times 1080$ viewport. This stretched the background canvas horizontally by $\frac{2580}{1080} \approx 2.388\times$ relative to its height, creating massive aspect distortion.
+- **The Exact Geometric Solution:**
+  1. Determine the square dimension based on the viewport:
+     $$\text{mapSide} = \min(\text{ViewportWidth}, \text{ViewportHeight})$$
+     On standard landscape/ultrawide displays ($W \ge H$), $\text{mapSide} = H$ (e.g. $1080.0$).
+  2. Anchor `official.Slot` (`CanvasPanelSlot` inside `WBP_TopNav_Map_C`) to center horizontally while spanning full height:
+     - `Anchors`: `Minimum = { X = 0.5, Y = 0.0 }`, `Maximum = { X = 0.5, Y = 1.0 }`
+     - `Alignment`: `{ X = 0.5, Y = 0.0 }`
+     - `Offsets`: `Left = 0.0`, `Top = 0.0`, `Right = mapSide`, `Bottom = 0.0`
+     In UMG, when `Minimum.X == Maximum.X`, `Offsets.Right` sets the widget width. This constrains the widget to a precise $1080 \times 1080$ square centered from $X = \frac{W - H}{2}$ to $X = \frac{W + H}{2}$ ($750$ to $1830$).
+  3. Set `official.InitialMapSize.X = official.InitialMapSize.Y` and invoke native `official:SetDesiredAspectRatio(1.0)` and `official:EnforceAspectRatio()`.
+  4. With width equal to height, both the terrain texture and the Fog of War share the identical pixel-to-unit scale factor:
+     $$\text{Scale}_X = \text{Scale}_Y = \frac{\text{mapSide}}{420,000} \text{ px/unit}$$
+     The Main Map landmass and Fog of War now fit together in seamless, 1:1 pixel parity with zero stretching.
+
+---
 
 ### Keybinds
 - **F6:** Toggle Minimap On/Off
