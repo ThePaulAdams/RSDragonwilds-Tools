@@ -14,46 +14,51 @@ local MinimapWidget = nil
 local CurrentPlayerController = nil
 local IsMinimapVisible = true
 local CurrentZoom = 8.0
-local CurrentScale = 0.22
-local Offset_X = -25.0
-local Offset_Y = 25.0
+local MinimapSide = 280.0
+local Margin = 25.0
+local RotateWithPlayer = true
 local CurrentPawn = nil
 local UpdatePending = false
 local UpdateTick = 0
 local NextInitTick = 0
+local NextSearchTick = 0
 local LastMainMapOpen = nil
 local LastUpdateError = nil
 local MinimapClass = nil
 
+-- Cached Singletons & Widgets (Never scan GUObjectArray inside ticks!)
+local CachedGameInstance = nil
 local CachedAreaMapView = nil
 local CachedOfficialTopNav = nil
 local CachedOfficialMap = nil
 
+-- Dirty Checking for 0% CPU usage when stationary
+local LastU = nil
+local LastV = nil
+local LastYaw = nil
+local LastZoom = nil
+local LastRotateState = nil
+
 local Key = Key
 
--- 1. Locate the Official TopNav and Official Map (Read-Only / Restore if needed)
+-- 1. Locate the Official TopNav and Official Map (Cached, zero-scan during tick)
 local function GetOfficialTopNav()
     if CachedOfficialTopNav and CachedOfficialTopNav:IsValid() then
         return CachedOfficialTopNav
     end
-    -- 1. Try finding live instance in Transient
-    local allTopNav = FindAllOf("WBP_TopNav_Map_C")
-    if allTopNav then
-        for _, tn in ipairs(allTopNav) do
-            if tn:IsValid() and string.find(tn:GetFullName(), "Transient") then
-                CachedOfficialTopNav = tn
-                Log(string.format("[TOPNAV] Found live Transient TopNav: %s", tn:GetFullName()))
-                return CachedOfficialTopNav
-            end
-        end
+    -- Throttle searches: never search more than once every 5 seconds (100 ticks)
+    if UpdateTick < NextSearchTick then
+        return nil
     end
-    -- 2. Try via GameInstance MainMenuWidget
-    local gi = FindFirstOf("BP_DominionGameInstance_C")
-    if gi and gi:IsValid() then
-        local mm = gi.MainMenuWidget
+    NextSearchTick = UpdateTick + 100
+
+    -- 1. Try finding via GameInstance MainMenuWidget
+    if not CachedGameInstance or not CachedGameInstance:IsValid() then
+        CachedGameInstance = FindFirstOf("BP_DominionGameInstance_C")
+    end
+    if CachedGameInstance and CachedGameInstance:IsValid() then
+        local mm = CachedGameInstance.MainMenuWidget
         if mm and mm:IsValid() then
-            Log(string.format("[TOPNAV] Found GI MainMenuWidget: %s", mm:GetFullName()))
-            -- In MainMenuWidget, search for MapPanel or TopNav
             local allInMM = FindAllOf("WBP_TopNav_Map_C")
             if allInMM then
                 for _, tn in ipairs(allInMM) do
@@ -66,6 +71,19 @@ local function GetOfficialTopNav()
             end
         end
     end
+
+    -- 2. Try finding live instance in Transient
+    local allTopNav = FindAllOf("WBP_TopNav_Map_C")
+    if allTopNav then
+        for _, tn in ipairs(allTopNav) do
+            if tn:IsValid() and string.find(tn:GetFullName(), "Transient") then
+                CachedOfficialTopNav = tn
+                Log(string.format("[TOPNAV] Found live Transient TopNav: %s", tn:GetFullName()))
+                return CachedOfficialTopNav
+            end
+        end
+    end
+
     return nil
 end
 
@@ -111,7 +129,6 @@ end
 local function EnsureOfficialMapRestored()
     local official = GetOfficialMap()
     if not official or not official:IsValid() then
-        Log("[RESTORE TRACE] official map is nil or invalid")
         return
     end
     
@@ -237,50 +254,68 @@ local function GetMinimapClass()
 end
 
 -- 5. Transform Screen Layout
-local function GetScreenAspectRatio()
-    local PC = UEHelpers.GetPlayerController()
-    if PC and PC:IsValid() and PC.GetViewportSize then
-        local SizeX, SizeY = 0, 0
-        local ok, X, Y = pcall(function() return PC:GetViewportSize(SizeX, SizeY) end)
-        if ok and X and Y and Y > 0 then
-            return X / Y
-        end
-    end
-    return 16.0 / 9.0
-end
-
 local function ApplyMinimapTransform()
     if not MinimapWidget or not MinimapWidget:IsValid() then return end
     pcall(function()
-        local AspectRatio = GetScreenAspectRatio()
-        local Scale_Y = CurrentScale
-        local Scale_X = CurrentScale / AspectRatio
-
-        if MinimapWidget.SetRenderTransformPivot then
-            MinimapWidget:SetRenderTransformPivot({ X = 1.0, Y = 0.0 })
-        end
         if MinimapWidget.SetRenderScale then
-            MinimapWidget:SetRenderScale({ X = Scale_X, Y = Scale_Y })
+            MinimapWidget:SetRenderScale({ X = 1.0, Y = 1.0 })
         end
         if MinimapWidget.SetRenderTranslation then
-            MinimapWidget:SetRenderTranslation({ X = Offset_X, Y = Offset_Y })
+            MinimapWidget:SetRenderTranslation({ X = 0.0, Y = 0.0 })
+        end
+
+        local rBox = MinimapWidget.RetainerBox_Minimap
+        if rBox and rBox:IsValid() and rBox.Slot then
+            local slot = rBox.Slot
+            if slot.SetAnchors then
+                slot:SetAnchors({ Minimum = { X = 1.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 0.0 } })
+            end
+            if slot.SetAlignment then
+                slot:SetAlignment({ X = 1.0, Y = 0.0 })
+            end
+            if slot.SetOffsets then
+                slot:SetOffsets({ Left = -Margin, Top = Margin, Right = MinimapSide, Bottom = MinimapSide })
+            end
         end
     end)
 end
 
--- 6. Setup Standalone Minimap Widget
+-- 6. Setup Standalone Minimap Widget (Exact Copy of Main Map Architecture)
 local function SetupMinimapWidget(Widget, PC)
     if not Widget or not Widget:IsValid() then return false end
 
     Widget:AddToViewport(100)
     Widget:SetVisibility(IsMinimapVisible and 0 or 2)
+
+    -- Disable RetainerBox Render Target offscreen caching:
+    -- Bypassing offscreen texture render targets eliminates GPU/CPU stalls and uses hardware GPU scissor clipping!
+    pcall(function()
+        local rBox = Widget.RetainerBox_Minimap
+        if rBox and rBox:IsValid() then
+            if rBox.SetRetainRendering then
+                rBox:SetRetainRendering(false)
+            end
+        end
+    end)
+
+    -- Enforce 1:1 Aspect Ratio on Widget
+    pcall(function()
+        Widget.InitialMapSize = { X = MinimapSide, Y = MinimapSide }
+        if Widget.SetDesiredAspectRatio then
+            Widget:SetDesiredAspectRatio(1.0)
+        end
+        if Widget.EnforceAspectRatio then
+            Widget:EnforceAspectRatio()
+        end
+    end)
+
     ApplyMinimapTransform()
 
     -- Configure Square shape
     Widget.bIsCircular = false
     if Widget.ReinitShape then pcall(function() Widget:ReinitShape() end) end
 
-    -- Hide Clouds / Fog Overlays
+    -- Hide Clouds / Fog Overlays on HUD Minimap
     if Widget.Overlay_Fogs and Widget.Overlay_Fogs:IsValid() then
         Widget.Overlay_Fogs:SetVisibility(2)
     end
@@ -319,6 +354,28 @@ local function SetupMinimapWidget(Widget, PC)
         Widget.Switcher_MapActive:SetVisibility(0)
         pcall(function() Widget.Switcher_MapActive:SetActiveWidgetIndex(1) end)
     end
+
+    -- Configure Widget_Camera (The Player Icon)
+    pcall(function()
+        local cam = Widget.Widget_Camera
+        if cam and cam:IsValid() then
+            cam:SetVisibility(0)
+            if cam.Slot and cam.Slot:IsValid() then
+                -- Center the slot in Overlay_Layers (HAlign_Center=2, VAlign_Center=2)
+                if cam.Slot.SetHorizontalAlignment then cam.Slot:SetHorizontalAlignment(2) end
+                if cam.Slot.SetVerticalAlignment then cam.Slot:SetVerticalAlignment(2) end
+            end
+            if cam.SetRenderTransformPivot then
+                cam:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
+            end
+            if cam.SetRenderTranslation then
+                cam:SetRenderTranslation({ X = 0.0, Y = 0.0 })
+            end
+            if cam.SetRenderAngle then
+                cam:SetRenderAngle(0.0)
+            end
+        end
+    end)
 
     -- Filter layers: Overworld visible, underground hidden by default
     local cb = Widget.Canvas_Backgrounds
@@ -370,13 +427,19 @@ local function InitMinimap(ForceRecreate)
             MinimapWidget = Created
             CurrentPlayerController = PC
             CurrentPawn = PC.Pawn
+            -- Invalidate dirty cache so transform immediately applies
+            LastU = nil
+            LastV = nil
+            LastYaw = nil
+            LastZoom = nil
+            LastRotateState = nil
             return SetupMinimapWidget(MinimapWidget, PC)
         end
     end
     return false
 end
 
--- 8. Real-time Terrain Transformation (OSRS Compass Style Math)
+-- 8. Real-time Terrain Transformation (Isotropic Centered Math)
 local function UpdateMinimapTerrain(PC)
     if not MinimapWidget or not MinimapWidget:IsValid() or MinimapWidget:GetVisibility() ~= 0 then
         return
@@ -404,14 +467,28 @@ local function UpdateMinimapTerrain(PC)
     local pRot = Pawn:K2_GetActorRotation()
     local PlayerYaw = pRot and pRot.Yaw or 0.0
 
-    local mapW = MinimapWidget.InitialMapSize and MinimapWidget.InitialMapSize.X or 2580.0
-    local mapH = MinimapWidget.InitialMapSize and MinimapWidget.InitialMapSize.Y or 1080.0
+    -- Dirty Checking: skip expensive transform updates if player position, rotation, and zoom haven't changed
+    if LastU and LastV and LastYaw and LastZoom and LastRotateState ~= nil then
+        local du = math.abs(u - LastU)
+        local dv = math.abs(v - LastV)
+        local dyaw = math.abs(PlayerYaw - LastYaw)
+        if du < 0.0001 and dv < 0.0001 and dyaw < 0.1 and LastZoom == CurrentZoom and LastRotateState == RotateWithPlayer then
+            return -- Completely stationary: zero CPU overhead!
+        end
+    end
+    LastU = u
+    LastV = v
+    LastYaw = PlayerYaw
+    LastZoom = CurrentZoom
+    LastRotateState = RotateWithPlayer
 
-    -- Translation vector to bring the player's map coordinate to the center of the minimap window
-    local transX = (0.5 - u) * mapW
-    local transY = (0.5 - v) * mapH
+    -- Both axes use the exact same dimension for 100% isotropic 1:1 geometry
+    local S = MinimapSide
+    local transX = (0.5 - u) * S
+    local transY = (0.5 - v) * S
+    local mapAngle = RotateWithPlayer and -PlayerYaw or 0.0
 
-    -- Continuously hide fogs
+    -- Continuously hide fogs on HUD minimap
     if MinimapWidget.Overlay_Fogs and MinimapWidget.Overlay_Fogs:IsValid() then
         if MinimapWidget.Overlay_Fogs:GetVisibility() ~= 2 then
             MinimapWidget.Overlay_Fogs:SetVisibility(2)
@@ -431,43 +508,42 @@ local function UpdateMinimapTerrain(PC)
             pcall(function()
                 layer:SetRenderTransformPivot({ X = u, Y = v })
                 layer:SetRenderScale({ X = CurrentZoom, Y = CurrentZoom })
-                if layer.SetRenderTransformAngle then
-                    layer:SetRenderTransformAngle(-PlayerYaw)
+                if layer.SetRenderAngle then
+                    layer:SetRenderAngle(mapAngle)
                 end
                 layer:SetRenderTranslation({ X = transX, Y = transY })
             end)
         end
     end
 
-    -- Player Camera Icon: Point straight UP at 12 o'clock, centered
-    if MinimapWidget.Widget_Camera and MinimapWidget.Widget_Camera:IsValid() then
+    -- Keep Player Icon (Widget_Camera) dead center and pointing straight UP (OSRS compass)
+    local cam = MinimapWidget.Widget_Camera
+    if cam and cam:IsValid() then
         pcall(function()
-            if MinimapWidget.Widget_Camera.SetRenderTransformAngle then
-                MinimapWidget.Widget_Camera:SetRenderTransformAngle(0.0)
+            cam:SetVisibility(0)
+            cam:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
+            cam:SetRenderTranslation({ X = 0.0, Y = 0.0 })
+            if cam.SetRenderAngle then
+                cam:SetRenderAngle(RotateWithPlayer and 0.0 or PlayerYaw)
             end
-            MinimapWidget.Widget_Camera:SetRenderTranslation({ X = 0.0, Y = 0.0 })
         end)
     end
 end
 
 -- 9. Check Main Map Visibility (Toggle Minimap off when M is pressed)
 local function CheckMainMapVisibility()
-    local topNav = GetOfficialTopNav()
-    local official = GetOfficialMap()
     local MainMapOpen = false
-    if topNav and topNav:IsValid() then
-        local ok, isVis = pcall(function() return topNav:IsVisible() end)
-        if ok then
-            MainMapOpen = isVis
-        else
-            MainMapOpen = (topNav:GetVisibility() == 0)
-        end
-    elseif official and official:IsValid() then
-        local ok, isVis = pcall(function() return official:IsVisible() end)
-        if ok then
-            MainMapOpen = isVis
-        else
-            MainMapOpen = (official:GetVisibility() == 0)
+    if CachedOfficialTopNav and CachedOfficialTopNav:IsValid() then
+        local ok, isVis = pcall(function() return CachedOfficialTopNav:IsVisible() end)
+        MainMapOpen = ok and isVis
+    elseif CachedGameInstance and CachedGameInstance:IsValid() and CachedGameInstance.MainMenuWidget and CachedGameInstance.MainMenuWidget:IsValid() then
+        local ok, isVis = pcall(function() return CachedGameInstance.MainMenuWidget:IsVisible() end)
+        MainMapOpen = ok and isVis
+    else
+        local topNav = GetOfficialTopNav()
+        if topNav and topNav:IsValid() then
+            local ok, isVis = pcall(function() return topNav:IsVisible() end)
+            MainMapOpen = ok and isVis
         end
     end
 
@@ -511,16 +587,27 @@ pcall(function()
         end)
     end)
 
+    -- F8: Toggle Rotating Compass vs North-Up Map
+    RegisterKeyBind(Key.F8, function()
+        ExecuteInGameThread(function()
+            RotateWithPlayer = not RotateWithPlayer
+            LastRotateState = nil -- Force transform refresh
+            Log("Minimap compass rotation: " .. (RotateWithPlayer and "ENABLED (Rotating Map)" or "DISABLED (North-Up)"))
+        end)
+    end)
+
     -- PageUp / PageDown: Zoom
     RegisterKeyBind(Key.PAGE_UP, function()
         ExecuteInGameThread(function()
             CurrentZoom = math.min(32.0, CurrentZoom + 1.0)
+            LastZoom = nil -- Force transform refresh
             Log(string.format("Minimap zoom: %.1fx", CurrentZoom))
         end)
     end)
     RegisterKeyBind(Key.PAGE_DOWN, function()
         ExecuteInGameThread(function()
             CurrentZoom = math.max(2.0, CurrentZoom - 1.0)
+            LastZoom = nil -- Force transform refresh
             Log(string.format("Minimap zoom: %.1fx", CurrentZoom))
         end)
     end)
@@ -528,14 +615,18 @@ pcall(function()
     -- [ and ]: Size
     RegisterKeyBind(Key.OEM_FOUR, function()
         ExecuteInGameThread(function()
-            CurrentScale = math.max(0.08, CurrentScale - 0.02)
+            MinimapSide = math.max(160.0, MinimapSide - 20.0)
             ApplyMinimapTransform()
+            LastZoom = nil -- Force transform refresh
+            Log(string.format("Minimap size: %.1fx%.1f", MinimapSide, MinimapSide))
         end)
     end)
     RegisterKeyBind(Key.OEM_SIX, function()
         ExecuteInGameThread(function()
-            CurrentScale = math.min(0.50, CurrentScale + 0.02)
+            MinimapSide = math.min(600.0, MinimapSide + 20.0)
             ApplyMinimapTransform()
+            LastZoom = nil -- Force transform refresh
+            Log(string.format("Minimap size: %.1fx%.1f", MinimapSide, MinimapSide))
         end)
     end)
 end)
@@ -544,7 +635,7 @@ end)
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
     
-    -- Always check Main Map visibility regardless of pawn state
+    -- Always check Main Map visibility (O(1) cached check, zero scans)
     CheckMainMapVisibility()
 
     local Pawn = PC and PC:IsValid() and PC.Pawn
@@ -565,6 +656,7 @@ local function UpdateMinimap()
             CachedOfficialMap = nil
             CachedOfficialTopNav = nil
             CachedAreaMapView = nil
+            CachedGameInstance = nil
         end
         EnsureOfficialMapRestored()
         InitMinimap(ownerChanged)
@@ -603,10 +695,23 @@ LoopAsync(50, function()
     return false
 end)
 
--- On mod load: restore official map right away
+-- On mod load: restore official map right away and print concise status
 ExecuteInGameThread(function()
     EnsureOfficialMapRestored()
+    
+    local PC = UEHelpers.GetPlayerController()
+    local pawn = PC and PC.Pawn
+    local pLoc = pawn and pawn:K2_GetActorLocation()
+    local pRot = pawn and pawn:K2_GetActorRotation()
+    Log(string.format("[INIT] Player Loc: (%.1f, %.1f, %.1f) | Yaw=%.1f", 
+        pLoc and pLoc.X or 0, pLoc and pLoc.Y or 0, pLoc and pLoc.Z or 0, pRot and pRot.Yaw or 0))
+
+    local mv = GetAreaMapView()
+    if mv and mv:IsValid() and pLoc then
+        local out = {}
+        mv:GetViewCoordinates(pLoc, false, out, {})
+        Log(string.format("[INIT] Engine GPS Coordinates: U=%.4f, V=%.4f", out.U or -1, out.V or -1))
+    end
 end)
 
-Log("OSRS Minimap ready. F6: toggle, F7: recreate widget, PageUp/Down: zoom, [/]: size.")
-
+Log("OSRS Minimap ready. F6: toggle, F7: recreate, F8: compass rotate, PageUp/Down: zoom, [/]: size.")
