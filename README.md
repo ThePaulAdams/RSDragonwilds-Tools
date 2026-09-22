@@ -71,10 +71,17 @@ To make the map rotate around the player while keeping the player centered and p
      $$\text{Scale}_X = \text{Scale}_Y = \frac{\text{mapSide}}{420,000} \text{ px/unit}$$
      The Main Map landmass and Fog of War now fit together in seamless, 1:1 pixel parity with zero stretching.
 
+#### 6. Performance Architecture & Zero-Scan Rules
+- **No Periodic `GUObjectArray` Scans:** Never call `FindAllOf` inside per-frame or high-frequency loops. Cache singleton pointers (`BP_DominionGameInstance_C`, `WBP_TopNav_Map_C`, `WBP_DominionMinimap_C`) and query `CachedOfficialTopNav:IsVisible()` in $O(1)$ time. Throttled fallback searches run at most once every 5 seconds.
+- **Bypass RetainerBox Off-Screen Render Targets:** Calling `RetainerBox_Minimap:SetRetainRendering(false)` disables expensive GPU off-screen texture allocation and redraws on transformed layer hierarchies, relying instead on hardware GPU scissor clipping.
+- **Idle Dirty Checking:** If the player location, rotation, and zoom have not changed, Slate render transforms are skipped entirely, resulting in 0% CPU consumption while stationary.
+
 ---
 
 ### Keybinds
 - **F6:** Toggle Minimap On/Off
 - **F7:** Force Reload Minimap Widget
+- **F8:** Toggle Rotating Compass Map vs North-Up Map
 - **PageUp / PageDown:** Adjust Zoom Level
-- **[ / ]:** Adjust Minimap Canvas Scale
+- **[ / ]:** Adjust Minimap Canvas Dimensions
+
