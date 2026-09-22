@@ -185,15 +185,6 @@ local function SetupMinimapWidget(Widget, PC)
         if Widget.InitDrawFrustum then Widget:InitDrawFrustum() end
     end)
 
-    -- Set AutoLocateMapView = 2 (Always Follow Player) so map pans and player stays centered!
-    pcall(function()
-        Widget.AutoLocateMapView = 2
-        if Widget.AutoFindMapView then
-            Widget:AutoFindMapView()
-            Log("Called Widget:AutoFindMapView()")
-        end
-    end)
-
     -- Hide Fog of War / Clouds so the land is clearly visible!
     pcall(function()
         if Widget.Overlay_Fogs and Widget.Overlay_Fogs:IsValid() then
@@ -439,32 +430,16 @@ local function UpdateMinimapTerrain(PC)
         return
     end
 
-    -- Canvas transforms do not require a background material instance.
-    local cb = MinimapWidget.Canvas_Backgrounds
-    if not cb or not cb:IsValid() then return end
-    if cb:GetChildrenCount() > 0 then
-        CachedBackgroundChild = cb:GetChildAt(0)
-    end
-
     local Pawn = PC and PC.Pawn
     if not Pawn or not Pawn:IsValid() then return end
 
-    local pLoc = Pawn:K2_GetActorLocation()
-    if not pLoc then return end
-
-    -- Hide Clouds / Fog Overlays continuously (even when stationary!)
+    -- Hide Clouds / Fog Overlays continuously
     pcall(function()
         if MinimapWidget.Overlay_Fogs and MinimapWidget.Overlay_Fogs:IsValid() then
             if MinimapWidget.Overlay_Fogs:GetVisibility() ~= 2 then
                 MinimapWidget.Overlay_Fogs:SetVisibility(2)
             end
         end
-        if CachedBackgroundChild and CachedBackgroundChild:IsValid() then
-            if CachedBackgroundChild.ImageOverlay and CachedBackgroundChild.ImageOverlay:IsValid() then
-                if CachedBackgroundChild.ImageOverlay:GetVisibility() ~= 2 then
-                    CachedBackgroundChild.ImageOverlay:SetVisibility(2)
-                end
-            end
             if CachedBackgroundChild.ImageBackground and CachedBackgroundChild.ImageBackground:IsValid() then
                 if CachedBackgroundChild.ImageBackground:GetVisibility() ~= 0 then
                     CachedBackgroundChild.ImageBackground:SetVisibility(0)
