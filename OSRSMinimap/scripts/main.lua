@@ -529,7 +529,220 @@ local function CheckMainMapVisibility()
     end
 end
 
--- 6. Keybinds
+-- =========================================================================
+-- 6. Resource Map Icons System (Ores & Anima Vents)
+-- =========================================================================
+local ResourceIconsEnabled = true
+local DiscoveredResources = {}
+local TrackedResourceActors = {}
+local NextResourceScanTick = 0
+local MapIconCompClass = nil
+
+-- Texture Cache
+local CachedResourceTextures = {}
+local function GetResourceTexture(path)
+    if not path then return nil end
+    if CachedResourceTextures[path] then return CachedResourceTextures[path] end
+    local tex = StaticFindObject(path)
+    if not tex or not tex:IsValid() then
+        if StaticLoadObject then
+            pcall(function() tex = StaticLoadObject(nil, nil, path) end)
+        end
+    end
+    if tex and tex:IsValid() then
+        CachedResourceTextures[path] = tex
+    end
+    return tex
+end
+
+local ResourceTypeConfig = {
+    Copper = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Copper_Ore_Medium_01.T_Icon_Copper_Ore_Medium_01",
+        Fallback = "/Game/Art/UI/Icons/T_Resources_CopperOre.T_Resources_CopperOre",
+        Color = { R = 1.0, G = 0.55, B = 0.25, A = 1.0 },
+        Size = 22.0,
+        Label = "Copper Ore"
+    },
+    Tin = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Tin_Ore_Medium_01.T_Icon_Tin_Ore_Medium_01",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Tin.T_Icon_Resource_Ore_Tin",
+        Color = { R = 0.85, G = 0.90, B = 0.95, A = 1.0 },
+        Size = 22.0,
+        Label = "Tin Ore"
+    },
+    Iron = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Iron_Ore_Medium_01.T_Icon_Iron_Ore_Medium_01",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Iron.T_Icon_Resource_Ore_Iron",
+        Color = { R = 0.70, G = 0.50, B = 0.40, A = 1.0 },
+        Size = 22.0,
+        Label = "Iron Ore"
+    },
+    Silver = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Silver_Ore_Medium_01.T_Icon_Silver_Ore_Medium_01",
+        Fallback = "/Game/Art/UI/Icons/T_Resources_SilverOre.T_Resources_SilverOre",
+        Color = { R = 0.95, G = 0.95, B = 1.0, A = 1.0 },
+        Size = 22.0,
+        Label = "Silver Ore"
+    },
+    Gold = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Gold_Ore_Medium_01.T_Icon_Gold_Ore_Medium_01",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Gold.T_Icon_Resource_Ore_Gold",
+        Color = { R = 1.0, G = 0.84, B = 0.0, A = 1.0 },
+        Size = 22.0,
+        Label = "Gold Ore"
+    },
+    Clay = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Clay_Ore_Medium_01.T_Icon_Clay_Ore_Medium_01",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resources_Clay.T_Icon_Resources_Clay",
+        Color = { R = 0.82, G = 0.52, B = 0.35, A = 1.0 },
+        Size = 22.0,
+        Label = "Clay"
+    },
+    AnimaVent = {
+        TexturePath = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Fallback = "/Game/Art/UI/Icons/T_Icon_Rune_Fire.T_Icon_Rune_Fire",
+        Color = { R = 0.3, G = 0.85, B = 1.0, A = 1.0 },
+        Size = 26.0,
+        Label = "Anima Vent"
+    },
+    RuneEssence = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Coal.T_Resources_Coal",
+        Color = { R = 0.8, G = 0.6, B = 1.0, A = 1.0 },
+        Size = 22.0,
+        Label = "Rune Essence"
+    }
+}
+
+local function ClassifyResource(actor)
+    if not actor or not actor:IsValid() then return nil end
+    local name = actor:GetFullName()
+    if string.find(name, "AnimaVent") then
+        return "AnimaVent"
+    elseif string.find(name, "Copper") then
+        return "Copper"
+    elseif string.find(name, "Tin") then
+        return "Tin"
+    elseif string.find(name, "Iron") then
+        return "Iron"
+    elseif string.find(name, "Silver") then
+        return "Silver"
+    elseif string.find(name, "Gold") then
+        return "Gold"
+    elseif string.find(name, "Clay") then
+        return "Clay"
+    elseif string.find(name, "RuneEssence") or string.find(name, "Geyser") then
+        return "RuneEssence"
+    elseif string.find(name, "OreNode") or string.find(name, "MiningRock") then
+        return "Copper"
+    end
+    return nil
+end
+
+local function SetupResourceIcon(actor, resType)
+    if not actor or not actor:IsValid() then return end
+    local addr = actor:GetAddress()
+    if TrackedResourceActors[addr] and TrackedResourceActors[addr]:IsValid() then
+        return
+    end
+
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then
+        MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent")
+    end
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then return end
+
+    local cfg = ResourceTypeConfig[resType] or ResourceTypeConfig.Copper
+    local tex = GetResourceTexture(cfg.TexturePath) or GetResourceTexture(cfg.Fallback)
+
+    local comp = nil
+    local ok, res = pcall(function()
+        return actor:AddComponentByClass(MapIconCompClass, false, {
+            Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+            Translation = { X = 0, Y = 0, Z = 150.0 },
+            Scale3D = { X = 1, Y = 1, Z = 1 }
+        }, false)
+    end)
+    if ok and res and res:IsValid() then
+        comp = res
+    end
+
+    if comp and comp:IsValid() then
+        pcall(function()
+            if comp.RegisterComponent then comp:RegisterComponent() end
+            if tex and tex:IsValid() and comp.SetIconTexture then
+                comp:SetIconTexture(tex)
+            end
+            if comp.SetIconSize then
+                comp:SetIconSize(cfg.Size, 0)
+            else
+                comp.IconSize = cfg.Size
+            end
+            if comp.SetIconDrawColor then
+                comp:SetIconDrawColor(cfg.Color)
+            end
+            if comp.SetIconVisible then
+                comp:SetIconVisible(ResourceIconsEnabled)
+            end
+            if comp.SetIconRotates then
+                comp:SetIconRotates(false)
+            end
+            if comp.SetIconZOrder then
+                comp:SetIconZOrder(10)
+            end
+            if comp.SetIconTooltipText then
+                comp:SetIconTooltipText(cfg.Label)
+            end
+            comp.bHideOwnerInsideFog = false
+        end)
+
+        pcall(function()
+            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
+                MinimapWidget:AddMapIcon(comp)
+            end
+            local official = GetOfficialMap()
+            if official and official:IsValid() and official.AddMapIcon then
+                official:AddMapIcon(comp)
+            end
+        end)
+
+        TrackedResourceActors[addr] = comp
+        local loc = actor:K2_GetActorLocation()
+        Log(string.format("[RESOURCE] Added map icon for %s at (%.0f, %.0f)", resType, loc.X, loc.Y))
+    else
+        Log(string.format("[RESOURCE ERR] Could not add MapIconComponent to %s: %s", actor:GetFullName(), tostring(res)))
+    end
+end
+
+local function ScanAndRegisterResources()
+    local classesToScan = {
+        "BP_AnimaVent_C",
+        "BP_OreNode_Large_PARENT_C",
+        "BP_OreNode_Medium_PARENT_C",
+        "BP_OreNode_C",
+        "BP_MiningRock_Base_C",
+        "BP_RuneEssenceGeyser_Base_C"
+    }
+
+    local foundTotal = 0
+    for _, className in ipairs(classesToScan) do
+        local actors = FindAllOf(className)
+        if actors then
+            for _, actor in ipairs(actors) do
+                if actor and actor:IsValid() then
+                    local resType = ClassifyResource(actor)
+                    if resType then
+                        SetupResourceIcon(actor, resType)
+                        foundTotal = foundTotal + 1
+                    end
+                end
+            end
+        end
+    end
+    if foundTotal > 0 then
+        Log(string.format("[RESOURCE SCAN] Registered %d resource nodes.", foundTotal))
+    end
+end
+
+-- 7. Keybinds
 pcall(function()
     -- F6: Toggle Minimap On/Off (F8 is reserved for the UE4SS GUI)
     RegisterKeyBind(Key.F6, function()
@@ -549,6 +762,22 @@ pcall(function()
         ExecuteInGameThread(function()
             Log("Manual reload requested via F7...")
             InitMinimap(true)
+        end)
+    end)
+
+    -- F9: Toggle Resource Icons On/Off
+    RegisterKeyBind(Key.F9, function()
+        ExecuteInGameThread(function()
+            ResourceIconsEnabled = not ResourceIconsEnabled
+            for addr, comp in pairs(TrackedResourceActors) do
+                if comp and comp:IsValid() and comp.SetIconVisible then
+                    pcall(function() comp:SetIconVisible(ResourceIconsEnabled) end)
+                end
+            end
+            Log("Resource Icons toggled: " .. (ResourceIconsEnabled and "VISIBLE" or "HIDDEN"))
+            if ResourceIconsEnabled then
+                ScanAndRegisterResources()
+            end
         end)
     end)
 
@@ -657,6 +886,13 @@ local function UpdateMinimap()
     end
     CheckMainMapVisibility()
     UpdateMinimapTerrain(PC)
+
+    -- Background Resource Scan every 5 seconds
+    if ResourceIconsEnabled and UpdateTick >= NextResourceScanTick then
+        NextResourceScanTick = UpdateTick + 100
+        ScanAndRegisterResources()
+    end
+
     if NeedsLayoutAudit and UpdateTick > 20 then
         NeedsLayoutAudit = false
         local slate = StaticFindObject("/Script/UMG.Default__SlateBlueprintLibrary")
