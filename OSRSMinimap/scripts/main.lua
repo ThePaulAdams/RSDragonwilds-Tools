@@ -440,140 +440,42 @@ local function UpdateMinimapTerrain(PC)
                 MinimapWidget.Overlay_Fogs:SetVisibility(2)
             end
         end
-            if CachedBackgroundChild.ImageBackground and CachedBackgroundChild.ImageBackground:IsValid() then
-                if CachedBackgroundChild.ImageBackground:GetVisibility() ~= 0 then
-                    CachedBackgroundChild.ImageBackground:SetVisibility(0)
-                end
-            end
-        end
     end)
 
-    -- Let the native map widget calculate GPS and MapOffset. Reusing that
-    -- value avoids duplicating world bounds and keeps the main map untouched.
-    local PawnRot = Pawn:K2_GetActorRotation()
-    local PlayerYaw = PawnRot and PawnRot.Yaw or 0.0
-    -- Follow the view direction when available, including looking around
-    -- while stationary. Fall back to the pawn for controller variants.
-    local viewOk, viewRotation = pcall(function() return PC:GetControlRotation() end)
-    local MapYaw = viewOk and viewRotation and viewRotation.Yaw or PlayerYaw
-    local nativeOffset = MinimapWidget.MapOffset
-    if not nativeOffset then return end
-    -- Render translation is applied after rotation, so rotate the centering
-    -- vector too; otherwise turning moves the player's location off-center.
-    local angle = math.rad(-MapYaw)
-    local cosA, sinA = math.cos(angle), math.sin(angle)
-    local offsetX = nativeOffset.X * cosA - nativeOffset.Y * sinA
-    local offsetY = nativeOffset.X * sinA + nativeOffset.Y * cosA
-
     pcall(function()
-        -- Scale and translate the native canvas together, then rotate around
-        -- its center. The player icon stays upright like an OSRS compass map.
         if MinimapWidget.Canvas_Backgrounds and MinimapWidget.Canvas_Backgrounds:IsValid() then
-            local zoomFactor = CurrentZoom
-            MinimapWidget.Canvas_Backgrounds:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
+            local zoomFactor = 8.0
             MinimapWidget.Canvas_Backgrounds:SetRenderScale({ X = zoomFactor, Y = zoomFactor })
-            MinimapWidget.Canvas_Backgrounds:SetRenderTranslation({ X = offsetX * zoomFactor, Y = offsetY * zoomFactor })
-            MinimapWidget.Canvas_Backgrounds:SetRenderAngle(-MapYaw)
+            
+            local Official = GetOfficialMap()
+            if Official and Official:IsValid() then
+                if Official:GetVisibility() ~= 0 then
+                    Official.AutoLocateMapView = 2
+                end
+                
+                local nativeOffset = Official.MapOffset
+                if nativeOffset then
+                    MinimapWidget.Canvas_Backgrounds:SetRenderTranslation({ X = nativeOffset.X * zoomFactor, Y = nativeOffset.Y * zoomFactor })
+                end
+            end
+            
+            MinimapWidget.Canvas_Backgrounds:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
+            local PawnRot = Pawn:K2_GetActorRotation()
+            if PawnRot then
+                MinimapWidget.Canvas_Backgrounds:SetRenderAngle(-PawnRot.Yaw)
+            end
         end
         
-        -- Override Player Icon to always point UP (since the map rotates around them)
         if MinimapWidget.Widget_PlayerIcon and MinimapWidget.Widget_PlayerIcon:IsValid() then
             MinimapWidget.Widget_PlayerIcon:SetRenderAngle(0.0)
         end
         
-        -- Also center the camera widget
         if MinimapWidget.Widget_Camera and MinimapWidget.Widget_Camera:IsValid() then
             MinimapWidget.Widget_Camera:SetRenderTranslation({ X = 0.0, Y = 0.0 })
         end
     end)
 end
 
-
-local LastMainMapOpen = nil
-local function CheckMainMapVisibility()
-    if not MinimapWidget or not MinimapWidget:IsValid() then return end
-
-    local Official = GetOfficialMap()
-    local MainMapOpen = false
-
-    if Official and Official:IsValid() then
-        local ok, isVis = pcall(function() return Official:IsVisible() end)
-        if ok then
-            MainMapOpen = isVis
-        else
-            MainMapOpen = (Official:GetVisibility() == 0)
-        end
-    end
-
-    if MainMapOpen ~= LastMainMapOpen then
-        LastMainMapOpen = MainMapOpen
-        Log("[VIS] MainMapOpen changed to " .. tostring(MainMapOpen))
-        if MainMapOpen and Official and Official:IsValid() then
-            pcall(function()
-                local offCb = Official.Canvas_Backgrounds
-                if offCb and offCb:IsValid() then
-                    local count = offCb:GetChildrenCount()
-                    Log(string.format("[OFFICIAL OPEN] Canvas_Backgrounds child count: %d", count))
-                    for i = 0, count - 1 do
-                        local c = offCb:GetChildAt(i)
-                        if c and c:IsValid() then
-                            local s = c.Slot
-                            local pos = s and s.GetPosition and s:GetPosition() or { X = -1, Y = -1 }
-                            local sz = s and s.GetSize and s:GetSize() or { X = -1, Y = -1 }
-                            Log(string.format("  [Off Child %d] %s | Vis=%d | Pos=(%.1f, %.1f) | Size=(%.1f, %.1f)",
-                                i, c:GetFName():ToString(), c:GetVisibility(), pos.X, pos.Y, sz.X, sz.Y))
-                        end
-                    end
-                end
-                if Official.InitialMapSize then
-                    Log(string.format("[OFFICIAL OPEN] InitialMapSize = (%.1f, %.1f)", Official.InitialMapSize.X, Official.InitialMapSize.Y))
-                end
-                if Official.MapOffset then
-                    Log(string.format("[OFFICIAL OPEN] MapOffset = (%.1f, %.1f)", Official.MapOffset.X, Official.MapOffset.Y))
-                end
-            end)
-        end
-    end
-
-    -- Check if Minimap needs RetryMapSize
-    if MinimapWidget and MinimapWidget:IsValid() then
-        local ok, err = pcall(function()
-            local ims = MinimapWidget.InitialMapSize
-            if (not ims or ims.X <= 0 or ims.Y <= 0) and UpdateTick >= NextSizeRetryTick then
-                NextSizeRetryTick = UpdateTick + 20
-                Log(string.format("[RETRY_MAP_SIZE] Minimap InitialMapSize is (%.1f, %.1f). Calling RetryMapSize()...",
-                    ims and ims.X or -1, ims and ims.Y or -1))
-                if MinimapWidget.RetryMapSize then
-                    MinimapWidget:RetryMapSize()
-                end
-                local newIms = MinimapWidget.InitialMapSize
-                Log(string.format("[RETRY_MAP_SIZE] After RetryMapSize, InitialMapSize = (%.1f, %.1f)",
-                    newIms and newIms.X or -1, newIms and newIms.Y or -1))
-                local cb = MinimapWidget.Canvas_Backgrounds
-                if cb and cb:IsValid() then
-                    local count = cb:GetChildrenCount()
-                    Log(string.format("[RETRY_MAP_SIZE] Canvas_Backgrounds count: %d", count))
-                    for i = 0, count - 1 do
-                        local c = cb:GetChildAt(i)
-                        if c and c:IsValid() and c.Slot then
-                            local pos = c.Slot.GetPosition and c.Slot:GetPosition() or { X = -1, Y = -1 }
-                            local bsz = c.Slot.GetSize and c.Slot:GetSize() or { X = -1, Y = -1 }
-                            Log(string.format("  [Bg %d] Pos=(%.1f, %.1f), Size=(%.1f, %.1f)", i, pos.X, pos.Y, bsz.X, bsz.Y))
-                        end
-                    end
-                end
-            end
-        end)
-        if not ok then
-            Log("[RETRY_MAP_SIZE ERROR] " .. tostring(err))
-        end
-    end
-
-    local desiredVisibility = (IsMinimapVisible and not MainMapOpen) and 0 or 2
-    if MinimapWidget:GetVisibility() ~= desiredVisibility then
-        MinimapWidget:SetVisibility(desiredVisibility)
-    end
-end
 
 -- 6. Keybinds
 pcall(function()
@@ -696,3 +598,4 @@ LoopAsync(50, function()
 end)
 
 Log("OSRS Minimap ready. F6: toggle, F7: recreate widget, PageUp/Down: zoom, [/]: size.")
+
