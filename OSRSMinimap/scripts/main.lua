@@ -721,7 +721,6 @@ local function SetupResourceIcon(actor, resType)
             comp.IconZOrder = 10
             comp.bHideOwnerInsideFog = false
             comp.bIconVisible = ResourceIconsEnabled
-            comp.IconTooltipText = cfg.Label
 
             if comp.RegisterComponent then
                 comp:RegisterComponent()
@@ -744,9 +743,6 @@ local function SetupResourceIcon(actor, resType)
             end
             if comp.SetIconZOrder then
                 comp:SetIconZOrder(10)
-            end
-            if comp.SetIconTooltipText then
-                comp:SetIconTooltipText(cfg.Label)
             end
         end)
 
