@@ -13,8 +13,6 @@ Log("==========================================")
 local MinimapWidget = nil
 local CurrentPlayerController = nil
 local IsMinimapVisible = true
--- Keep the shared/native map a little farther out when the game cannot expose
--- a separate MapViewComponent to Lua. PageUp/PageDown adjust this at runtime.
 local CurrentZoom = 12.0
 local CurrentPawn = nil
 local PrivateMapView = nil
@@ -234,7 +232,7 @@ local function SetupMinimapWidget(Widget, PC)
         end
     end)
 
-    -- Attach native listeners safely. Native tracker automatically handles registered icons.
+    -- Attach native listeners safely
     pcall(function()
         if Widget.SetupListeners then
             Widget:SetupListeners()
@@ -286,11 +284,11 @@ local function SetupMinimapWidget(Widget, PC)
                 local child = cb:GetChildAt(i)
                 if child and child:IsValid() then
                     if i == 0 then
-                        child:SetVisibility(0) -- Visible: Main landmass
+                        child:SetVisibility(0)
                         CachedBackgroundChild = child
                         CachedBackgroundMID = child.BackgroundMaterialInstance
                     else
-                        child:SetVisibility(2) -- Collapsed: Hide underground cave
+                        child:SetVisibility(2)
                     end
                 end
             end
@@ -515,6 +513,21 @@ local function GetDefaultUMGMaterial()
             end
         end
     end
+    -- Fallback: Borrow the verified material directly from an existing native MapIconComponent
+    if not DefaultUMGMat or not DefaultUMGMat:IsValid() then
+        pcall(function()
+            local allIcons = FindAllOf("MapIconComponent")
+            if allIcons then
+                for _, iconComp in ipairs(allIcons) do
+                    if iconComp and iconComp:IsValid() and iconComp.IconMaterial_UMG and iconComp.IconMaterial_UMG:IsValid() then
+                        DefaultUMGMat = iconComp.IconMaterial_UMG
+                        Log("[MATERIAL] Found DefaultUMGMat from existing MapIconComponent: " .. DefaultUMGMat:GetFullName())
+                        break
+                    end
+                end
+            end
+        end)
+    end
     return DefaultUMGMat
 end
 
@@ -569,6 +582,65 @@ local ResourceTypeConfig = {
     }
 }
 
+-- 9-Layer Shield: Rejects CDOs, Archetypes, non-world actors, and distant objects
+local function IsValidResourceActor(actor, playerLoc, maxDistSq)
+    if not actor or not actor:IsValid() then return false end
+
+    local name = nil
+    local okName = pcall(function() name = actor:GetFullName() end)
+    if not okName or not name or name == "" then return false end
+
+    -- Strictly reject Class Default Objects and Engine Archetypes
+    if string.find(name, "Default__") or string.find(name, "REINST_") or string.find(name, "SKEL_") then
+        return false
+    end
+
+    if EObjectFlags then
+        local hasBadFlags = false
+        pcall(function()
+            if actor:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject) then
+                hasBadFlags = true
+            end
+        end)
+        if hasBadFlags then return false end
+    end
+
+    -- Actor must belong to the active gameplay world
+    local world = nil
+    local okW = pcall(function() world = actor:GetWorld() end)
+    if not okW or not world or not world:IsValid() then return false end
+
+    -- Actor must have a valid RootComponent
+    local root = nil
+    local okR = pcall(function() root = actor.RootComponent end)
+    if not okR or not root or not root:IsValid() then return false end
+
+    -- Reject actors being destroyed
+    local beingDestroyed = false
+    pcall(function()
+        if actor.IsActorBeingDestroyed and actor:IsActorBeingDestroyed() then
+            beingDestroyed = true
+        end
+    end)
+    if beingDestroyed then return false end
+
+    -- Must have a valid location
+    local loc = nil
+    local okL = pcall(function() loc = actor:K2_GetActorLocation() end)
+    if not okL or not loc then return false end
+
+    -- Proximity filter: only consider actors near the player
+    if playerLoc and maxDistSq then
+        local dx = loc.X - playerLoc.X
+        local dy = loc.Y - playerLoc.Y
+        if (dx * dx + dy * dy) > maxDistSq then
+            return false
+        end
+    end
+
+    return true
+end
+
 local function ClassifyResource(actor)
     if not actor or not actor:IsValid() then return nil end
     local ok, name = pcall(function() return actor:GetFullName() end)
@@ -617,13 +689,14 @@ local function SetupResourceIcon(actor, resType)
         pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
     end
 
+    -- Create non-deferred component (bDeferredFinish = false is stable and fully initializes)
     if not comp or not comp:IsValid() then
         local ok, res = pcall(function()
             return actor:AddComponentByClass(MapIconCompClass, false, {
                 Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
                 Translation = { X = 0, Y = 0, Z = 150.0 },
                 Scale3D = { X = 1, Y = 1, Z = 1 }
-            }, true)
+            }, false)
         end)
         if ok and res and res:IsValid() then
             comp = res
@@ -632,19 +705,15 @@ local function SetupResourceIcon(actor, resType)
 
     if comp and comp:IsValid() then
         pcall(function()
-            -- Set base UMG material so WBP_Dominion_MinimapInternal_Icon creates MID_M_UMG_MapIcon
-            -- instead of rendering an untextured fallback white brush
             if umgMat and umgMat:IsValid() then
                 comp.IconMaterial_UMG = umgMat
                 comp.InitialIconMaterial_UMG = umgMat
             end
 
-            -- Set texture
             if tex and tex:IsValid() then
                 comp.IconTexture = tex
             end
 
-            -- Appearance properties: Screen-space unit (0), pure white draw color (natural colors)
             comp.IconSize = cfg.Size
             comp.IconSizeUnit = 0
             comp.IconDrawColor = { R = 1.0, G = 1.0, B = 1.0, A = 1.0 }
@@ -654,12 +723,10 @@ local function SetupResourceIcon(actor, resType)
             comp.bIconVisible = ResourceIconsEnabled
             comp.IconTooltipText = cfg.Label
 
-            -- Finish registration (triggers MapTrackerComponent to notify active maps)
             if comp.RegisterComponent then
                 comp:RegisterComponent()
             end
 
-            -- Live properties
             if tex and tex:IsValid() and comp.SetIconTexture then
                 comp:SetIconTexture(tex)
             end
@@ -683,6 +750,17 @@ local function SetupResourceIcon(actor, resType)
             end
         end)
 
+        -- Directly attach the newly created resource icon to active map widgets
+        pcall(function()
+            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
+                MinimapWidget:AddMapIcon(comp)
+            end
+            local official = GetOfficialMap()
+            if official and official:IsValid() and official.AddMapIcon then
+                official:AddMapIcon(comp)
+            end
+        end)
+
         TrackedResourceActors[addr] = comp
         return true
     end
@@ -690,6 +768,15 @@ local function SetupResourceIcon(actor, resType)
 end
 
 local function ScanAndRegisterResources()
+    local PC = UEHelpers.GetPlayerController()
+    local Pawn = PC and PC:IsValid() and PC.Pawn
+    if not Pawn or not Pawn:IsValid() then return end
+    local playerLoc = Pawn:K2_GetActorLocation()
+    if not playerLoc then return end
+
+    -- Scan radius: 350 meters around the player
+    local maxDistSq = 35000.0 * 35000.0
+
     local classesToScan = {
         "BP_AnimaVent_C",
         "BP_OreNode_Large_PARENT_C",
@@ -704,7 +791,7 @@ local function ScanAndRegisterResources()
         local ok, actors = pcall(function() return FindAllOf(className) end)
         if ok and actors then
             for _, actor in ipairs(actors) do
-                if actor and actor:IsValid() then
+                if IsValidResourceActor(actor, playerLoc, maxDistSq) then
                     local resType = ClassifyResource(actor)
                     if resType then
                         if SetupResourceIcon(actor, resType) then
@@ -716,7 +803,7 @@ local function ScanAndRegisterResources()
         end
     end
     if newCount > 0 then
-        Log(string.format("[RESOURCE SCAN] Registered %d new resource nodes.", newCount))
+        Log(string.format("[RESOURCE SCAN] Registered %d new resource nodes near player.", newCount))
     end
 end
 
@@ -754,7 +841,7 @@ pcall(function()
             end
             Log("Resource Icons toggled: " .. (ResourceIconsEnabled and "VISIBLE" or "HIDDEN"))
             if ResourceIconsEnabled then
-                ScanAndRegisterResources()
+                pcall(ScanAndRegisterResources)
             end
         end)
     end)
@@ -857,10 +944,10 @@ local function UpdateMinimap()
     CheckMainMapVisibility()
     UpdateMinimapTerrain(PC)
 
-    -- Background Resource Scan every 5 seconds (starting after minimap is established)
+    -- Background Resource Scan every 5 seconds (local proximity only, CDOs filtered)
     if ResourceIconsEnabled and UpdateTick >= NextResourceScanTick then
         NextResourceScanTick = UpdateTick + 100
-        ScanAndRegisterResources()
+        pcall(ScanAndRegisterResources)
     end
 end
 
