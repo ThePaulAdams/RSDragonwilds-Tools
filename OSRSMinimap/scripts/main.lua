@@ -593,23 +593,143 @@ local ResourceTypeConfig = {
         Size = 22.0,
         Label = "Gold Ore"
     },
+    Coal = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Coal.T_Resources_Coal",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Iron.T_Icon_Resource_Ore_Iron",
+        Size = 22.0,
+        Label = "Coal"
+    },
     Clay = {
         TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Clay_Ore_Medium_01.T_Icon_Clay_Ore_Medium_01",
         Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resources_Clay.T_Icon_Resources_Clay",
         Size = 22.0,
         Label = "Clay"
     },
+    Blurite = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Blurite.T_Icon_Resource_Ore_Blurite",
+        Fallback = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Tin_Ore_Medium_01.T_Icon_Tin_Ore_Medium_01",
+        Size = 22.0,
+        Label = "Blurite Ore"
+    },
+    Adamantite = {
+        TexturePath = "/Game/Art/UI/Icons/Icons_0_12_UmS/Icons/T_Icon_Adamantite_Ore.T_Icon_Adamantite_Ore",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Blurite.T_Icon_Resource_Ore_Blurite",
+        Size = 22.0,
+        Label = "Adamantite Ore"
+    },
+    Mithril = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Gemstone_Sapphire_01.T_Icon_Gemstone_Sapphire_01",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Blurite.T_Icon_Resource_Ore_Blurite",
+        Size = 22.0,
+        Label = "Mithril Ore"
+    },
+    Runite = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Blurite.T_Icon_Resource_Ore_Blurite",
+        Fallback = "/Game/Art/UI/Icons/Resources_09_24/T_Icon_Gemstone_Sapphire_01.T_Icon_Gemstone_Sapphire_01",
+        Size = 24.0,
+        Label = "Runite Ore"
+    },
+    Stone = {
+        TexturePath = "/Game/Art/UI/Skills/Icons/Unlock/Mining/T_Skill_Mining_Detect_Ore.T_Skill_Mining_Detect_Ore",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resource_Ore_Iron.T_Icon_Resource_Ore_Iron",
+        Size = 20.0,
+        Label = "Stone"
+    },
+    Sandstone = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Resources_Clay.T_Icon_Resources_Clay",
+        Fallback = "/Game/Art/UI/Skills/Icons/Unlock/Mining/T_Skill_Mining_Detect_Ore.T_Skill_Mining_Detect_Ore",
+        Size = 20.0,
+        Label = "Sandstone"
+    },
+    RuneEssence = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Essence.T_Icon_Rune_Essence",
+        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Size = 24.0,
+        Label = "Rune Essence"
+    },
+    Tree = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Wood.T_Resources_Wood",
+        Fallback = "/Game/Art/UI/Skills/Icons/T_Notification_Skill_Woodcutting.T_Notification_Skill_Woodcutting",
+        Size = 22.0,
+        Label = "Tree"
+    },
+    Ash = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Wood.T_Resources_Wood",
+        Fallback = "/Game/Art/UI/Skills/Icons/T_Notification_Skill_Woodcutting.T_Notification_Skill_Woodcutting",
+        Size = 22.0,
+        Label = "Ash Tree"
+    },
+    Oak = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Wood.T_Resources_Wood",
+        Fallback = "/Game/Art/UI/Skills/Icons/T_Notification_Skill_Woodcutting.T_Notification_Skill_Woodcutting",
+        Size = 24.0,
+        Label = "Oak Tree"
+    },
+    Willow = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Wood.T_Resources_Wood",
+        Fallback = "/Game/Art/UI/Skills/Icons/T_Notification_Skill_Woodcutting.T_Notification_Skill_Woodcutting",
+        Size = 24.0,
+        Label = "Willow Tree"
+    },
+    Yew = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Wood.T_Resources_Wood",
+        Fallback = "/Game/Art/UI/Skills/Icons/T_Notification_Skill_Woodcutting.T_Notification_Skill_Woodcutting",
+        Size = 26.0,
+        Label = "Yew Tree"
+    },
+    Maple = {
+        TexturePath = "/Game/Art/UI/Icons/T_Resources_Wood.T_Resources_Wood",
+        Fallback = "/Game/Art/UI/Skills/Icons/T_Notification_Skill_Woodcutting.T_Notification_Skill_Woodcutting",
+        Size = 24.0,
+        Label = "Maple Tree"
+    },
+    Fishing = {
+        TexturePath = "/Fishing/Art/UI/Icons/Fishing_Skill_Icons/T_Notification_Skill_Fishing.T_Notification_Skill_Fishing",
+        Fallback = "/Fishing/Art/UI/Icons/Fishing_Skill_Icons/Fish_Icons/T_Icon_Salmon.T_Icon_Salmon",
+        Size = 24.0,
+        Label = "Fishing Spot"
+    },
+    AnimaAir = {
+        TexturePath = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Air.T_Icon_Rune_Air",
+        Size = 26.0,
+        Label = "Air Anima Vent"
+    },
+    AnimaFire = {
+        TexturePath = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Fire.T_Icons_Rune_Fire",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Fire.T_Icon_Rune_Fire",
+        Size = 26.0,
+        Label = "Fire Anima Vent"
+    },
+    AnimaWater = {
+        TexturePath = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Water.T_Icons_Rune_Water",
+        Fallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Water.T_Icon_Rune_Water",
+        Size = 26.0,
+        Label = "Water Anima Vent"
+    },
+    AnimaEarth = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Earth.T_Icon_Rune_Earth",
+        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Size = 26.0,
+        Label = "Earth Anima Vent"
+    },
+    AnimaNature = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Nature.T_Icon_Rune_Nature",
+        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Size = 26.0,
+        Label = "Nature Anima Vent"
+    },
+    AnimaAstral = {
+        TexturePath = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Astral.T_Icon_Rune_Astral",
+        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+        Size = 26.0,
+        Label = "Astral Anima Vent"
+    },
     AnimaVent = {
         TexturePath = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
         Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Fire.T_Icons_Rune_Fire",
         Size = 26.0,
         Label = "Anima Vent"
-    },
-    RuneEssence = {
-        TexturePath = "/Game/Art/UI/Icons/T_Resources_Coal.T_Resources_Coal",
-        Fallback = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
-        Size = 24.0,
-        Label = "Rune Essence"
     }
 }
 
@@ -676,25 +796,86 @@ local function ClassifyResource(actor)
     if not actor or not actor:IsValid() then return nil end
     local ok, name = pcall(function() return actor:GetFullName() end)
     if not ok or not name then return nil end
+
+    -- 1. Anima Vents (Element-specific via AnimaVentData or actor name)
     if string.find(name, "AnimaVent") then
+        local elem = nil
+        pcall(function()
+            if actor.AnimaVentData and actor.AnimaVentData:IsValid() then
+                local dataName = actor.AnimaVentData:GetFullName()
+                if string.find(dataName, "Fire") then elem = "AnimaFire"
+                elseif string.find(dataName, "Water") then elem = "AnimaWater"
+                elseif string.find(dataName, "Earth") then elem = "AnimaEarth"
+                elseif string.find(dataName, "Nature") then elem = "AnimaNature"
+                elseif string.find(dataName, "Astral") then elem = "AnimaAstral"
+                elseif string.find(dataName, "Air") then elem = "AnimaAir"
+                end
+            end
+        end)
+        if elem then return elem end
+        if string.find(name, "Fire") then return "AnimaFire"
+        elseif string.find(name, "Water") then return "AnimaWater"
+        elseif string.find(name, "Earth") then return "AnimaEarth"
+        elseif string.find(name, "Nature") then return "AnimaNature"
+        elseif string.find(name, "Astral") then return "AnimaAstral"
+        elseif string.find(name, "Air") then return "AnimaAir"
+        end
         return "AnimaVent"
-    elseif string.find(name, "Copper") then
-        return "Copper"
-    elseif string.find(name, "Tin") then
-        return "Tin"
-    elseif string.find(name, "Iron") then
-        return "Iron"
+    end
+
+    -- 2. Fishing Spots
+    if string.find(name, "FishingNode") or string.find(name, "CatchableFish") or string.find(name, "Fishing") then
+        return "Fishing"
+    end
+
+    -- 3. Trees (Woodcutting)
+    if string.find(name, "Oak") then
+        return "Oak"
+    elseif string.find(name, "Willow") then
+        return "Willow"
+    elseif string.find(name, "Yew") then
+        return "Yew"
+    elseif string.find(name, "Maple") then
+        return "Maple"
+    elseif string.find(name, "Ash") then
+        return "Ash"
+    elseif string.find(name, "Tree") or string.find(name, "FellableTree") or string.find(name, "FelledTree") then
+        return "Tree"
+    end
+
+    -- 4. Specific Ores and Minerals (Prioritize specific minerals over generic names)
+    if string.find(name, "RuneEssence") or string.find(name, "Geyser") then
+        return "RuneEssence"
+    elseif string.find(name, "Runite") then
+        return "Runite"
+    elseif string.find(name, "Adamant") then
+        return "Adamantite"
+    elseif string.find(name, "Mithril") then
+        return "Mithril"
+    elseif string.find(name, "Blurite") then
+        return "Blurite"
+    elseif string.find(name, "Coal") then
+        return "Coal"
     elseif string.find(name, "Silver") then
         return "Silver"
     elseif string.find(name, "Gold") then
         return "Gold"
+    elseif string.find(name, "Iron") then
+        return "Iron"
+    elseif string.find(name, "Copper") then
+        return "Copper"
+    elseif string.find(name, "Tin") then
+        return "Tin"
     elseif string.find(name, "Clay") then
         return "Clay"
-    elseif string.find(name, "RuneEssence") or string.find(name, "Geyser") then
-        return "RuneEssence"
-    elseif string.find(name, "OreNode") or string.find(name, "MiningRock") then
+    elseif string.find(name, "Sandstone") then
+        return "Sandstone"
+    elseif string.find(name, "Stone") then
+        return "Stone"
+    elseif string.find(name, "OreNode") or string.find(name, "MiningRock") or string.find(name, "DivineRock") then
         return "Copper"
     end
+
     return nil
 end
 
@@ -848,7 +1029,32 @@ local function ScanAndRegisterResources()
         "BP_OreNode_Medium_PARENT_C",
         "BP_OreNode_C",
         "BP_MiningRock_Base_C",
-        "BP_RuneEssenceGeyser_Base_C"
+        "BP_OreNode_Stone_C",
+        "BP_OreNode_Sandstone_C",
+        "BP_RuneEssenceGeyser_Base_C",
+        "BP_MiningRock_RuneEssence_Static_Base_C",
+        "BP_MiningRock_GeyserRuneEssence_C",
+        "BP_DivineRockBase_C",
+        "BP_DivineRock_Coal_C",
+        "BP_DivineRock_Adamantite_C",
+        "BP_DivineRock_Blurite_C",
+        "BP_DivineRock_Mithril_C",
+        "BP_DivineRock_Runite_C",
+        "BP_DivineRock_Iron_C",
+        "BP_DivineRock_Gold_C",
+        "BP_DivineRock_Silver_C",
+        "BP_FellableTree_Base_C",
+        "BP_FellableTree_Ash_C",
+        "BP_FellableTree_Oak_C",
+        "BP_FellableTree_Willow_C",
+        "BP_YewTree_01_C",
+        "BP_YewTree_02_C",
+        "BP_YewTree_03_C",
+        "BP_FelledTree_Base_C",
+        "BP_FishingNodeV2_C",
+        "BP_FishingNodeV2_Net_Base_C",
+        "BP_FishingNodeV2_Rod_Base_C",
+        "BP_CatchableFish_C"
     }
 
     local newCount = 0
