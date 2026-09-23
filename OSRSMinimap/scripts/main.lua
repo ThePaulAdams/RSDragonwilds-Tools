@@ -134,6 +134,20 @@ local function ApplyMinimapTransform()
     Log(string.format("Viewport minimap: %dx%d, top-right margin 24", side, side))
 end
 
+local function GetMapIconWidgetCount(mapWidget)
+    if not mapWidget or not mapWidget:IsValid() then return 0 end
+    local count = 0
+    pcall(function()
+        if mapWidget.Canvas_IconsBelowFog and mapWidget.Canvas_IconsBelowFog:IsValid() then
+            count = count + mapWidget.Canvas_IconsBelowFog:GetChildrenCount()
+        end
+        if mapWidget.Canvas_IconsAboveFog and mapWidget.Canvas_IconsAboveFog:IsValid() then
+            count = count + mapWidget.Canvas_IconsAboveFog:GetChildrenCount()
+        end
+    end)
+    return count
+end
+
 -- 3. Setup Standalone Minimap Widget (Never touching Official Map)
 local function SetupMinimapWidget(Widget, PC)
     if not Widget or not Widget:IsValid() then return false end
@@ -300,6 +314,23 @@ local function SetupMinimapWidget(Widget, PC)
 
     OwnedWidgetName = Widget:GetFullName()
     if ModRef then ModRef:SetSharedVariable("OSRSMinimap.OwnedWidgetName", OwnedWidgetName) end
+
+    -- Repopulate existing tracked resource icons if this minimap was recreated
+    pcall(function()
+        if Widget.AddMapIcon then
+            local repopCount = 0
+            for addr, comp in pairs(TrackedResourceActors) do
+                if comp and comp:IsValid() then
+                    local countBefore = GetMapIconWidgetCount(Widget)
+                    Widget:AddMapIcon(comp)
+                    repopCount = repopCount + 1
+                end
+            end
+            if repopCount > 0 then
+                Log(string.format("[REPOPULATE] Re-added %d resource icons to recreated Minimap.", repopCount))
+            end
+        end
+    end)
 
     Log("Minimap widget successfully configured and visible in viewport!")
     return true
@@ -689,17 +720,30 @@ local function SetupResourceIcon(actor, resType)
         pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
     end
 
+    local isNewComp = false
+    local compTransform = {
+        Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+        Translation = { X = 0, Y = 0, Z = 150.0 },
+        Scale3D = { X = 1, Y = 1, Z = 1 }
+    }
+
     -- Create deferred component so properties (Material & Texture) are assigned BEFORE registration
     if not comp or not comp:IsValid() then
         local ok, res = pcall(function()
-            return actor:AddComponentByClass(MapIconCompClass, false, {
-                Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
-                Translation = { X = 0, Y = 0, Z = 150.0 },
-                Scale3D = { X = 1, Y = 1, Z = 1 }
-            }, true)
+            return actor:AddComponentByClass(MapIconCompClass, false, compTransform, true)
         end)
         if ok and res and res:IsValid() then
             comp = res
+            isNewComp = true
+        else
+            -- Fallback to non-deferred if deferred creation failed
+            local ok2, res2 = pcall(function()
+                return actor:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+            end)
+            if ok2 and res2 and res2:IsValid() then
+                comp = res2
+                isNewComp = false
+            end
         end
     end
 
@@ -722,11 +766,30 @@ local function SetupResourceIcon(actor, resType)
             comp.bHideOwnerInsideFog = false
             comp.bIconVisible = ResourceIconsEnabled
 
-            -- Finish registration with properties already populated; native MapTrackerComponent notifies active maps cleanly
-            if comp.RegisterComponent then
+            local iconsBefore = GetMapIconWidgetCount(MinimapWidget)
+            local official = GetOfficialMap()
+            local offBefore = GetMapIconWidgetCount(official)
+
+            -- Finish registration with properties already populated
+            if isNewComp then
+                local finishOk = false
+                if actor.FinishAddComponent then
+                    pcall(function()
+                        actor:FinishAddComponent(comp, false, compTransform)
+                        finishOk = true
+                    end)
+                end
+                if not finishOk and comp.RegisterComponent then
+                    comp:RegisterComponent()
+                end
+            elseif comp.RegisterComponent then
                 comp:RegisterComponent()
             end
 
+            -- Fire material and texture setters so dynamic material instances and widgets bind cleanly
+            if comp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
+                comp:SetIconMaterialForUMG(umgMat)
+            end
             if tex and tex:IsValid() and comp.SetIconTexture then
                 comp:SetIconTexture(tex)
             end
@@ -744,6 +807,22 @@ local function SetupResourceIcon(actor, resType)
             end
             if comp.SetIconZOrder then
                 comp:SetIconZOrder(10)
+            end
+
+            -- Ensure MinimapWidget has the icon without creating duplicate stacked widgets
+            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
+                local iconsAfter = GetMapIconWidgetCount(MinimapWidget)
+                if iconsAfter == iconsBefore then
+                    MinimapWidget:AddMapIcon(comp)
+                end
+            end
+
+            -- Ensure OfficialMap has the icon without duplicate stacked widgets
+            if official and official:IsValid() and official.AddMapIcon then
+                local offAfter = GetMapIconWidgetCount(official)
+                if offAfter == offBefore then
+                    official:AddMapIcon(comp)
+                end
             end
         end)
 
@@ -789,7 +868,7 @@ local function ScanAndRegisterResources()
         end
     end
     if newCount > 0 then
-        Log(string.format("[RESOURCE SCAN] Registered %d new resource nodes near player.", newCount))
+        Log(string.format("[RESOURCE SCAN] Registered %d new resource nodes near player. Minimap icon count: %d", newCount, GetMapIconWidgetCount(MinimapWidget)))
     end
 end
 
