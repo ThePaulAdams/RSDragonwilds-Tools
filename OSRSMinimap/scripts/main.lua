@@ -14,8 +14,7 @@ local MinimapWidget = nil
 local CurrentPlayerController = nil
 local IsMinimapVisible = true
 -- Keep the shared/native map a little farther out when the game cannot expose
--- a separate MapViewComponent to Lua.  PageUp/PageDown still adjust this at
--- runtime without requiring a restart.
+-- a separate MapViewComponent to Lua. PageUp/PageDown adjust this at runtime.
 local CurrentZoom = 12.0
 local CurrentPawn = nil
 local PrivateMapView = nil
@@ -26,8 +25,8 @@ local NextBackgroundTick = 0
 local NextOfficialSearchTick = 0
 local NextSizeRetryTick = 0
 local LastUpdateError = nil
-local NeedsOwnershipAudit = true
-local NeedsLayoutAudit = true
+local ReadyPawnAddress = nil
+local ReadyAfterTick = 0
 local MinimapClass = nil
 local CachedBackgroundMID = nil
 local CachedBackgroundChild = nil
@@ -120,15 +119,15 @@ end
 local function ApplyMinimapTransform()
     if not MinimapWidget or not MinimapWidget:IsValid() then return end
     local side = math.floor(320 * CurrentScale / 0.22)
-    -- Viewport coordinates are DPI-independent. Anchoring explicitly avoids
-    -- full-screen render-pivot offsets on ultrawide monitors.
     MinimapWidget:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
     MinimapWidget:SetRenderScale({ X = 1.0, Y = 1.0 })
     MinimapWidget:SetRenderTranslation({ X = 0.0, Y = 0.0 })
     local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
     local PC = UEHelpers.GetPlayerController()
+    if not PC or not PC:IsValid() or not layout or not layout:IsValid() then return end
     local viewport = layout:GetViewportSize(PC)
     local dpi = layout:GetViewportScale(PC)
+    if not viewport or not dpi or dpi <= 0 then return end
     local x = viewport.X / dpi - side - 24
     MinimapWidget:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
     MinimapWidget:SetPositionInViewport({ X = x, Y = 24.0 }, false)
@@ -141,6 +140,17 @@ end
 local function SetupMinimapWidget(Widget, PC)
     if not Widget or not Widget:IsValid() then return false end
 
+    -- Pre-initialize InitialMapSize to prevent any divide-by-zero during early Slate layout
+    pcall(function()
+        local official = GetOfficialMap()
+        if official and official:IsValid() and official.InitialMapSize and official.InitialMapSize.X > 0 and official.InitialMapSize.Y > 0 then
+            Widget.InitialMapSize = { X = official.InitialMapSize.X, Y = official.InitialMapSize.Y }
+        elseif not Widget.InitialMapSize or Widget.InitialMapSize.X <= 0 or Widget.InitialMapSize.Y <= 0 then
+            Widget.InitialMapSize = { X = 2580.0, Y = 935.0 }
+        end
+        Log(string.format("SetupMinimapWidget: InitialMapSize = (%.1f, %.1f)", Widget.InitialMapSize.X, Widget.InitialMapSize.Y))
+    end)
+
     local viewClass = StaticFindObject("/Script/MinimapPlugin.MapViewComponent")
     local created, createError = pcall(function()
         return PC.Pawn:AddComponentByClass(viewClass, false, {
@@ -149,8 +159,6 @@ local function SetupMinimapWidget(Widget, PC)
     end)
     PrivateMapView = created and createError or nil
     if not PrivateMapView or not PrivateMapView:IsValid() then
-        -- Some UE4SS builds do not expose AddComponentByClass to Lua. Keep
-        -- the existing native view in that case instead of aborting the mod.
         PrivateMapView = PC.Pawn.MapView
         Log("[VIEW] Independent component unavailable; using pawn view safely")
     end
@@ -158,7 +166,7 @@ local function SetupMinimapWidget(Widget, PC)
     pcall(function() PrivateMapView.FixedRotation = {Pitch=0,Yaw=0,Roll=0} end)
     pcall(function() PrivateMapView:SetCollisionEnabled(0) end)
     pcall(function() PrivateMapView:SetViewExtent(210000 / CurrentZoom, 210000 / CurrentZoom) end)
-    Widget.AutoLocateMapView = 4 -- Disabled, before Construct can select a shared view.
+    Widget.AutoLocateMapView = 4
     Widget.MapViewComp = PrivateMapView
 
     -- Add to Viewport with Z-Order 100
@@ -190,10 +198,9 @@ local function SetupMinimapWidget(Widget, PC)
         if Widget.InitDrawFrustum then Widget:InitDrawFrustum() end
     end)
 
-    -- Verified enum: Disabled = 4; the old value 2 selected a map background.
     Widget.AutoLocateMapView = 4
 
-    -- Hide Fog of War / Clouds so the land is clearly visible!
+    -- Hide Fog of War / Clouds so the land is clearly visible
     pcall(function()
         if Widget.Overlay_Fogs and Widget.Overlay_Fogs:IsValid() then
             Widget.Overlay_Fogs:SetVisibility(2)
@@ -227,10 +234,7 @@ local function SetupMinimapWidget(Widget, PC)
         end
     end)
 
-    -- Initialize map via native plugin lifecycle functions
-    pcall(function()
-        -- InitMap requires geometry; initialize after Slate has laid out the widget.
-    end)
+    -- Attach native listeners safely. Native tracker automatically handles registered icons.
     pcall(function()
         if Widget.SetupListeners then
             Widget:SetupListeners()
@@ -250,9 +254,6 @@ local function SetupMinimapWidget(Widget, PC)
         end
     end)
 
-    -- Native tracker listeners populate this widget. Do not pass existing
-    -- background or icon widgets to AddMapBackground/AddMapIcon.
-
     -- Configure layers safely
     local cfgOk, cfgErr = pcall(function()
         if Widget.WidgetTree and Widget.WidgetTree.RootWidget then
@@ -268,7 +269,6 @@ local function SetupMinimapWidget(Widget, PC)
             end)
         end
 
-        -- Get Overlay_Layers from Switcher_MapActive child 1
         local switcher = Widget.Switcher_MapActive
         local overlayLayers = nil
         if switcher and switcher:IsValid() and switcher:GetChildrenCount() > 1 then
@@ -279,44 +279,27 @@ local function SetupMinimapWidget(Widget, PC)
             overlayLayers:SetVisibility(0)
         end
 
-        -- Focused Diagnostic on Canvas_Backgrounds and Map Coordinates
-        Log("=== DIAGNOSTIC: Canvas_Backgrounds & Coordinates ===")
-        local PC_Pawn = PC and PC.Pawn
-        if PC_Pawn and PC_Pawn:IsValid() then
-            local pLoc = PC_Pawn:K2_GetActorLocation()
-            Log(string.format("Pawn Location: (X=%.1f, Y=%.1f, Z=%.1f)", pLoc.X, pLoc.Y, pLoc.Z))
-        end
-
         local cb = Widget.Canvas_Backgrounds
         if cb and cb:IsValid() then
             local numBgs = cb:GetChildrenCount()
-            Log(string.format("Widget.Canvas_Backgrounds has %d children", numBgs))
-            local mapW = Widget.InitialMapSize and Widget.InitialMapSize.X or 2580.0
-            local mapH = Widget.InitialMapSize and Widget.InitialMapSize.Y or 935.0
             for i = 0, numBgs - 1 do
                 local child = cb:GetChildAt(i)
                 if child and child:IsValid() then
                     if i == 0 then
-                        child:SetVisibility(0) -- Visible: Main landmass!
+                        child:SetVisibility(0) -- Visible: Main landmass
                         CachedBackgroundChild = child
                         CachedBackgroundMID = child.BackgroundMaterialInstance
-                        Log(string.format("  [Overworld Bg 0] Visible | Mat: %s",
-                            CachedBackgroundMID and CachedBackgroundMID:IsValid() and CachedBackgroundMID:GetFullName() or "nil"))
                     else
-                        child:SetVisibility(2) -- Collapsed: Hide underground cave so it doesn't cover land!
-                        Log(string.format("  [Underground Bg %d] Collapsed (hidden)", i))
+                        child:SetVisibility(2) -- Collapsed: Hide underground cave
                     end
                 end
             end
         end
-
-        Log("=== END DIAGNOSTIC ===")
     end)
     if not cfgOk then
         Log("[CONFIG ERROR] " .. tostring(cfgErr))
     end
 
-    -- Clean up any orphaned mod minimaps from viewport (keep only this active one)
     OwnedWidgetName = Widget:GetFullName()
     if ModRef then ModRef:SetSharedVariable("OSRSMinimap.OwnedWidgetName", OwnedWidgetName) end
 
@@ -373,14 +356,11 @@ local function InitMinimap(ForceRecreate)
     return false
 end
 
-
-
 local function UpdateMinimapTerrain(PC)
     if not MinimapWidget or not MinimapWidget:IsValid() or MinimapWidget:GetVisibility() ~= 0 then
         return
     end
 
-    -- Canvas transforms do not require a background material instance.
     local cb = MinimapWidget.Canvas_Backgrounds
     if not cb or not cb:IsValid() then return end
     if cb:GetChildrenCount() > 0 then
@@ -393,7 +373,7 @@ local function UpdateMinimapTerrain(PC)
     local pLoc = Pawn:K2_GetActorLocation()
     if not pLoc then return end
 
-    -- Hide Clouds / Fog Overlays continuously (even when stationary!)
+    -- Hide Clouds / Fog Overlays continuously
     pcall(function()
         if MinimapWidget.Overlay_Fogs and MinimapWidget.Overlay_Fogs:IsValid() then
             if MinimapWidget.Overlay_Fogs:GetVisibility() ~= 2 then
@@ -414,14 +394,12 @@ local function UpdateMinimapTerrain(PC)
         end
     end)
 
-    -- Let the native map widget calculate GPS and MapOffset. Reusing that
-    -- value avoids duplicating world bounds and keeps the main map untouched.
     local nativeOffset = MinimapWidget.MapOffset
     if not nativeOffset then return end
     local offsetX, offsetY = nativeOffset.X, nativeOffset.Y
 
     pcall(function()
-        -- North-up mode: translate only. Turning must not orbit the terrain.
+        -- North-up mode: translate only. Turning does not orbit terrain.
         if MinimapWidget.Canvas_Backgrounds and MinimapWidget.Canvas_Backgrounds:IsValid() then
             local zoomFactor = 1.0
             MinimapWidget.Canvas_Backgrounds:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
@@ -430,18 +408,17 @@ local function UpdateMinimapTerrain(PC)
             MinimapWidget.Canvas_Backgrounds:SetRenderAngle(0.0)
         end
         
-        -- Override Player Icon to always point UP (since the map rotates around them)
+        -- Override Player Icon to always point UP
         if MinimapWidget.Widget_PlayerIcon and MinimapWidget.Widget_PlayerIcon:IsValid() then
             MinimapWidget.Widget_PlayerIcon:SetRenderAngle(0.0)
         end
         
-        -- Also center the camera widget
+        -- Center the camera widget
         if MinimapWidget.Widget_Camera and MinimapWidget.Widget_Camera:IsValid() then
             MinimapWidget.Widget_Camera:SetRenderTranslation({ X = 0.0, Y = 0.0 })
         end
     end)
 end
-
 
 local LastMainMapOpen = nil
 local function CheckMainMapVisibility()
@@ -462,65 +439,19 @@ local function CheckMainMapVisibility()
     if MainMapOpen ~= LastMainMapOpen then
         LastMainMapOpen = MainMapOpen
         Log("[VIS] MainMapOpen changed to " .. tostring(MainMapOpen))
-        if MainMapOpen and Official and Official:IsValid() then
-            pcall(function()
-                local offCb = Official.Canvas_Backgrounds
-                if offCb and offCb:IsValid() then
-                    local count = offCb:GetChildrenCount()
-                    Log(string.format("[OFFICIAL OPEN] Canvas_Backgrounds child count: %d", count))
-                    for i = 0, count - 1 do
-                        local c = offCb:GetChildAt(i)
-                        if c and c:IsValid() then
-                            local s = c.Slot
-                            local pos = s and s.GetPosition and s:GetPosition() or { X = -1, Y = -1 }
-                            local sz = s and s.GetSize and s:GetSize() or { X = -1, Y = -1 }
-                            Log(string.format("  [Off Child %d] %s | Vis=%d | Pos=(%.1f, %.1f) | Size=(%.1f, %.1f)",
-                                i, c:GetFName():ToString(), c:GetVisibility(), pos.X, pos.Y, sz.X, sz.Y))
-                        end
-                    end
-                end
-                if Official.InitialMapSize then
-                    Log(string.format("[OFFICIAL OPEN] InitialMapSize = (%.1f, %.1f)", Official.InitialMapSize.X, Official.InitialMapSize.Y))
-                end
-                if Official.MapOffset then
-                    Log(string.format("[OFFICIAL OPEN] MapOffset = (%.1f, %.1f)", Official.MapOffset.X, Official.MapOffset.Y))
-                end
-            end)
-        end
     end
 
-    -- Check if Minimap needs RetryMapSize
+    -- Safely refresh map size after Slate layout
     if MinimapWidget and MinimapWidget:IsValid() then
-        local ok, err = pcall(function()
+        pcall(function()
             local ims = MinimapWidget.InitialMapSize
             if (not ims or ims.X <= 0 or ims.Y <= 0) and UpdateTick >= NextSizeRetryTick then
                 NextSizeRetryTick = UpdateTick + 20
-                Log(string.format("[RETRY_MAP_SIZE] Minimap InitialMapSize is (%.1f, %.1f). Calling RetryMapSize()...",
-                    ims and ims.X or -1, ims and ims.Y or -1))
                 if MinimapWidget.RetryMapSize then
                     MinimapWidget:RetryMapSize()
                 end
-                local newIms = MinimapWidget.InitialMapSize
-                Log(string.format("[RETRY_MAP_SIZE] After RetryMapSize, InitialMapSize = (%.1f, %.1f)",
-                    newIms and newIms.X or -1, newIms and newIms.Y or -1))
-                local cb = MinimapWidget.Canvas_Backgrounds
-                if cb and cb:IsValid() then
-                    local count = cb:GetChildrenCount()
-                    Log(string.format("[RETRY_MAP_SIZE] Canvas_Backgrounds count: %d", count))
-                    for i = 0, count - 1 do
-                        local c = cb:GetChildAt(i)
-                        if c and c:IsValid() and c.Slot then
-                            local pos = c.Slot.GetPosition and c.Slot:GetPosition() or { X = -1, Y = -1 }
-                            local bsz = c.Slot.GetSize and c.Slot:GetSize() or { X = -1, Y = -1 }
-                            Log(string.format("  [Bg %d] Pos=(%.1f, %.1f), Size=(%.1f, %.1f)", i, pos.X, pos.Y, bsz.X, bsz.Y))
-                        end
-                    end
-                end
             end
         end)
-        if not ok then
-            Log("[RETRY_MAP_SIZE ERROR] " .. tostring(err))
-        end
     end
 
     local desiredVisibility = (IsMinimapVisible and not MainMapOpen) and 0 or 2
@@ -533,7 +464,6 @@ end
 -- 6. Resource Map Icons System (Ores & Anima Vents)
 -- =========================================================================
 local ResourceIconsEnabled = true
-local DiscoveredResources = {}
 local TrackedResourceActors = {}
 local NextResourceScanTick = 0
 local MapIconCompClass = nil
@@ -547,9 +477,16 @@ local function GetResourceTexture(path)
     end
     local tex = StaticFindObject(path)
     if not tex or not tex:IsValid() then
-        local texClass = StaticFindObject("/Script/Engine.Texture2D")
-        if StaticLoadObject and texClass and texClass:IsValid() then
-            pcall(function() tex = StaticLoadObject(texClass, nil, path) end)
+        if StaticLoadObject then
+            pcall(function()
+                local texClass = StaticFindObject("/Script/Engine.Texture2D")
+                tex = StaticLoadObject(texClass, nil, path)
+            end)
+            if not tex or not tex:IsValid() then
+                pcall(function()
+                    tex = StaticLoadObject(nil, nil, path)
+                end)
+            end
         end
     end
     if tex and tex:IsValid() then
@@ -566,11 +503,16 @@ local function GetDefaultUMGMaterial()
     end
     DefaultUMGMat = StaticFindObject("/MinimapPlugin/Materials/Icons/M_UMG_MapIcon.M_UMG_MapIcon")
     if not DefaultUMGMat or not DefaultUMGMat:IsValid() then
-        local matClass = StaticFindObject("/Script/Engine.Material")
-        if StaticLoadObject and matClass and matClass:IsValid() then
+        if StaticLoadObject then
             pcall(function()
+                local matClass = StaticFindObject("/Script/Engine.Material")
                 DefaultUMGMat = StaticLoadObject(matClass, nil, "/MinimapPlugin/Materials/Icons/M_UMG_MapIcon.M_UMG_MapIcon")
             end)
+            if not DefaultUMGMat or not DefaultUMGMat:IsValid() then
+                pcall(function()
+                    DefaultUMGMat = StaticLoadObject(nil, nil, "/MinimapPlugin/Materials/Icons/M_UMG_MapIcon.M_UMG_MapIcon")
+                end)
+            end
         end
     end
     return DefaultUMGMat
@@ -629,7 +571,8 @@ local ResourceTypeConfig = {
 
 local function ClassifyResource(actor)
     if not actor or not actor:IsValid() then return nil end
-    local name = actor:GetFullName()
+    local ok, name = pcall(function() return actor:GetFullName() end)
+    if not ok or not name then return nil end
     if string.find(name, "AnimaVent") then
         return "AnimaVent"
     elseif string.find(name, "Copper") then
@@ -653,22 +596,22 @@ local function ClassifyResource(actor)
 end
 
 local function SetupResourceIcon(actor, resType)
-    if not actor or not actor:IsValid() then return end
+    if not actor or not actor:IsValid() then return false end
     local addr = actor:GetAddress()
     if TrackedResourceActors[addr] and TrackedResourceActors[addr]:IsValid() then
-        return
+        return false
     end
 
     if not MapIconCompClass or not MapIconCompClass:IsValid() then
         MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent")
     end
-    if not MapIconCompClass or not MapIconCompClass:IsValid() then return end
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then return false end
 
     local cfg = ResourceTypeConfig[resType] or ResourceTypeConfig.Copper
     local tex = GetResourceTexture(cfg.TexturePath) or GetResourceTexture(cfg.Fallback)
     local umgMat = GetDefaultUMGMaterial()
 
-    -- Look for existing component on actor first (e.g. if reloaded in active session)
+    -- Look for existing component on actor first
     local comp = nil
     if actor.GetComponentByClass then
         pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
@@ -711,12 +654,12 @@ local function SetupResourceIcon(actor, resType)
             comp.bIconVisible = ResourceIconsEnabled
             comp.IconTooltipText = cfg.Label
 
-            -- Finish registration (triggers MapTrackerComponent to notify maps)
+            -- Finish registration (triggers MapTrackerComponent to notify active maps)
             if comp.RegisterComponent then
                 comp:RegisterComponent()
             end
 
-            -- Native setters to guarantee live refresh
+            -- Live properties
             if tex and tex:IsValid() and comp.SetIconTexture then
                 comp:SetIconTexture(tex)
             end
@@ -741,7 +684,9 @@ local function SetupResourceIcon(actor, resType)
         end)
 
         TrackedResourceActors[addr] = comp
+        return true
     end
+    return false
 end
 
 local function ScanAndRegisterResources()
@@ -754,29 +699,30 @@ local function ScanAndRegisterResources()
         "BP_RuneEssenceGeyser_Base_C"
     }
 
-    local foundTotal = 0
+    local newCount = 0
     for _, className in ipairs(classesToScan) do
-        local actors = FindAllOf(className)
-        if actors then
+        local ok, actors = pcall(function() return FindAllOf(className) end)
+        if ok and actors then
             for _, actor in ipairs(actors) do
                 if actor and actor:IsValid() then
                     local resType = ClassifyResource(actor)
                     if resType then
-                        SetupResourceIcon(actor, resType)
-                        foundTotal = foundTotal + 1
+                        if SetupResourceIcon(actor, resType) then
+                            newCount = newCount + 1
+                        end
                     end
                 end
             end
         end
     end
-    if foundTotal > 0 then
-        Log(string.format("[RESOURCE SCAN] Registered %d resource nodes.", foundTotal))
+    if newCount > 0 then
+        Log(string.format("[RESOURCE SCAN] Registered %d new resource nodes.", newCount))
     end
 end
 
 -- 7. Keybinds
 pcall(function()
-    -- F6: Toggle Minimap On/Off (F8 is reserved for the UE4SS GUI)
+    -- F6: Toggle Minimap On/Off
     RegisterKeyBind(Key.F6, function()
         ExecuteInGameThread(function()
             if not MinimapWidget or not MinimapWidget:IsValid() then
@@ -842,38 +788,28 @@ pcall(function()
     end)
 end)
 
--- 7. Queue at most one game-thread update; retry expensive setup once a second.
+-- 8. Queue at most one game-thread update; retry expensive setup once a second.
 local function UpdateMinimap()
-    if NeedsOwnershipAudit then
-        NeedsOwnershipAudit = false
-        for _, candidate in ipairs(FindAllOf("WBP_DominionMinimap_C") or {}) do
-            pcall(function()
-                if candidate:IsValid() then
-                    local parent = candidate:GetParent()
-                    -- One-time migration of the exact orphan observed in this
-                    -- session's log; never classify other game widgets by name pattern.
-                    if (candidate:GetFullName() == "WBP_DominionMinimap_C /Engine/Transient.DomGameEngine_2147482588:BP_DominionGameInstance_C_2147482516.WBP_DominionMinimap_C_2147462564"
-                        or candidate:GetFullName() == "WBP_DominionMinimap_C /Engine/Transient.DomGameEngine_2147482588:BP_DominionGameInstance_C_2147482516.WBP_DominionMinimap_C_2147388445")
-                        and (not parent or not parent:IsValid()) then
-                        pcall(function() candidate:DeactivateWidget() end)
-                        candidate:RemoveFromParent()
-                        candidate:SetVisibility(2)
-                        Log("[MIGRATION] Removed verified legacy mod overlay")
-                    end
-                    Log("[OWNERSHIP] " .. candidate:GetFullName() .. " | parent=" ..
-                        (parent and parent:IsValid() and parent:GetFullName() or "none"))
-                end
-            end)
-        end
-    end
     local PC = UEHelpers.GetPlayerController()
     local Pawn = PC and PC:IsValid() and PC.Pawn
     if not Pawn or not Pawn:IsValid() or not Pawn.MapView or not Pawn.MapView:IsValid() then
+        ReadyPawnAddress = nil
         if MinimapWidget and MinimapWidget:IsValid() then
             MinimapWidget:SetVisibility(2)
         end
         return
     end
+
+    -- Possession happens before the map UI finishes loading. Wait 5 seconds
+    -- with the same pawn before creating the overlay or attaching listeners.
+    local address = Pawn:GetAddress()
+    if ReadyPawnAddress ~= address then
+        ReadyPawnAddress = address
+        ReadyAfterTick = UpdateTick + 100 -- 5s delay
+        NextResourceScanTick = ReadyAfterTick + 100 -- 10s delay (5s after minimap spawns)
+        TrackedResourceActors = {}
+    end
+    if UpdateTick < ReadyAfterTick then return end
 
     local ownerChanged = CurrentPlayerController and
         (not CurrentPlayerController:IsValid() or CurrentPlayerController:GetAddress() ~= PC:GetAddress()
@@ -889,8 +825,7 @@ local function UpdateMinimap()
         return
     end
 
-    -- Native projection centers on the attached private component. Zoom is
-    -- independent of the component used by the game's full-screen map.
+    -- Private MapView extent for independent zoom
     if PrivateMapView and PrivateMapView:IsValid() then
         pcall(function() PrivateMapView:SetViewExtent(210000 / CurrentZoom, 210000 / CurrentZoom) end)
     end
@@ -909,36 +844,23 @@ local function UpdateMinimap()
         end
         if tracker and tracker:IsValid() then
             MinimapWidget.MapTrackerComp = tracker
-            local initialized = pcall(function()
-                local geometry = MinimapWidget.GetCachedGeometry and MinimapWidget:GetCachedGeometry() or nil
-                MinimapWidget:InitMap(geometry)
+            pcall(function()
+                if MinimapWidget.SetupListeners then
+                    MinimapWidget:SetupListeners()
+                end
             end)
-            if initialized then Log("[INIT] Native map initialized using laid-out geometry") end
+            if MinimapWidget.InitFillBackground then
+                pcall(function() MinimapWidget:InitFillBackground() end)
+            end
         end
     end
     CheckMainMapVisibility()
     UpdateMinimapTerrain(PC)
 
-    -- Background Resource Scan every 5 seconds
+    -- Background Resource Scan every 5 seconds (starting after minimap is established)
     if ResourceIconsEnabled and UpdateTick >= NextResourceScanTick then
         NextResourceScanTick = UpdateTick + 100
         ScanAndRegisterResources()
-    end
-
-    if NeedsLayoutAudit and UpdateTick > 20 then
-        NeedsLayoutAudit = false
-        local slate = StaticFindObject("/Script/UMG.Default__SlateBlueprintLibrary")
-        local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
-        local vp = layout:GetViewportSize(PC)
-        Log(string.format("[LAYOUT] viewport %.0fx%.0f scale %.3f", vp.X, vp.Y, layout:GetViewportScale(PC)))
-        for _, w in ipairs({MinimapWidget, MinimapWidget.Canvas_Backgrounds, MinimapWidget.Switcher_MapActive}) do
-            if w and w.GetCachedGeometry then
-                local geom = w:GetCachedGeometry()
-                local size = slate:GetLocalSize(geom)
-                local pos = slate:LocalToAbsolute(geom, {X=0,Y=0})
-                Log(string.format("[LAYOUT] %s size %.1f,%.1f origin %.1f,%.1f", w:GetFullName(),size.X,size.Y,pos.X,pos.Y))
-            end
-        end
     end
 end
 
@@ -971,4 +893,4 @@ LoopAsync(50, function()
     return false
 end)
 
-Log("OSRS Minimap viewport repair v2 ready. F6: toggle, F7: recreate widget, PageUp/Down: zoom, [/]: size.")
+Log("OSRS Minimap viewport repair v2 ready. F6: toggle, F7: recreate widget, F9: resource icons, PageUp/Down: zoom, [/]: size.")
