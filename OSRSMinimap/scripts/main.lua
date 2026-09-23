@@ -689,14 +689,14 @@ local function SetupResourceIcon(actor, resType)
         pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
     end
 
-    -- Create non-deferred component (bDeferredFinish = false is stable and fully initializes)
+    -- Create deferred component so properties (Material & Texture) are assigned BEFORE registration
     if not comp or not comp:IsValid() then
         local ok, res = pcall(function()
             return actor:AddComponentByClass(MapIconCompClass, false, {
                 Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
                 Translation = { X = 0, Y = 0, Z = 150.0 },
                 Scale3D = { X = 1, Y = 1, Z = 1 }
-            }, false)
+            }, true)
         end)
         if ok and res and res:IsValid() then
             comp = res
@@ -722,6 +722,7 @@ local function SetupResourceIcon(actor, resType)
             comp.bHideOwnerInsideFog = false
             comp.bIconVisible = ResourceIconsEnabled
 
+            -- Finish registration with properties already populated; native MapTrackerComponent notifies active maps cleanly
             if comp.RegisterComponent then
                 comp:RegisterComponent()
             end
@@ -743,17 +744,6 @@ local function SetupResourceIcon(actor, resType)
             end
             if comp.SetIconZOrder then
                 comp:SetIconZOrder(10)
-            end
-        end)
-
-        -- Directly attach the newly created resource icon to active map widgets
-        pcall(function()
-            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
-                MinimapWidget:AddMapIcon(comp)
-            end
-            local official = GetOfficialMap()
-            if official and official:IsValid() and official.AddMapIcon then
-                official:AddMapIcon(comp)
             end
         end)
 
