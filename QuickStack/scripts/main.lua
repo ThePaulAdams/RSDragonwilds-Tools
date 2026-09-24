@@ -358,15 +358,25 @@ local function ExecuteQuickStack()
 end
 
 -- Keybind Registration
-pcall(function()
-    local modifier = Config.Modifier and { Config.Modifier } or nil
-    RegisterKeyBind(Config.Key, modifier, function()
-        ExecuteInGameThread(function()
-            ExecuteQuickStack()
-        end)
+local keyCallback = function()
+    ExecuteInGameThread(function()
+        ExecuteQuickStack()
     end)
-    Log(string.format("Keybind registered: [%s] -> Quick Stack to nearby chests.", "G"))
+end
+
+local okBind, errBind = pcall(function()
+    if Config.Modifier then
+        RegisterKeyBind(Config.Key, { Config.Modifier }, keyCallback)
+    else
+        RegisterKeyBind(Config.Key, keyCallback)
+    end
 end)
+
+if okBind then
+    Log(string.format("Keybind registered successfully: [%s] -> Quick Stack to nearby chests.", "G"))
+else
+    Log("ERROR registering keybind: " .. tostring(errBind))
+end
 
 return {
     ExecuteQuickStack = ExecuteQuickStack,
