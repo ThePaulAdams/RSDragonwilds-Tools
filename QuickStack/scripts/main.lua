@@ -17,12 +17,6 @@ local Config = {
     -- If false, will only top-off existing non-full stacks in the chest.
     OverflowToEmptySlots = false,
 
-    -- Play chest rattle audio on successful quick deposit
-    PlaySound = true,
-
-    -- Show visual on-screen notification toast
-    ShowNotification = true,
-
     -- Print detailed information to the console log
     DebugLog = true
 }
@@ -32,22 +26,56 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing QuickStack Mod...")
-Log("Press 'G' near your storage chests to quick-stack matching items!")
+Log("Initializing QuickStack Mod (Crash-Safe Build)...")
+Log("Press 'G' near storage chests to quick-stack matching items!")
 Log("==========================================")
 
--- Helper: Safe validation of an actor or component
-local function IsValidObject(obj)
-    if not obj then return false end
+-- Helper: Check if an actor is a real world actor (filters out CDOs and archetypes)
+local function IsValidWorldActor(actor)
+    if not actor then return false end
     local ok, valid = pcall(function()
-        return obj:IsValid() and obj:GetAddress() ~= 0
+        if not actor:IsValid() or actor:GetAddress() == 0 then return false end
+        if actor:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject) then
+            return false
+        end
+        local world = actor:GetWorld()
+        if not world or not world:IsValid() then return false end
+        return true
+    end)
+    return ok and valid
+end
+
+-- Helper: Check if an inventory component is valid and attached to a real world actor
+local function IsValidWorldInventory(comp)
+    if not comp then return false end
+    local ok, valid = pcall(function()
+        if not comp:IsValid() or comp:GetAddress() == 0 then return false end
+        if comp:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject) then
+            return false
+        end
+        local owner = comp:GetOwner()
+        if not owner or not IsValidWorldActor(owner) then return false end
+        return true
+    end)
+    return ok and valid
+end
+
+-- Helper: Safe validation of an Item object
+local function IsValidItem(item)
+    if not item then return false end
+    local ok, valid = pcall(function()
+        if not item:IsValid() or item:GetAddress() == 0 then return false end
+        if item:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject) then
+            return false
+        end
+        return true
     end)
     return ok and valid
 end
 
 -- Helper: Get user-friendly name of an Item
 local function GetItemName(item)
-    if not IsValidObject(item) then return "Unknown Item" end
+    if not IsValidItem(item) then return "Unknown Item" end
     local name = nil
     pcall(function()
         local textObj = item:GetPlayerFacingName()
@@ -67,7 +95,7 @@ end
 
 -- Helper: Get unique identifier address for an Item's Data Asset
 local function GetItemDataAddress(item)
-    if not IsValidObject(item) then return nil end
+    if not IsValidItem(item) then return nil end
     local addr = nil
     pcall(function()
         if item.ItemData and item.ItemData:IsValid() then
@@ -77,111 +105,96 @@ local function GetItemDataAddress(item)
     return addr
 end
 
--- On-screen Toast Notification System using Slate / UMG
-local ActiveToastWidget = nil
-local ToastHideTick = 0
-
-local function ShowToastMessage(PC, title, message, isSuccess)
-    if not Config.ShowNotification then return end
-    if not IsValidObject(PC) then return end
-
-    pcall(function()
-        -- Attempt to find or create a notification text block if Slate is supported
-        -- As a safe fallback across all UE versions, log to console and print on screen via ClientMessage
-        if PC.ClientMessage then
-            PC:ClientMessage(string.format("[%s] %s", title, message), "Event", 4.0)
-        end
-    end)
-end
-
--- Play Sound Effect helper
-local function PlayQuickDepositSound(PC)
-    if not Config.PlaySound or not IsValidObject(PC) then return end
-    pcall(function()
-        local soundObj = StaticFindObject("/Game/Audio/DataAssets/MSS_Suso_QuickDeposit_ChestRattle.MSS_Suso_QuickDeposit_ChestRattle")
-        if not soundObj or not soundObj:IsValid() then
-            soundObj = StaticFindObject("/Game/Audio/WwiseAudio/Events/Spells/MSS_Suso_QuickDeposit_ChestRattle.MSS_Suso_QuickDeposit_ChestRattle")
-        end
-        if soundObj and soundObj:IsValid() then
-            local GameplayStatics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
-            if GameplayStatics and GameplayStatics.PlaySound2D then
-                GameplayStatics:PlaySound2D(PC, soundObj, 1.0, 1.0)
-            end
-        end
-    end)
-end
-
--- The Core Quick-Stack Algorithm
+-- The Core Quick-Stack Execution
 local function ExecuteQuickStack()
     local PC = UEHelpers.GetPlayerController()
-    if not IsValidObject(PC) then
-        Log("QuickStack failed: Local PlayerController not found.")
+    if not IsValidWorldActor(PC) then
+        Log("QuickStack failed: Local PlayerController not found or invalid.")
         return
     end
 
     local pawn = PC.Pawn
-    if not IsValidObject(pawn) then
-        Log("QuickStack failed: Player pawn not spawned.")
+    if not IsValidWorldActor(pawn) then
+        Log("QuickStack failed: Player character pawn not spawned.")
         return
     end
 
     local playerLoc = nil
-    local okLoc = pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
-    if not okLoc or not playerLoc then
+    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
+    if not playerLoc then
         Log("QuickStack failed: Unable to get player location.")
         return
     end
 
     local playerInv = PC.BP_Components_Inventory
-    if not IsValidObject(playerInv) then
+    if not playerInv or not playerInv:IsValid() then
         Log("QuickStack failed: Player inventory component (BP_Components_Inventory) not found.")
         return
     end
 
     local maxRadiusSq = Config.SearchRadius * Config.SearchRadius
 
-    -- 1. Scan for all world chest inventories
-    local allChestComps = nil
-    local okChests = pcall(function()
-        return FindAllOf("BP_Components_WorldItemInventory_C")
-    end)
-    if not okChests or not allChestComps or #allChestComps == 0 then
-        Log("No storage containers found in current world partition.")
-        ShowToastMessage(PC, "Quick Stack", "No chests found nearby.", false)
-        return
+    -- 1. Find all nearby chests safely
+    local nearbyChests = {}
+    local seenAddresses = {}
+
+    local function RegisterCandidate(chestActor, chestInv)
+        if not IsValidWorldActor(chestActor) or not chestInv or not chestInv:IsValid() then return end
+        local addr = chestActor:GetAddress()
+        if seenAddresses[addr] then return end
+
+        local loc = nil
+        pcall(function() loc = chestActor:K2_GetActorLocation() end)
+        if not loc then return end
+
+        local dx = loc.X - playerLoc.X
+        local dy = loc.Y - playerLoc.Y
+        local dz = loc.Z - playerLoc.Z
+        local distSq = dx * dx + dy * dy + dz * dz
+
+        if distSq <= maxRadiusSq then
+            seenAddresses[addr] = true
+            table.insert(nearbyChests, {
+                Actor = chestActor,
+                Inventory = chestInv,
+                Distance = math.sqrt(distSq)
+            })
+        end
     end
 
-    -- 2. Filter nearby valid chests
-    local nearbyChests = {}
-    for _, comp in ipairs(allChestComps) do
-        if IsValidObject(comp) then
-            local chestOwner = nil
-            pcall(function() chestOwner = comp:GetOwner() end)
-            if IsValidObject(chestOwner) then
-                local chestLoc = nil
-                local okCLoc = pcall(function() chestLoc = chestOwner:K2_GetActorLocation() end)
-                if okCLoc and chestLoc then
-                    local dx = chestLoc.X - playerLoc.X
-                    local dy = chestLoc.Y - playerLoc.Y
-                    local dz = chestLoc.Z - playerLoc.Z
-                    local distSq = dx * dx + dy * dy + dz * dz
-                    if distSq <= maxRadiusSq then
-                        table.insert(nearbyChests, {
-                            Inventory = comp,
-                            Actor = chestOwner,
-                            Distance = math.sqrt(distSq)
-                        })
-                    end
+    -- Scan method A: Find all BP_BaseBuilding_Chest_C actors
+    local okChests, chestActors = pcall(function()
+        return FindAllOf("BP_BaseBuilding_Chest_C")
+    end)
+    if okChests and chestActors then
+        for _, actor in ipairs(chestActors) do
+            if IsValidWorldActor(actor) then
+                local inv = actor.BP_Components_WorldItemInventory
+                if inv and inv:IsValid() then
+                    RegisterCandidate(actor, inv)
+                end
+            end
+        end
+    end
+
+    -- Scan method B: Find any remaining world inventory components
+    local okComps, allComps = pcall(function()
+        return FindAllOf("BP_Components_WorldItemInventory_C")
+    end)
+    if okComps and allComps then
+        for _, comp in ipairs(allComps) do
+            if IsValidWorldInventory(comp) then
+                local owner = nil
+                pcall(function() owner = comp:GetOwner() end)
+                if owner and IsValidWorldActor(owner) then
+                    RegisterCandidate(owner, comp)
                 end
             end
         end
     end
 
     if #nearbyChests == 0 then
-        if Config.DebugLog then
-            Log(string.format("Scanned %d containers, but none are within %.1f meters.", #allChestComps, Config.SearchRadius / 100.0))
-        end
-        ShowToastMessage(PC, "Quick Stack", "No chests within range (" .. tostring(math.floor(Config.SearchRadius / 100)) .. "m).", false)
+        Log(string.format("No chests found within %.1f meters.", Config.SearchRadius / 100.0))
         return
     end
 
@@ -189,10 +202,10 @@ local function ExecuteQuickStack()
     table.sort(nearbyChests, function(a, b) return a.Distance < b.Distance end)
 
     if Config.DebugLog then
-        Log(string.format("Found %d storage container(s) within %.1f meters. Starting stack check...", #nearbyChests, Config.SearchRadius / 100.0))
+        Log(string.format("Found %d nearby chest(s). Starting quick stack...", #nearbyChests))
     end
 
-    -- 3. Determine Player Backpack Slot Bounds
+    -- 2. Determine Player Backpack Slot Bounds
     local hotbarCount = 0
     if Config.ProtectHotbar then
         pcall(function() hotbarCount = playerInv.NumberOfQuickActionSlots end)
@@ -206,20 +219,18 @@ local function ExecuteQuickStack()
         return
     end
 
-    -- Counters for user summary
     local totalItemsMoved = 0
-    local depositedItemsSummary = {} -- itemName -> count
+    local depositedItemsSummary = {}
     local affectedChests = {}
 
-    -- 4. Process each chest in range
-    for _, chestEntry in ipairs(nearbyChests) do
-        local chestInv = chestEntry.Inventory
-        local chestActor = chestEntry.Actor
+    -- 3. Process each chest
+    for _, entry in ipairs(nearbyChests) do
+        local chestInv = entry.Inventory
+        local chestActor = entry.Actor
 
-        -- Catalog the chest's current inventory contents
-        local chestItemDataMap = {} -- itemDataAddress -> true
-        local chestTargetSlots = {} -- itemDataAddress -> list of { slotZero, freeSpace, item }
-        local chestEmptySlots = {}  -- list of slotZero
+        local chestItemDataMap = {}
+        local chestTargetSlots = {}
+        local chestEmptySlots = {}
 
         local chestSlotCount = 0
         pcall(function() chestSlotCount = chestInv.ItemSlots:GetArrayNum() end)
@@ -229,7 +240,7 @@ local function ExecuteQuickStack()
             local cItem = nil
             pcall(function() cItem = chestInv.ItemSlots[cIdx] end)
 
-            if IsValidObject(cItem) then
+            if IsValidItem(cItem) then
                 local dataAddr = GetItemDataAddress(cItem)
                 if dataAddr then
                     chestItemDataMap[dataAddr] = true
@@ -252,30 +263,28 @@ local function ExecuteQuickStack()
             end
         end
 
-        -- Check if chest has anything that can receive items
-        local hasMatchingTypes = false
+        local hasItems = false
         for _ in pairs(chestItemDataMap) do
-            hasMatchingTypes = true
+            hasItems = true
             break
         end
 
-        if hasMatchingTypes then
-            -- Iterate player backpack slots (skipping hotbar slots)
+        if hasItems then
+            -- Iterate player backpack slots (skipping hotbar)
             for pIdx = hotbarCount + 1, playerSlotCount do
                 local pSlotZero = pIdx - 1
                 local pItem = nil
                 pcall(function() pItem = playerInv.ItemSlots[pIdx] end)
 
-                if IsValidObject(pItem) then
+                if IsValidItem(pItem) then
                     local pDataAddr = GetItemDataAddress(pItem)
                     local pCount = 0
                     pcall(function() pCount = pItem:GetStackSize() end)
 
-                    -- Only consider stowing if this chest ALREADY has this item type
                     if pDataAddr and chestItemDataMap[pDataAddr] and pCount > 0 then
                         local itemName = GetItemName(pItem)
 
-                        -- A: Try depositing into existing non-full stacks
+                        -- A: Fill existing non-full stacks
                         local targets = chestTargetSlots[pDataAddr]
                         if targets then
                             for _, target in ipairs(targets) do
@@ -302,7 +311,7 @@ local function ExecuteQuickStack()
                             end
                         end
 
-                        -- B: If player still has items, overflow is enabled, and chest has empty slots
+                        -- B: Overflow to empty slots if enabled
                         if pCount > 0 and Config.OverflowToEmptySlots and #chestEmptySlots > 0 then
                             local emptySlotZero = table.remove(chestEmptySlots, 1)
                             local moveAmount = pCount
@@ -328,32 +337,20 @@ local function ExecuteQuickStack()
         end
     end
 
-    -- 5. User Feedback & Results
+    -- 4. Result Logging
     if totalItemsMoved > 0 then
-        PlayQuickDepositSound(PC)
-
-        -- Build concise summary of deposited items
         local chestCount = 0
         for _ in pairs(affectedChests) do chestCount = chestCount + 1 end
 
-        local itemBreakdownList = {}
+        local breakdown = {}
         for name, count in pairs(depositedItemsSummary) do
-            table.insert(itemBreakdownList, string.format("%dx %s", count, name))
+            table.insert(breakdown, string.format("%dx %s", count, name))
         end
-        local breakdownStr = table.concat(itemBreakdownList, ", ")
 
-        local summaryMsg = string.format("Deposited %d item%s into %d chest%s: %s",
-            totalItemsMoved,
-            totalItemsMoved == 1 and "" or "s",
-            chestCount,
-            chestCount == 1 and "" or "s",
-            breakdownStr)
-
-        Log("SUCCESS: " .. summaryMsg)
-        ShowToastMessage(PC, "Quick Stack", summaryMsg, true)
+        Log(string.format(">>> SUCCESS: Quick-stacked %d item(s) into %d chest(s): %s",
+            totalItemsMoved, chestCount, table.concat(breakdown, ", ")))
     else
         Log("No matching items found in nearby chests to stack.")
-        ShowToastMessage(PC, "Quick Stack", "No matching items found in nearby chests.", false)
     end
 end
 
