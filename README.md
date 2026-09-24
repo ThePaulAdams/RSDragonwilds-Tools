@@ -63,8 +63,8 @@ Replaces the native HUD minimap with an Old School RuneScape style minimap.
 Transforms the faint vanilla white dot reticle into a prominent, high-contrast, scalable crosshair and spell-casting cursor.
 
 1. **Toggle On/Off:** Instant toggle (`F4`) between Enhanced Reticle and Vanilla Default.
-2. **High-Contrast Colors:** Instant keybind cycling (`F11`) through 7 luminous colors: Neon Green, OSRS Gold, Cyan, Crimson Red, Hot Pink, Amber Orange, and Pure White.
-3. **Centered Dynamic Scaling:** Instant keybind cycling (`F12`) through 5 size profiles (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) with centered pivot alignment for pixel-perfect targeting accuracy.
+2. **High-Contrast Colors:** Instant keybind cycling (`F1`) through 7 luminous colors: Neon Green, OSRS Gold, Cyan, Crimson Red, Hot Pink, Amber Orange, and Pure White.
+3. **Centered Dynamic Scaling:** Instant keybind cycling (`F2`) through 5 size profiles (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) with centered pivot alignment for pixel-perfect targeting accuracy.
 4. **100% Opacity Boost:** Eliminates the semi-transparent washed-out look of the vanilla dot so it stays clear against all bright backgrounds (skies, snow, sand, spells).
 5. **Universal State Coverage:** Automatically styles roaming crosshairs (`ReticleDefault`), utility magic aiming cursors (`ReticleAimedUtilityMagic`), combat spell reticles (`ReticleMagic`), bow aiming (`ReticleRangedADS`), stealth mode (`ReticleStealth`), and repair tools (`ReticleRepair`).
 6. **Native UI State Respect:** Disappears automatically during menus, inventory, map, and dialogue.

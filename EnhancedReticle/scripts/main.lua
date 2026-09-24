@@ -8,12 +8,17 @@ end
 Log("==========================================")
 Log("Initializing Enhanced Reticle Mod (Crash-Safe Event-Driven Build)...")
 Log("High-visibility crosshair & cast cursor enhancements.")
-Log("Controls: [F4] Toggle, [F11] Cycle Color, [F12] Cycle Size.")
+Log("Controls: [F4] Toggle, [F1] Cycle Color, [F2] Cycle Size.")
 Log("==========================================")
 
 -- Configuration & State
 local Config = {
     Enabled = true,
+
+    -- Keybinds (Customizable)
+    KeyToggle = Key.F4,
+    KeyCycleColor = Key.F1,
+    KeyCycleSize = Key.F2,
 
     -- Default: Neon Green (index 1)
     CurrentColorIndex = 1,
@@ -192,9 +197,9 @@ local function RegisterBinding(key, callback, desc)
     end
 end
 
-RegisterBinding(Key.F4,  ToggleEnabled, "F4: Toggle Reticle Enhancement")
-RegisterBinding(Key.F11, CycleColor,    "F11: Cycle Reticle Color")
-RegisterBinding(Key.F12, CycleSize,     "F12: Cycle Reticle Size")
+RegisterBinding(Config.KeyToggle,      ToggleEnabled, "F4: Toggle Reticle Enhancement")
+RegisterBinding(Config.KeyCycleColor,  CycleColor,    "F1: Cycle Reticle Color")
+RegisterBinding(Config.KeyCycleSize,   CycleSize,     "F2: Cycle Reticle Size")
 
 -- Event-driven hook: automatically apply styling when player spawns/respawns
 pcall(function()

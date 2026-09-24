@@ -29,8 +29,8 @@ In vanilla *Dragonwilds*, the central crosshair and spell targeting cursor (`Ret
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`F4`** | **Toggle Enhancement** | Switch between Enhanced Reticle and Vanilla Default |
-| **`F11`** | **Cycle Color** | Cycle through high-contrast colors (Neon Green -> OSRS Gold -> Cyan -> Crimson -> Hot Pink -> Amber -> White) |
-| **`F12`** | **Cycle Size** | Cycle reticle size (1.0x -> 1.5x -> 2.0x -> 2.5x -> 3.2x) |
+| **`F1`** | **Cycle Color** | Cycle through high-contrast colors (Neon Green -> OSRS Gold -> Cyan -> Crimson -> Hot Pink -> Amber -> White) |
+| **`F2`** | **Cycle Size** | Cycle reticle size (1.0x -> 1.5x -> 2.0x -> 2.5x -> 3.2x) |
 
 ---
 
