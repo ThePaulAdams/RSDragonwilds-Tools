@@ -1093,6 +1093,77 @@ PurgeAllResourceComponents = function()
     end
 end
 
+local function PruneDeadIconWidgets(Widget)
+    if not Widget or not Widget:IsValid() then return 0 end
+    local canvases = { Widget.Canvas_IconsBelowFog, Widget.Canvas_IconsAboveFog }
+    local totalPruned = 0
+
+    local activeAddrs = {}
+    for addr, data in pairs(TrackedResourceActors) do
+        local comp = (type(data) == "table") and data.Comp or data
+        if comp and comp:IsValid() then
+            pcall(function()
+                local cAddr = comp:GetAddress()
+                if cAddr then activeAddrs[cAddr] = true end
+            end)
+        end
+    end
+
+    for _, canvas in ipairs(canvases) do
+        if canvas and canvas:IsValid() then
+            local count = canvas:GetChildrenCount()
+            for i = count - 1, 0, -1 do
+                local child = canvas:GetChildAt(i)
+                if child and child:IsValid() then
+                    local shouldRemove = false
+                    local comp = nil
+                    pcall(function() comp = child.MapIconComp end)
+
+                    if not comp or not comp:IsValid() then
+                        shouldRemove = true
+                    else
+                        local owner = nil
+                        pcall(function() owner = comp:GetOwner() end)
+                        if not owner or not owner:IsValid() then
+                            shouldRemove = true
+                        else
+                            local ownerName = owner:GetFullName()
+                            if string.find(ownerName, "Ash")
+                                or string.find(ownerName, "BP_FellableTree_Base")
+                                or string.find(ownerName, "BP_FelledTree") then
+                                shouldRemove = true
+                            elseif ClassifyResource(owner) ~= nil then
+                                local cAddr = nil
+                                pcall(function() cAddr = comp:GetAddress() end)
+                                if not cAddr or not activeAddrs[cAddr] then
+                                    shouldRemove = true
+                                end
+                            end
+                        end
+                    end
+
+                    if shouldRemove then
+                        pcall(function()
+                            child:RemoveFromParent()
+                            totalPruned = totalPruned + 1
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    if totalPruned > 0 then
+        pcall(function()
+            if Widget.ForgetDestroyedIcons then
+                Widget:ForgetDestroyedIcons()
+            end
+        end)
+    end
+
+    return totalPruned
+end
+
 local function ScanAndRegisterResources()
     local PC = UEHelpers.GetPlayerController()
     local Pawn = PC and PC:IsValid() and PC.Pawn
@@ -1193,9 +1264,14 @@ local function ScanAndRegisterResources()
         end
     end
 
-    if newCount > 0 or culledCount > 0 then
-        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled. Active tracked: %d, Minimap icon widgets: %d",
-            newCount, culledCount, GetTrackedActorCount(), GetMapIconWidgetCount(MinimapWidget)))
+    local prunedMinimap = PruneDeadIconWidgets(MinimapWidget)
+    local official = GetOfficialMap()
+    local prunedOfficial = official and official:IsValid() and PruneDeadIconWidgets(official) or 0
+    local totalPruned = prunedMinimap + prunedOfficial
+
+    if newCount > 0 or culledCount > 0 or totalPruned > 0 then
+        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled, -%d widgets pruned. Active tracked: %d, Minimap icon widgets: %d",
+            newCount, culledCount, totalPruned, GetTrackedActorCount(), GetMapIconWidgetCount(MinimapWidget)))
     end
 end
 
