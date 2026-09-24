@@ -12,6 +12,7 @@ Each tool in this repository is designed as an independent, self-contained modul
 | :--- | :--- | :--- | :--- |
 | [**OSRSMinimap**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/OSRSMinimap/README.md) | HUD & Navigation | Stable | Old School RuneScape style square HUD minimap featuring player-centered compass rotation, high-value resource pin tracking, and dynamic proximity culling. |
 | [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | Stable | One-key (`G`) smart quick-stacking to nearby chests and storage containers with hotbar protection, audio feedback, and type matching. |
+| [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | HUD & Aiming | Stable | High-visibility reticle and cast cursor enhancement with customizable high-contrast colors, dynamic scaling (1.0x to 3.2x), and universal state support. |
 
 ---
 
@@ -54,6 +55,22 @@ Replaces the native HUD minimap with an Old School RuneScape style minimap.
 3. **No Main Map Interference:** The minimap operates completely independently of the Main Map (`M`). Opening the main map hides the minimap, and the main map functions normally without any missing panels, broken widgets, or destroyed zoom limits.
 4. **Delayed Loading:** The minimap waits until the player spawns into the world before attempting to load or track locations, preventing startup crashes.
 5. **Local Resource Tracking:** Dynamically tracks high-value resources: Oak, Willow, Maple, Yew, Coal, Clay, Blurite, Adamant, Mithril, Runite, Rune Essence, Anima Vents, and Fishing spots.
+
+---
+
+## 3. EnhancedReticle Mod
+
+Transforms the faint vanilla white dot reticle into a prominent, high-contrast, scalable crosshair and spell-casting cursor.
+
+### Core Features & Spec
+1. **High-Contrast Colors:** Instant keybind cycling (`F11`) through 7 luminous colors: Neon Green, OSRS Gold, Cyan, Crimson Red, Hot Pink, Amber Orange, and Pure White.
+2. **Centered Dynamic Scaling:** Instant keybind cycling (`F12`) through 5 size profiles (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) with centered pivot alignment for pixel-perfect targeting accuracy.
+3. **100% Opacity Boost:** Eliminates the semi-transparent washed-out look of the vanilla dot so it stays clear against all bright backgrounds (skies, snow, sand, spells).
+4. **Universal State Coverage:** Automatically styles roaming crosshairs (`ReticleDefault`), utility magic aiming cursors (`ReticleAimedUtilityMagic`), combat spell reticles (`ReticleMagic`), bow aiming (`ReticleRangedADS`), stealth mode (`ReticleStealth`), and repair tools (`ReticleRepair`).
+5. **Native UI State Respect:** Disappears automatically during menus, inventory, map, and dialogue.
+6. **Respawn & Fast-Travel Persistence:** Background heartbeat ensures custom reticle styling persists seamlessly across fast travel, level changes, and deaths.
+
+Detailed configuration and usage: [EnhancedReticle README](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md).
 
 ---
 

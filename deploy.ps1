@@ -10,7 +10,7 @@ if (-not (Test-Path $GamePath)) {
     exit 1
 }
 
-$availableTools = @("OSRSMinimap", "QuickStack")
+$availableTools = @("OSRSMinimap", "QuickStack", "EnhancedReticle")
 
 $toDeploy = @()
 if ($Tool -eq "All") {
