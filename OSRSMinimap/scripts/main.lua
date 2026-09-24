@@ -28,6 +28,16 @@ local ReadyAfterTick = 0
 local MinimapClass = nil
 local CachedBackgroundMID = nil
 local CachedBackgroundChild = nil
+local LastTerrainOffsetX = nil
+local LastTerrainOffsetY = nil
+local LastTerrainZoom = nil
+
+-- Resource tracking state (declared top-level so SetupMinimapWidget and InitMinimap have access)
+local ResourceIconsEnabled = true
+local TrackedResourceActors = {}
+local NextResourceScanTick = 0
+local MapIconCompClass = nil
+local PurgeAllResourceComponents = nil
 
 -- Persist only a name across Lua reloads, never a transient UObject pointer.
 local OwnedWidgetName = nil
@@ -319,7 +329,8 @@ local function SetupMinimapWidget(Widget, PC)
     pcall(function()
         if Widget.AddMapIcon then
             local repopCount = 0
-            for addr, comp in pairs(TrackedResourceActors) do
+            for addr, data in pairs(TrackedResourceActors) do
+                local comp = (type(data) == "table") and data.Comp or data
                 if comp and comp:IsValid() then
                     local countBefore = GetMapIconWidgetCount(Widget)
                     Widget:AddMapIcon(comp)
@@ -352,6 +363,10 @@ local function InitMinimap(ForceRecreate)
     if ForceRecreate and MinimapWidget and MinimapWidget:IsValid() then
         pcall(function() MinimapWidget:RemoveFromParent() end)
         MinimapWidget = nil
+    end
+
+    if ForceRecreate and PurgeAllResourceComponents then
+        pcall(PurgeAllResourceComponents)
     end
 
     CleanupAllOrphans(nil)
@@ -427,6 +442,18 @@ local function UpdateMinimapTerrain(PC)
     if not nativeOffset then return end
     local offsetX, offsetY = nativeOffset.X, nativeOffset.Y
 
+    -- Dirty check: skip expensive Slate matrix transform updates if offset & zoom are unchanged
+    if LastTerrainOffsetX and LastTerrainOffsetY and LastTerrainZoom then
+        if math.abs(offsetX - LastTerrainOffsetX) < 0.05
+            and math.abs(offsetY - LastTerrainOffsetY) < 0.05
+            and math.abs(CurrentZoom - LastTerrainZoom) < 0.01 then
+            return
+        end
+    end
+    LastTerrainOffsetX = offsetX
+    LastTerrainOffsetY = offsetY
+    LastTerrainZoom = CurrentZoom
+
     pcall(function()
         -- North-up mode: translate only. Turning does not orbit terrain.
         if MinimapWidget.Canvas_Backgrounds and MinimapWidget.Canvas_Backgrounds:IsValid() then
@@ -492,10 +519,6 @@ end
 -- =========================================================================
 -- 6. Resource Map Icons System (Ores & Anima Vents)
 -- =========================================================================
-local ResourceIconsEnabled = true
-local TrackedResourceActors = {}
-local NextResourceScanTick = 0
-local MapIconCompClass = nil
 
 -- Texture Cache
 local CachedResourceTextures = {}
@@ -828,7 +851,7 @@ local function ClassifyResource(actor)
         return "Fishing"
     end
 
-    -- 3. Trees (Woodcutting)
+    -- 3. Trees (Woodcutting - High-Value Trees Only, matching classic OSRS map style)
     if string.find(name, "Oak") then
         return "Oak"
     elseif string.find(name, "Willow") then
@@ -837,10 +860,6 @@ local function ClassifyResource(actor)
         return "Yew"
     elseif string.find(name, "Maple") then
         return "Maple"
-    elseif string.find(name, "Ash") then
-        return "Ash"
-    elseif string.find(name, "Tree") or string.find(name, "FellableTree") or string.find(name, "FelledTree") then
-        return "Tree"
     end
 
     -- 4. Specific Ores and Minerals (Prioritize specific minerals over generic names)
@@ -882,8 +901,12 @@ end
 local function SetupResourceIcon(actor, resType)
     if not actor or not actor:IsValid() then return false end
     local addr = actor:GetAddress()
-    if TrackedResourceActors[addr] and TrackedResourceActors[addr]:IsValid() then
-        return false
+    if TrackedResourceActors[addr] then
+        local existing = TrackedResourceActors[addr]
+        local existingComp = (type(existing) == "table") and existing.Comp or existing
+        if existingComp and existingComp:IsValid() then
+            return false
+        end
     end
 
     if not MapIconCompClass or not MapIconCompClass:IsValid() then
@@ -1007,10 +1030,67 @@ local function SetupResourceIcon(actor, resType)
             end
         end)
 
-        TrackedResourceActors[addr] = comp
+        local loc = nil
+        pcall(function() loc = actor:K2_GetActorLocation() end)
+        TrackedResourceActors[addr] = {
+            Actor = actor,
+            Comp = comp,
+            Location = loc
+        }
         return true
     end
     return false
+end
+
+local function GetTrackedActorCount()
+    local count = 0
+    for _ in pairs(TrackedResourceActors) do
+        count = count + 1
+    end
+    return count
+end
+
+PurgeAllResourceComponents = function()
+    local ok, allComps = pcall(function() return FindAllOf("MapIconComponent") end)
+    if not ok or not allComps then return end
+    local destroyed = 0
+    for _, comp in ipairs(allComps) do
+        if comp and comp:IsValid() then
+            local shouldDestroy = false
+            pcall(function()
+                local owner = comp:GetOwner()
+                if not owner or not owner:IsValid() then
+                    shouldDestroy = true
+                else
+                    local ownerName = owner:GetFullName()
+                    if string.find(ownerName, "Ash")
+                        or string.find(ownerName, "BP_FellableTree_Base")
+                        or string.find(ownerName, "BP_FelledTree") then
+                        shouldDestroy = true
+                    end
+                end
+            end)
+            if shouldDestroy then
+                pcall(function()
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    comp:K2_DestroyComponent(comp)
+                    destroyed = destroyed + 1
+                end)
+            end
+        end
+    end
+    if destroyed > 0 then
+        pcall(function()
+            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+                MinimapWidget:ForgetDestroyedIcons()
+            end
+            local official = GetOfficialMap()
+            if official and official:IsValid() and official.ForgetDestroyedIcons then
+                official:ForgetDestroyedIcons()
+            end
+        end)
+        Log(string.format("[PURGE] Destroyed %d legacy Ash/generic tree icon components from world.", destroyed))
+    end
 end
 
 local function ScanAndRegisterResources()
@@ -1020,41 +1100,80 @@ local function ScanAndRegisterResources()
     local playerLoc = Pawn:K2_GetActorLocation()
     if not playerLoc then return end
 
-    -- Scan radius: 350 meters around the player
-    local maxDistSq = 35000.0 * 35000.0
+    -- Scan radius: 200 meters around the player
+    local maxDistSq = 20000.0 * 20000.0
+    -- Cull radius: 250 meters around the player (50m hysteresis buffer)
+    local cullDistSq = 25000.0 * 25000.0
 
+    -- Phase 1: Distance Culling & Dead Actor Cleanup
+    local culledCount = 0
+    for addr, data in pairs(TrackedResourceActors) do
+        local actor = (type(data) == "table") and data.Actor or nil
+        local comp = (type(data) == "table") and data.Comp or data
+        local loc = (type(data) == "table") and data.Location or nil
+
+        local shouldCull = false
+        if not comp or not comp:IsValid() then
+            shouldCull = true
+        elseif not actor or not actor:IsValid() then
+            shouldCull = true
+        else
+            if not loc and actor:IsValid() then
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+            end
+            if loc then
+                local dx = playerLoc.X - loc.X
+                local dy = playerLoc.Y - loc.Y
+                local dz = playerLoc.Z - loc.Z
+                local distSq = dx * dx + dy * dy + dz * dz
+                if distSq > cullDistSq then
+                    shouldCull = true
+                end
+            end
+        end
+
+        if shouldCull then
+            if comp and comp:IsValid() then
+                pcall(function()
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    comp:K2_DestroyComponent(comp)
+                end)
+            end
+            TrackedResourceActors[addr] = nil
+            culledCount = culledCount + 1
+        end
+    end
+
+    if culledCount > 0 then
+        pcall(function()
+            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+                MinimapWidget:ForgetDestroyedIcons()
+            end
+            local official = GetOfficialMap()
+            if official and official:IsValid() and official.ForgetDestroyedIcons then
+                official:ForgetDestroyedIcons()
+            end
+        end)
+    end
+
+    -- Phase 2: Targeted Proximity Scan (Consolidated Parent Classes)
     local classesToScan = {
         "BP_AnimaVent_C",
-        "BP_OreNode_Large_PARENT_C",
-        "BP_OreNode_Medium_PARENT_C",
         "BP_OreNode_C",
         "BP_MiningRock_Base_C",
-        "BP_OreNode_Stone_C",
-        "BP_OreNode_Sandstone_C",
+        "BP_DivineRockBase_C",
         "BP_RuneEssenceGeyser_Base_C",
         "BP_MiningRock_RuneEssence_Static_Base_C",
         "BP_MiningRock_GeyserRuneEssence_C",
-        "BP_DivineRockBase_C",
-        "BP_DivineRock_Coal_C",
-        "BP_DivineRock_Adamantite_C",
-        "BP_DivineRock_Blurite_C",
-        "BP_DivineRock_Mithril_C",
-        "BP_DivineRock_Runite_C",
-        "BP_DivineRock_Iron_C",
-        "BP_DivineRock_Gold_C",
-        "BP_DivineRock_Silver_C",
-        "BP_FellableTree_Base_C",
-        "BP_FellableTree_Ash_C",
+        "BP_FishingNodeV2_C",
+        "BP_CatchableFish_C",
         "BP_FellableTree_Oak_C",
         "BP_FellableTree_Willow_C",
         "BP_YewTree_01_C",
         "BP_YewTree_02_C",
         "BP_YewTree_03_C",
-        "BP_FelledTree_Base_C",
-        "BP_FishingNodeV2_C",
-        "BP_FishingNodeV2_Net_Base_C",
-        "BP_FishingNodeV2_Rod_Base_C",
-        "BP_CatchableFish_C"
+        "BP_DR_Tree_Maple_01_C",
+        "BP_DR_Tree_Maple_02_C"
     }
 
     local newCount = 0
@@ -1073,8 +1192,10 @@ local function ScanAndRegisterResources()
             end
         end
     end
-    if newCount > 0 then
-        Log(string.format("[RESOURCE SCAN] Registered %d new resource nodes near player. Minimap icon count: %d", newCount, GetMapIconWidgetCount(MinimapWidget)))
+
+    if newCount > 0 or culledCount > 0 then
+        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled. Active tracked: %d, Minimap icon widgets: %d",
+            newCount, culledCount, GetTrackedActorCount(), GetMapIconWidgetCount(MinimapWidget)))
     end
 end
 
@@ -1105,7 +1226,8 @@ pcall(function()
     RegisterKeyBind(Key.F9, function()
         ExecuteInGameThread(function()
             ResourceIconsEnabled = not ResourceIconsEnabled
-            for addr, comp in pairs(TrackedResourceActors) do
+            for addr, data in pairs(TrackedResourceActors) do
+                local comp = (type(data) == "table") and data.Comp or data
                 if comp and comp:IsValid() and comp.SetIconVisible then
                     pcall(function() comp:SetIconVisible(ResourceIconsEnabled) end)
                 end
@@ -1164,8 +1286,17 @@ local function UpdateMinimap()
     if ReadyPawnAddress ~= address then
         ReadyPawnAddress = address
         ReadyAfterTick = UpdateTick + 100 -- 5s delay
-        NextResourceScanTick = ReadyAfterTick + 100 -- 10s delay (5s after minimap spawns)
+        for _, data in pairs(TrackedResourceActors) do
+            local comp = (type(data) == "table") and data.Comp or data
+            if comp and comp:IsValid() then
+                pcall(function()
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    comp:K2_DestroyComponent(comp)
+                end)
+            end
+        end
         TrackedResourceActors = {}
+        NextResourceScanTick = ReadyAfterTick + 100 -- 10s delay (5s after minimap spawns)
     end
     if UpdateTick < ReadyAfterTick then return end
 
@@ -1252,3 +1383,10 @@ LoopAsync(50, function()
 end)
 
 Log("OSRS Minimap viewport repair v2 ready. F6: toggle, F7: recreate widget, F9: resource icons, PageUp/Down: zoom, [/]: size.")
+
+-- One-time startup purge of any legacy ash/generic tree icon components lingering in world
+ExecuteInGameThread(function()
+    if PurgeAllResourceComponents then
+        pcall(PurgeAllResourceComponents)
+    end
+end)
