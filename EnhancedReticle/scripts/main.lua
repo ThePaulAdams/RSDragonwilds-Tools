@@ -6,9 +6,9 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing Enhanced Reticle Mod...")
+Log("Initializing Enhanced Reticle Mod (Crash-Safe Event-Driven Build)...")
 Log("High-visibility crosshair & cast cursor enhancements.")
-Log("Controls: [F10] Toggle, [F11] Cycle Color, [F12] Cycle Size.")
+Log("Controls: [F4] Toggle, [F11] Cycle Color, [F12] Cycle Size.")
 Log("==========================================")
 
 -- Configuration & State
@@ -57,10 +57,6 @@ local Config = {
 local VanillaColor = { R = 1.0, G = 1.0, B = 1.0, A = 0.7 }
 local VanillaScale = 1.0
 
--- Cached list of active crosshair Image widgets
-local CachedCrosshairs = {}
-local LastScanTime = 0
-
 -- Helper: Check if an object is a valid, real game instance (filters out CDOs & archetypes)
 local function IsValidInstance(obj)
     if not obj then return false end
@@ -104,99 +100,36 @@ local function StyleCrosshair(crosshair, col, scale)
         -- Color and Opacity
         crosshair:SetColorAndOpacity({ R = col.R, G = col.G, B = col.B, A = col.A })
 
-        -- Brush Tint Color (if supported by UImage)
-        pcall(function()
-            crosshair:SetBrushTintColor({
-                SpecifiedColor = { R = col.R, G = col.G, B = col.B, A = col.A },
-                ColorUseRule = 0
-            })
-        end)
-
         -- Ensure full opacity
         pcall(function() crosshair:SetOpacity(col.A) end)
         pcall(function() crosshair:SetRenderOpacity(col.A) end)
     end)
 end
 
--- Collect all valid crosshair Image widgets
-local function CollectCrosshairs()
-    local crosshairs = {}
-    local seenAddresses = {}
-
-    local function addCrosshair(img)
-        if img and img:IsValid() and img:GetAddress() ~= 0 then
-            local addr = img:GetAddress()
-            if not seenAddresses[addr] then
-                seenAddresses[addr] = true
-                table.insert(crosshairs, img)
-            end
-        end
-    end
-
-    -- 1. Scan individual reticle widget classes
-    for _, className in ipairs(Config.ReticleClasses) do
-        local instances = FindAllOf(className) or {}
-        for _, inst in ipairs(instances) do
-            if IsValidInstance(inst) then
-                local ch = FindCrosshair(inst)
-                if ch then addCrosshair(ch) end
-            end
-        end
-    end
-
-    -- 2. Scan parent WBP_HUD_ReticleWidget_C widgets and their sub-widgets
-    local reticleContainers = FindAllOf("WBP_HUD_ReticleWidget_C") or {}
-    for _, container in ipairs(reticleContainers) do
-        if IsValidInstance(container) then
-            local subNames = {
-                "ReticleDefault",
-                "ReticleAimedUtilityMagic",
-                "ReticleMagic",
-                "ReticleRangedADS",
-                "ReticleStealth",
-                "ReticleRepair",
-                "FishingReticle"
-            }
-            for _, subName in ipairs(subNames) do
-                pcall(function()
-                    local sub = container[subName]
-                    if sub and IsValidInstance(sub) then
-                        local ch = FindCrosshair(sub)
-                        if ch then addCrosshair(ch) end
-                    end
-                end)
-            end
-        end
-    end
-
-    return crosshairs
-end
-
--- Apply styling to all collected reticles
+-- Apply styling to all active reticle widgets (strictly executed on Game Thread)
 local function ApplyStyleToAllReticles(notifyLog)
     local col = Config.Enabled and Config.Colors[Config.CurrentColorIndex] or VanillaColor
     local scale = Config.Enabled and Config.Sizes[Config.CurrentSizeIndex].Scale or VanillaScale
-
-    -- Check if cache is still fully valid
-    local needScan = (#CachedCrosshairs == 0)
-    if not needScan then
-        for _, ch in ipairs(CachedCrosshairs) do
-            if not ch:IsValid() or ch:GetAddress() == 0 then
-                needScan = true
-                break
-            end
-        end
-    end
-
-    if needScan then
-        CachedCrosshairs = CollectCrosshairs()
-    end
-
     local count = 0
-    for _, ch in ipairs(CachedCrosshairs) do
-        if ch:IsValid() and ch:GetAddress() ~= 0 then
-            StyleCrosshair(ch, col, scale)
-            count = count + 1
+    local seenAddresses = {}
+
+    -- Scan individual reticle widget classes
+    for _, className in ipairs(Config.ReticleClasses) do
+        local ok, instances = pcall(function() return FindAllOf(className) end)
+        if ok and instances then
+            for _, inst in ipairs(instances) do
+                if IsValidInstance(inst) then
+                    local ch = FindCrosshair(inst)
+                    if ch and ch:IsValid() and ch:GetAddress() ~= 0 then
+                        local addr = ch:GetAddress()
+                        if not seenAddresses[addr] then
+                            seenAddresses[addr] = true
+                            StyleCrosshair(ch, col, scale)
+                            count = count + 1
+                        end
+                    end
+                end
+            end
         end
     end
 
@@ -214,7 +147,7 @@ end
 local function ToggleEnabled()
     Config.Enabled = not Config.Enabled
     ExecuteInGameThread(function()
-        ApplyStyleToAllReticles(false)
+        ApplyStyleToAllReticles(true)
     end)
     Log(string.format("Enhanced Reticle: %s", Config.Enabled and "ENABLED" or "DISABLED (Vanilla Restored)"))
 end
@@ -226,7 +159,7 @@ local function CycleColor()
     end
     Config.Enabled = true
     ExecuteInGameThread(function()
-        ApplyStyleToAllReticles(false)
+        ApplyStyleToAllReticles(true)
     end)
     local cur = Config.Colors[Config.CurrentColorIndex]
     Log(string.format("Reticle Color changed to: [%d/%d] %s", Config.CurrentColorIndex, #Config.Colors, cur.Name))
@@ -239,7 +172,7 @@ local function CycleSize()
     end
     Config.Enabled = true
     ExecuteInGameThread(function()
-        ApplyStyleToAllReticles(false)
+        ApplyStyleToAllReticles(true)
     end)
     local cur = Config.Sizes[Config.CurrentSizeIndex]
     Log(string.format("Reticle Size changed to: [%d/%d] %s", Config.CurrentSizeIndex, #Config.Sizes, cur.Name))
@@ -259,21 +192,22 @@ local function RegisterBinding(key, callback, desc)
     end
 end
 
-RegisterBinding(Key.F10, ToggleEnabled, "F10: Toggle Reticle Enhancement")
+RegisterBinding(Key.F4,  ToggleEnabled, "F4: Toggle Reticle Enhancement")
 RegisterBinding(Key.F11, CycleColor,    "F11: Cycle Reticle Color")
 RegisterBinding(Key.F12, CycleSize,     "F12: Cycle Reticle Size")
+
+-- Event-driven hook: automatically apply styling when player spawns/respawns
+pcall(function()
+    RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self)
+        ExecuteInGameThread(function()
+            ApplyStyleToAllReticles(false)
+        end)
+    end)
+end)
 
 -- Initial apply
 ExecuteInGameThread(function()
     ApplyStyleToAllReticles(true)
-end)
-
--- Heartbeat loop: periodically ensure styling remains applied across respawns / level transitions / HUD rebuilds
-LoopAsync(1000, function()
-    ExecuteInGameThread(function()
-        ApplyStyleToAllReticles(false)
-    end)
-    return false -- return false to continue looping in UE4SS
 end)
 
 return {
