@@ -1,16 +1,59 @@
-# RS-Dragonwilds Tools
+# RS-Dragonwilds Tools Suite
 
-A suite of modding tools and HUD replacements for RS-Dragonwilds.
+A modular suite of modding tools, quality-of-life improvements, and HUD replacements for *RuneScape: Dragonwilds*.
 
-## OSRS Minimap Mod
-This mod replaces the native HUD minimap with an Old School RuneScape style minimap. 
+Each tool in this repository is designed as an independent, self-contained module that can be installed, configured, and shared individually or used together as a complete suite.
+
+---
+
+## Tools in this Repository
+
+| Tool | Category | Status | Description |
+| :--- | :--- | :--- | :--- |
+| [**OSRSMinimap**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/OSRSMinimap/README.md) | HUD & Navigation | Stable | Old School RuneScape style square HUD minimap featuring player-centered compass rotation, high-value resource pin tracking, and dynamic proximity culling. |
+| [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | Stable | One-key (`G`) smart quick-stacking to nearby chests and storage containers with hotbar protection, audio feedback, and type matching. |
+
+---
+
+## Quick Deployment
+
+You can deploy tools directly to your game installation with the included PowerShell deployer:
+
+```powershell
+# Deploy all tools
+.\deploy.ps1
+
+# Or deploy an individual tool
+.\deploy.ps1 -Tool QuickStack
+.\deploy.ps1 -Tool OSRSMinimap
+```
+
+---
+
+## 1. QuickStack Mod
+
+### Overview
+Pressing `G` scans all storage containers within radius (default: 25m) and deposits matching items from your inventory into nearby chests in milliseconds.
+
+### Core Principles
+1. **Smart Matching:** Only deposits items into chests that **already hold** at least one stack of that item type.
+2. **Hotbar Safe:** The player's active quick-action hotbar (weapons, tools, food) is never touched.
+3. **Sound & Toast Feedback:** Plays native chest audio and shows an itemized deposit summary.
+
+Detailed configuration and usage: [QuickStack README](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md).
+
+---
+
+## 2. OSRS Minimap Mod
+
+Replaces the native HUD minimap with an Old School RuneScape style minimap.
 
 ### Core Features & Spec
 1. **OSRS Compass Style:** The map texture translates and rotates underneath the player. The player is always locked to the center, and the player icon always points UP (Rotation 0.0), acting as a true compass.
 2. **Square Masking:** The minimap is shaped in a classic square instead of a circle.
-3. **No Main Map Interference:** The minimap operates completely independently of the Main Map (M). Opening the main map hides the minimap, and the main map functions normally without any missing panels, broken widgets, or destroyed zoom limits.
+3. **No Main Map Interference:** The minimap operates completely independently of the Main Map (`M`). Opening the main map hides the minimap, and the main map functions normally without any missing panels, broken widgets, or destroyed zoom limits.
 4. **Delayed Loading:** The minimap waits until the player spawns into the world before attempting to load or track locations, preventing startup crashes.
-5. **Local Resource Tracking (Planned):** Will display pins for nearby harvestable resources.
+5. **Local Resource Tracking:** Dynamically tracks high-value resources: Oak, Willow, Maple, Yew, Coal, Clay, Blurite, Adamant, Mithril, Runite, Rune Essence, Anima Vents, and Fishing spots.
 
 ---
 
@@ -73,15 +116,6 @@ To make the map rotate around the player while keeping the player centered and p
 
 #### 6. Performance Architecture & Zero-Scan Rules
 - **No Periodic `GUObjectArray` Scans:** Never call `FindAllOf` inside per-frame or high-frequency loops. Cache singleton pointers (`BP_DominionGameInstance_C`, `WBP_TopNav_Map_C`, `WBP_DominionMinimap_C`) and query `CachedOfficialTopNav:IsVisible()` in $O(1)$ time. Throttled fallback searches run at most once every 5 seconds.
+- **Dynamic Distance Culling:** Icons beyond 35 meters are not instantiated in Slate, keeping active icon widgets under ~220 at all times.
 - **Bypass RetainerBox Off-Screen Render Targets:** Calling `RetainerBox_Minimap:SetRetainRendering(false)` disables expensive GPU off-screen texture allocation and redraws on transformed layer hierarchies, relying instead on hardware GPU scissor clipping.
 - **Idle Dirty Checking:** If the player location, rotation, and zoom have not changed, Slate render transforms are skipped entirely, resulting in 0% CPU consumption while stationary.
-
----
-
-### Keybinds
-- **F6:** Toggle Minimap On/Off
-- **F7:** Force Reload Minimap Widget
-- **F8:** Toggle Rotating Compass Map vs North-Up Map
-- **PageUp / PageDown:** Adjust Zoom Level
-- **[ / ]:** Adjust Minimap Canvas Dimensions
-
