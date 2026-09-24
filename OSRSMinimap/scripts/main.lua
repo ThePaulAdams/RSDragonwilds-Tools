@@ -889,10 +889,6 @@ local function ClassifyResource(actor)
         return "Clay"
     elseif string.find(name, "Sandstone") then
         return "Sandstone"
-    elseif string.find(name, "Stone") then
-        return "Stone"
-    elseif string.find(name, "OreNode") or string.find(name, "MiningRock") or string.find(name, "DivineRock") then
-        return "Copper"
     end
 
     return nil
@@ -1065,7 +1061,11 @@ PurgeAllResourceComponents = function()
                     local ownerName = owner:GetFullName()
                     if string.find(ownerName, "Ash")
                         or string.find(ownerName, "BP_FellableTree_Base")
-                        or string.find(ownerName, "BP_FelledTree") then
+                        or string.find(ownerName, "BP_FelledTree")
+                        or string.find(ownerName, "BP_MiningRock_Base")
+                        or string.find(ownerName, "BP_OreNode_Stone") then
+                        shouldDestroy = true
+                    elseif comp.IconZOrder == 10 and ClassifyResource(owner) == nil then
                         shouldDestroy = true
                     end
                 end
@@ -1089,7 +1089,7 @@ PurgeAllResourceComponents = function()
                 official:ForgetDestroyedIcons()
             end
         end)
-        Log(string.format("[PURGE] Destroyed %d legacy Ash/generic tree icon components from world.", destroyed))
+        Log(string.format("[PURGE] Destroyed %d legacy Ash/generic rock icon components from world.", destroyed))
     end
 end
 
@@ -1130,12 +1130,14 @@ local function PruneDeadIconWidgets(Widget)
                             local ownerName = owner:GetFullName()
                             if string.find(ownerName, "Ash")
                                 or string.find(ownerName, "BP_FellableTree_Base")
-                                or string.find(ownerName, "BP_FelledTree") then
+                                or string.find(ownerName, "BP_FelledTree")
+                                or string.find(ownerName, "BP_MiningRock_Base")
+                                or string.find(ownerName, "BP_OreNode_Stone") then
                                 shouldRemove = true
-                            elseif ClassifyResource(owner) ~= nil then
+                            elseif comp.IconZOrder == 10 then
                                 local cAddr = nil
                                 pcall(function() cAddr = comp:GetAddress() end)
-                                if not cAddr or not activeAddrs[cAddr] then
+                                if not cAddr or not activeAddrs[cAddr] or ClassifyResource(owner) == nil then
                                     shouldRemove = true
                                 end
                             end
@@ -1143,8 +1145,20 @@ local function PruneDeadIconWidgets(Widget)
                     end
 
                     if shouldRemove then
+                        if comp and comp:IsValid() then
+                            pcall(function()
+                                if comp.SetIconVisible then comp:SetIconVisible(false) end
+                                comp:K2_DestroyComponent(comp)
+                            end)
+                        end
                         pcall(function()
-                            child:RemoveFromParent()
+                            if canvas.RemoveChildAt then
+                                canvas:RemoveChildAt(i)
+                            elseif canvas.RemoveChild then
+                                canvas:RemoveChild(child)
+                            else
+                                child:RemoveFromParent()
+                            end
                             totalPruned = totalPruned + 1
                         end)
                     end
@@ -1231,7 +1245,6 @@ local function ScanAndRegisterResources()
     local classesToScan = {
         "BP_AnimaVent_C",
         "BP_OreNode_C",
-        "BP_MiningRock_Base_C",
         "BP_DivineRockBase_C",
         "BP_RuneEssenceGeyser_Base_C",
         "BP_MiningRock_RuneEssence_Static_Base_C",
