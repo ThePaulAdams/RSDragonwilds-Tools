@@ -19,7 +19,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | `[G]` | One-key smart inventory depositing into nearby chests within 25m. Only deposits into existing item stacks and protects your active hotbar. |
 | [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
 | [**TelekineticWoodcraft**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`F6`). |
-| [**ModMenu**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/ModMenu/README.md) | Dashboard & UI | `[F7]`, Pause Menu | In-game mod status overlay and hotkey reference card. Accessible anytime via `[F7]` or directly from the ESC Pause Menu button. |
+| [**ModMenu**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/ModMenu/README.md) | Dashboard & UI | `[F8]`, `[Insert]`, Pause Menu | In-game mod status overlay and hotkey reference card. Accessible anytime via `[F8]`/`[Insert]` or directly from the ESC Pause Menu button. |
 
 ---
 
@@ -27,7 +27,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 
 | Keybind | Tool | Action |
 | :--- | :--- | :--- |
-| **`[F7]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay |
+| **`[F8]`** or **`[Insert]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay |
 | **`[ESC]`** | **Pause Menu** | Click the new **"TOOLKIT MODS"** button to view active mods |
 | **`[G]`** | **Quick Stack** | Quick-stack matching inventory items to all nearby chests (25m) |
 | **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |

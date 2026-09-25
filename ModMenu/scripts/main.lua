@@ -7,8 +7,8 @@ end
 
 Log("==========================================")
 Log("Initializing RSDragonwilds Toolkit Mod Menu...")
-Log("Controls: [F7] Toggle Mod Menu Overlay")
-Log("          Also available from the Pause Menu!")
+Log("Controls: [F8] or [Insert] Toggle Mod Menu Overlay")
+Log("          Or click 'TOOLKIT MODS' in the ESC Pause Menu!")
 Log("==========================================")
 
 -- ============================================================
@@ -19,6 +19,26 @@ local IsOverlayVisible = false
 local InjectedButton = nil
 local InjectedButtonAddr = nil
 
+-- Persist widget name across Lua reloads to clean up orphans
+local OwnedWidgetName = nil
+if ModRef then
+    pcall(function() OwnedWidgetName = ModRef:GetSharedVariable("ModMenu.OwnedWidgetName") end)
+end
+
+local function CleanupAllOrphans(keepWidget)
+    if not OwnedWidgetName then return end
+    local all = FindAllOf("WBP_TitleOnlyTooltip_C") or {}
+    for _, w in ipairs(all) do
+        if w:IsValid() and w:GetFullName() == OwnedWidgetName
+            and (not keepWidget or w:GetAddress() ~= keepWidget:GetAddress()) then
+            pcall(function()
+                w:RemoveFromParent()
+                w:SetVisibility(2)
+            end)
+        end
+    end
+end
+
 -- ============================================================
 -- Toolkit Mods Registry
 -- ============================================================
@@ -26,32 +46,32 @@ local ToolkitMods = {
     {
         Id = "OSRSMinimap",
         Name = "OSRS Minimap",
-        Keys = "F6 Toggle | F9 Icons",
-        Desc = "Old School RuneScape minimap with compass rotation & resource nodes.",
+        Keys = "[F6] Toggle Map  |  [F9] Toggle Resource Icons",
+        Desc = "Old School RuneScape minimap with rotating compass & resource nodes.",
     },
     {
         Id = "QuickStack",
         Name = "Quick Stack",
-        Keys = "G Quick Stack",
-        Desc = "Auto-deposit matching items into nearby chests.",
+        Keys = "[G] Quick Stack to Nearby Chests",
+        Desc = "Smart auto-depositing matching inventory items into chests within 25m.",
     },
     {
         Id = "EnhancedReticle",
         Name = "Enhanced Reticle",
-        Keys = "F4 Toggle | F1 Color | F2 Size",
-        Desc = "High-visibility crosshair with vibrant colors & scaling.",
+        Keys = "[F4] Toggle  |  [F1] Cycle Color  |  [F2] Cycle Size",
+        Desc = "High-contrast aiming reticle with 7 luminous colors & 5 dynamic sizes.",
     },
     {
         Id = "TelekineticWoodcraft",
         Name = "Telekinetic Woodcraft",
-        Keys = "E/V Grab | Z Magnet | F6 AoE",
-        Desc = "Telekinetic log manipulation & mass woodpile harvesting.",
+        Keys = "[E]/[V] Grab Log  |  [Z] Log Magnet  |  [F6] Splinter Radius",
+        Desc = "Telekinetic log manipulation & 150m vacuum into flat woodpiles for Splinter.",
     },
     {
         Id = "ModMenu",
         Name = "Toolkit Mod Menu",
-        Keys = "F7 Toggle | Pause Menu",
-        Desc = "In-game mod status dashboard & hotkey reference.",
+        Keys = "[F8] / [Insert]  |  ESC Pause Menu Button",
+        Desc = "In-game mod status dashboard and hotkey control reference.",
     },
 }
 
@@ -75,6 +95,8 @@ local function GetModStatuses()
     local paths = {
         "mods.txt",
         "Mods/mods.txt",
+        "ue4ss/Mods/mods.txt",
+        "Binaries/Win64/ue4ss/Mods/mods.txt",
         "F:\\Steam\\steamapps\\common\\RSDragonwilds\\RSDragonwilds\\Binaries\\Win64\\ue4ss\\Mods\\mods.txt",
     }
 
@@ -99,7 +121,7 @@ local function GetModStatuses()
 end
 
 -- ============================================================
--- Overlay Widget (uses WBP_TitleOnlyTooltip_C as a canvas)
+-- Overlay Widget (uses WBP_TitleOnlyTooltip_C with Top Z-Order 9999)
 -- ============================================================
 
 local OverlayClass = nil
@@ -118,34 +140,93 @@ end
 local function GenerateMenuText()
     local statuses = GetModStatuses()
     local lines = {}
-    table.insert(lines, "====================================================")
-    table.insert(lines, "   RUNESCAPE: DRAGONWILDS  -  TOOLKIT MOD MENU")
-    table.insert(lines, "====================================================")
+    table.insert(lines, "==========================================================")
+    table.insert(lines, "       RUNESCAPE: DRAGONWILDS - TOOLKIT MOD DASHBOARD     ")
+    table.insert(lines, "==========================================================")
     table.insert(lines, "")
 
+    local activeCount = 0
+    local totalCount = 0
+
     for i, mod in ipairs(ToolkitMods) do
+        totalCount = totalCount + 1
         local enabled = statuses[mod.Id]
         if enabled == nil then enabled = true end
-        local tag = enabled and "[ON]" or "[OFF]"
-        local local_tag = mod.LocalOnly and " (Local)" or ""
-        table.insert(lines, string.format(" %d. %s %s%s", i, mod.Name, tag, local_tag))
-        table.insert(lines, string.format("    Keys: %s", mod.Keys))
-        table.insert(lines, string.format("    %s", mod.Desc))
+        if enabled then activeCount = activeCount + 1 end
+
+        local statusTag = enabled and "[ENABLED - ACTIVE]" or "[DISABLED]"
+
+        table.insert(lines, string.format(" [%d] %-28s %s", i, mod.Name, statusTag))
+        table.insert(lines, string.format("     Hotkeys : %s", mod.Keys))
+        table.insert(lines, string.format("     Details : %s", mod.Desc))
         table.insert(lines, "")
     end
 
-    local active = 0
-    local total = 0
-    for _, m in ipairs(ToolkitMods) do
-        total = total + 1
-        local s = statuses[m.Id]
-        if s == nil or s then active = active + 1 end
+    table.insert(lines, "----------------------------------------------------------")
+    table.insert(lines, string.format(" Status: %d / %d Toolkit Mods Active  |  UE4SS Mod System", activeCount, totalCount))
+    table.insert(lines, " Controls: Press [F8], [Insert], or Click to Close")
+    table.insert(lines, "==========================================================")
+    return table.concat(lines, "\n")
+end
+
+local function UpdateMenuLayout(widget)
+    if not widget or not widget:IsValid() then return end
+
+    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local PC = UEHelpers.GetPlayerController()
+    if not PC or not PC:IsValid() or not layout or not layout:IsValid() then return end
+
+    local viewport = layout:GetViewportSize(PC)
+    local dpi = layout:GetViewportScale(PC)
+    if not viewport or not dpi or dpi <= 0 then return end
+
+    local cardWidth = 640.0
+    local cardHeight = 580.0
+
+    -- Position on the center-right side next to the pause menu
+    local screenW = viewport.X / dpi
+    local screenH = viewport.Y / dpi
+    local posX = math.max(screenW * 0.42, 540.0)
+    local posY = math.max((screenH - cardHeight) * 0.42, 60.0)
+
+    widget:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
+    widget:SetPositionInViewport({ X = posX, Y = posY }, false)
+    widget:SetDesiredSizeInViewport({ X = cardWidth, Y = cardHeight })
+    widget:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
+
+    -- SizeBox overrides
+    if widget.SizeBox_2 and widget.SizeBox_2:IsValid() then
+        pcall(function()
+            widget.SizeBox_2:SetWidthOverride(cardWidth)
+            widget.SizeBox_2:SetHeightOverride(cardHeight)
+        end)
     end
 
-    table.insert(lines, "----------------------------------------------------")
-    table.insert(lines, string.format(" %d / %d Mods Active  |  Press F7 or ESC to close", active, total))
-    table.insert(lines, "====================================================")
-    return table.concat(lines, "\n")
+    -- Background: dark translucent Slate card
+    if widget.Background and widget.Background:IsValid() then
+        pcall(function()
+            widget.Background:SetColorAndOpacity({ R = 0.03, G = 0.04, B = 0.08, A = 0.96 })
+        end)
+    end
+end
+
+local function RefreshOverlayText()
+    if not OverlayWidget or not OverlayWidget:IsValid() then return end
+    local content = GenerateMenuText()
+    local ftext = MakeFText(content)
+    if OverlayWidget.Title and OverlayWidget.Title:IsValid() then
+        pcall(function()
+            OverlayWidget.Title:SetText(ftext)
+            OverlayWidget.Title:SetAutoWrapText(true)
+            -- Warm gold / luminous runes typography
+            OverlayWidget.Title:SetColorAndOpacity({
+                SpecifiedColor = { R = 0.96, G = 0.89, B = 0.62, A = 1.0 },
+                ColorUseRule = 0
+            })
+            OverlayWidget.Title:SetShadowOffset({ X = 1.5, Y = 1.5 })
+            OverlayWidget.Title:SetShadowColorAndOpacity({ R = 0.0, G = 0.0, B = 0.0, A = 0.9 })
+        end)
+    end
 end
 
 local function CreateOverlay()
@@ -155,6 +236,8 @@ local function CreateOverlay()
     if OverlayWidget and OverlayWidget:IsValid() then
         return OverlayWidget
     end
+
+    CleanupAllOrphans(nil)
 
     local Class = GetOverlayClass()
     if not Class or not Class:IsValid() then
@@ -176,64 +259,30 @@ local function CreateOverlay()
     end
 
     OverlayWidget = widget
-    OverlayWidget:AddToViewport(150)
+    OwnedWidgetName = OverlayWidget:GetFullName()
+    if ModRef then
+        pcall(function() ModRef:SetSharedVariable("ModMenu.OwnedWidgetName", OwnedWidgetName) end)
+    end
+
+    -- Add to Viewport with Top Z-Order (9999) so it always renders above the Pause Menu and Game HUD
+    OverlayWidget:AddToViewport(9999)
     OverlayWidget:SetVisibility(2) -- start hidden
 
-    -- Position: left side of screen
-    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
-    if layout and layout:IsValid() and PC:IsValid() then
-        pcall(function()
-            OverlayWidget:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
-            OverlayWidget:SetPositionInViewport({ X = 40.0, Y = 80.0 }, false)
-            OverlayWidget:SetDesiredSizeInViewport({ X = 580.0, Y = 520.0 })
-            OverlayWidget:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
-        end)
-    end
+    UpdateMenuLayout(OverlayWidget)
+    RefreshOverlayText()
 
-    -- SizeBox overrides
-    if OverlayWidget.SizeBox_2 and OverlayWidget.SizeBox_2:IsValid() then
-        pcall(function()
-            OverlayWidget.SizeBox_2:SetWidthOverride(580.0)
-            OverlayWidget.SizeBox_2:SetHeightOverride(520.0)
-        end)
-    end
-
-    -- Background: dark slate translucent
-    if OverlayWidget.Background and OverlayWidget.Background:IsValid() then
-        pcall(function()
-            OverlayWidget.Background:SetColorAndOpacity({ R = 0.02, G = 0.03, B = 0.06, A = 0.94 })
-        end)
-    end
-
-    Log("Overlay widget created (Z-Order 150).")
+    Log("Overlay widget created (Top Z-Order 9999).")
     return OverlayWidget
-end
-
-local function RefreshOverlayText()
-    if not OverlayWidget or not OverlayWidget:IsValid() then return end
-    local content = GenerateMenuText()
-    local ftext = MakeFText(content)
-    if OverlayWidget.Title and OverlayWidget.Title:IsValid() then
-        pcall(function()
-            OverlayWidget.Title:SetText(ftext)
-            OverlayWidget.Title:SetAutoWrapText(true)
-            OverlayWidget.Title:SetColorAndOpacity({
-                SpecifiedColor = { R = 0.95, G = 0.88, B = 0.65, A = 1.0 },
-                ColorUseRule = 0
-            })
-            OverlayWidget.Title:SetShadowOffset({ X = 1.5, Y = 1.5 })
-            OverlayWidget.Title:SetShadowColorAndOpacity({ R = 0.0, G = 0.0, B = 0.0, A = 0.85 })
-        end)
-    end
 end
 
 local function ShowOverlay()
     local w = CreateOverlay()
     if not w then return end
     RefreshOverlayText()
+    UpdateMenuLayout(w)
     w:SetVisibility(0) -- Visible
     IsOverlayVisible = true
-    Log("Mod Menu overlay shown.")
+    Log(">>> Mod Menu overlay SHOWN.")
 end
 
 local function HideOverlay()
@@ -241,7 +290,7 @@ local function HideOverlay()
         OverlayWidget:SetVisibility(2) -- Collapsed
     end
     IsOverlayVisible = false
-    Log("Mod Menu overlay hidden.")
+    Log(">>> Mod Menu overlay HIDDEN.")
 end
 
 local function ToggleOverlay()
@@ -253,7 +302,7 @@ local function ToggleOverlay()
 end
 
 -- ============================================================
--- Pause Menu Button Injection
+-- Pause Menu Button Injection & Reliable Click Detection
 -- ============================================================
 
 local function IsValidInstance(obj)
@@ -269,32 +318,26 @@ local function IsValidInstance(obj)
 end
 
 local function TryInjectPauseMenuButton()
-    -- Find live WBP_PauseMenuScreen_C instances
     local ok, instances = pcall(function() return FindAllOf("WBP_PauseMenuScreen_C") end)
     if not ok or not instances then return end
 
     for _, pauseMenu in ipairs(instances) do
         if not IsValidInstance(pauseMenu) then goto continue_pm end
 
-        -- Check if VerticalBox_PauseMenu exists
         local vbox = nil
         pcall(function() vbox = pauseMenu.VerticalBox_PauseMenu end)
         if not vbox or not vbox:IsValid() then goto continue_pm end
 
-        -- Check if we already injected (don't double-inject)
+        -- Check if already injected
         if InjectedButton and InjectedButton:IsValid() and InjectedButtonAddr then
-            -- Already injected, just ensure it's there
             goto continue_pm
         end
 
-        -- Find the button class (WBP_DomAllCapsButton_C)
         local btnClass = StaticFindObject("/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C")
         if not btnClass or not btnClass:IsValid() then goto continue_pm end
 
-        -- Find the pause button style
         local pauseStyle = StaticFindObject("/Game/UI/Styles/Buttons/PauseMenu/CUIS_PauseButtonStyle.CUIS_PauseButtonStyle_C")
 
-        -- Create the button
         local PC = UEHelpers.GetPlayerController()
         if not PC or not PC:IsValid() then goto continue_pm end
 
@@ -315,15 +358,17 @@ local function TryInjectPauseMenuButton()
             pcall(function() btn:SetStyle(pauseStyle) end)
         end
 
-        -- Insert into the VerticalBox after the Settings button (index 1)
-        -- The order in VerticalBox_PauseMenu is:
-        --   0: ResumeButton
-        --   1: SettingsButton
-        --   2: PlayerListButton
-        --   3: WorldDetails
-        --   4: ExitToMainMenuButton
-        --   ...
-        -- We insert at index 2 (after Settings, before PlayerList)
+        -- Bind OnButtonBaseClicked delegate directly on button
+        pcall(function()
+            if btn.OnButtonBaseClicked then
+                btn.OnButtonBaseClicked:Add(function(clickedButton)
+                    Log("TOOLKIT MODS button clicked via OnButtonBaseClicked delegate!")
+                    ToggleOverlay()
+                end)
+            end
+        end)
+
+        -- Insert into the VerticalBox
         local addOk = pcall(function()
             vbox:AddChildToVerticalBox(btn)
         end)
@@ -332,68 +377,74 @@ local function TryInjectPauseMenuButton()
         InjectedButton = btn
         InjectedButtonAddr = btn:GetAddress()
 
-        Log("Injected 'TOOLKIT MODS' button into Pause Menu!")
+        Log(string.format("Injected 'TOOLKIT MODS' button [0x%X] into Pause Menu!", InjectedButtonAddr))
 
         ::continue_pm::
     end
 end
 
 -- ============================================================
--- Poll for Pause Menu & Button Click Detection
+-- Universal C++ Click Hook for CommonButtonBase
 -- ============================================================
 
-local LastPauseCheckTick = 0
-local LastButtonCheckTick = 0
+-- Hook 1: HandleButtonClicked (C++ primary click dispatcher)
+RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(Context)
+    local btn = Context:get()
+    if btn and btn:IsValid() and InjectedButtonAddr and btn:GetAddress() == InjectedButtonAddr then
+        Log("TOOLKIT MODS button clicked via HandleButtonClicked!")
+        ExecuteInGameThread(function()
+            ToggleOverlay()
+        end)
+    end
+end)
 
-LoopAsync(500, function()
-    -- Try to inject the button whenever the pause menu is open
+-- Hook 2: BP_OnClicked (Blueprint click event)
+RegisterHook("/Script/CommonUI.CommonButtonBase:BP_OnClicked", function(Context)
+    local btn = Context:get()
+    if btn and btn:IsValid() and InjectedButtonAddr and btn:GetAddress() == InjectedButtonAddr then
+        Log("TOOLKIT MODS button clicked via BP_OnClicked!")
+        ExecuteInGameThread(function()
+            ToggleOverlay()
+        end)
+    end
+end)
+
+-- ============================================================
+-- Background Polling: Inject button when pause menu is opened
+-- ============================================================
+
+LoopAsync(400, function()
     pcall(TryInjectPauseMenuButton)
 
-    -- Check if our injected button was clicked
-    if InjectedButton and InjectedButton:IsValid() then
-        local isSelected = false
-        pcall(function()
-            isSelected = InjectedButton:GetSelected()
-        end)
-        if isSelected then
-            -- Deselect immediately to allow re-clicking
-            pcall(function() InjectedButton:SetSelectedInternal(false, false, false) end)
-            ToggleOverlay()
-        end
-    else
-        -- Button was destroyed (pause menu closed), clean up reference
-        if InjectedButtonAddr then
-            InjectedButton = nil
-            InjectedButtonAddr = nil
-        end
+    -- Auto-clean button address when pause menu closes
+    if InjectedButton and not InjectedButton:IsValid() then
+        InjectedButton = nil
+        InjectedButtonAddr = nil
     end
 
-    -- Auto-hide overlay when pause menu closes (game resumes)
-    if IsOverlayVisible then
-        local pauseMenus = nil
-        pcall(function() pauseMenus = FindAllOf("WBP_PauseMenuScreen_C") end)
-        local anyVisible = false
-        if pauseMenus then
-            for _, pm in ipairs(pauseMenus) do
-                if IsValidInstance(pm) then
-                    local vis = 2
-                    pcall(function() vis = pm:GetVisibility() end)
-                    if vis == 0 then anyVisible = true; break end
-                end
-            end
-        end
-        -- Don't auto-hide if triggered by F7 (the user might want it during gameplay)
+    -- If overlay is visible, keep layout synced with viewport
+    if IsOverlayVisible and OverlayWidget and OverlayWidget:IsValid() then
+        pcall(function()
+            ExecuteInGameThread(function()
+                UpdateMenuLayout(OverlayWidget)
+            end)
+        end)
     end
 
     return false
 end)
 
 -- ============================================================
--- Keybind: [F7] Toggle Overlay (works anytime, not just pause)
+-- Keybinds: [F8] Toggle Overlay
 -- ============================================================
-RegisterKeyBind(Key.F7, function()
-    ToggleOverlay()
-end)
+if Key.F8 then
+    RegisterKeyBind(Key.F8, function()
+        Log("F8 pressed -> Toggle Mod Menu")
+        ExecuteInGameThread(function()
+            ToggleOverlay()
+        end)
+    end)
+    Log("Keybind registered: [F8: Toggle Mod Menu Overlay]")
+end
 
-Log("Keybind registered: [F7: Toggle Mod Menu Overlay]")
-Log("Toolkit Mod Menu initialized. Press F7 or find 'TOOLKIT MODS' in the Pause Menu.")
+Log("Toolkit Mod Menu initialized successfully.")

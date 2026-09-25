@@ -18,8 +18,8 @@ An in-game HUD status dashboard and hotkey reference overlay for **RuneScape: Dr
 
 | Keybind | Action | Description |
 | :--- | :--- | :--- |
-| **`[F7]`** | **Toggle Mod Menu** | Opens or closes the in-game toolkit dashboard overlay anytime during gameplay. |
-| **Pause Menu** | **"TOOLKIT MODS" button** | A new button is injected into the ESC pause menu. Click it to show the overlay. |
+| **`[F8]`** or **`[Insert]`** | **Toggle Mod Menu** | Opens or closes the in-game toolkit dashboard overlay anytime during gameplay. |
+| **Pause Menu** | **"TOOLKIT MODS" button** | Custom button inside the ESC pause menu. Click it to display the overlay. |
 
 ---
 
