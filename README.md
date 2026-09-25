@@ -1,65 +1,87 @@
-# RS-Dragonwilds Tools Suite
+# RuneScape: Dragonwilds - Community Tools & Quality of Life Suite
 
-A modular suite of modding tools, quality-of-life improvements, and HUD replacements for *RuneScape: Dragonwilds*.
+[![RSDragonwilds](https://img.shields.io/badge/Game-RuneScape%3A%20Dragonwilds-gold?style=for-the-badge)](https://store.steampowered.com)
+[![Platform](https://img.shields.io/badge/Platform-PC%20%7C%20Steam-blue?style=for-the-badge)](https://store.steampowered.com)
+[![Framework](https://img.shields.io/badge/Framework-UE4SS%20v3.0%2B-green?style=for-the-badge)](https://github.com/UE4SS-RE/RE-UE4SS)
+[![Status](https://img.shields.io/badge/Status-Fully%20Stable-brightgreen?style=for-the-badge)]()
 
-Each tool in this repository is designed as an independent, self-contained module that can be installed, configured, and shared individually or used together as a complete suite.
+A modular, crash-safe suite of essential quality-of-life improvements, navigation tools, aiming enhancements, and in-game controls for **RuneScape: Dragonwilds**.
+
+Each mod is completely standalone and can be enabled, disabled, or shared individually, or installed together as an all-in-one quality-of-life mod pack.
 
 ---
 
-## Tools in this Repository
+## Included Mods
 
-| Tool | Category | Status | Description |
+| Tool | Category | Hotkeys | Description |
 | :--- | :--- | :--- | :--- |
-| [**OSRSMinimap**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/OSRSMinimap/README.md) | HUD & Navigation | Stable | Old School RuneScape style square HUD minimap featuring player-centered compass rotation, high-value resource pin tracking, and dynamic proximity culling. |
-| [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | Stable | One-key (`G`) smart quick-stacking to nearby chests and storage containers with hotbar protection, audio feedback, and type matching. |
-| [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | HUD & Aiming | Stable | High-visibility reticle and cast cursor enhancement with customizable high-contrast colors, dynamic scaling (1.0x to 3.2x), and universal state support. |
+| [**OSRSMinimap**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, and real-time resource tracking (ores, trees, essence, fishing). |
+| [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | `[G]` | One-key smart inventory depositing into nearby chests within 25m. Only deposits into existing item stacks and protects your active hotbar. |
+| [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
+| [**TelekineticWoodcraft**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`F6`). |
+| [**ModMenu**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/ModMenu/README.md) | Dashboard & UI | `[F7]`, Pause Menu | In-game mod status overlay and hotkey reference card. Accessible anytime via `[F7]` or directly from the ESC Pause Menu button. |
 
 ---
 
-## Quick Deployment
+## Master Controls Cheat-Sheet
 
-You can deploy tools directly to your game installation with the included PowerShell deployer:
-
-```powershell
-# Deploy all tools
-.\deploy.ps1
-
-# Or deploy an individual tool
-.\deploy.ps1 -Tool QuickStack
-.\deploy.ps1 -Tool OSRSMinimap
-```
-
----
-
-## 1. QuickStack Mod
-
-### Overview
-Pressing `G` scans all storage containers within radius (default: 25m) and deposits matching items from your inventory into nearby chests in milliseconds.
-
-### Core Principles
-1. **Smart Matching:** Only deposits items into chests that **already hold** at least one stack of that item type.
-2. **Hotbar Safe:** The player's active quick-action hotbar (weapons, tools, food) is never touched.
-3. **Sound & Toast Feedback:** Plays native chest audio and shows an itemized deposit summary.
-
-Detailed configuration and usage: [QuickStack README](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md).
+| Keybind | Tool | Action |
+| :--- | :--- | :--- |
+| **`[F7]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay |
+| **`[ESC]`** | **Pause Menu** | Click the new **"TOOLKIT MODS"** button to view active mods |
+| **`[G]`** | **Quick Stack** | Quick-stack matching inventory items to all nearby chests (25m) |
+| **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |
+| **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons on / off |
+| **`[F4]`** | **Enhanced Reticle** | Toggle high-visibility crosshair on / off |
+| **`[F1]`** | **Enhanced Reticle** | Cycle reticle color (Neon Green, Gold, Cyan, Red, Pink, Orange, White) |
+| **`[F2]`** | **Enhanced Reticle** | Cycle reticle size (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) |
+| **`[E]`** or **`[V]`** | **Telekinetic Woodcraft** | Telekinetically grab, carry, or drop targeted log / trunk |
+| **`[Z]`** | **Telekinetic Woodcraft** | [Log Magnet] Mass-gather all logs within 150m into a neat pile |
+| **`[F6]`** | **Telekinetic Woodcraft** | Cycle Splinter spell AoE radius multiplier (1x, 2.5x, 5.0x) |
+| **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game |
 
 ---
 
-## 2. OSRS Minimap Mod
+## Installation Guide
 
-Replaces the native HUD minimap with an Old School RuneScape style minimap.
+### Prerequisites: UE4SS Setup
 
-### Core Features & Spec
-1. **OSRS Compass Style:** The map texture translates and rotates underneath the player. The player is always locked to the center, and the player icon always points UP (Rotation 0.0), acting as a true compass.
-2. **Square Masking:** The minimap is shaped in a classic square instead of a circle.
-3. **No Main Map Interference:** The minimap operates completely independently of the Main Map (`M`). Opening the main map hides the minimap, and the main map functions normally without any missing panels, broken widgets, or destroyed zoom limits.
-4. **Delayed Loading:** The minimap waits until the player spawns into the world before attempting to load or track locations, preventing startup crashes.
-5. **Local Resource Tracking:** Dynamically tracks high-value resources: Oak, Willow, Maple, Yew, Coal, Clay, Blurite, Adamant, Mithril, Runite, Rune Essence, Anima Vents, and Fishing spots.
+This mod suite runs via **UE4SS** (Unreal Engine 4/5 Scripting System).
+
+1. Download the latest **UE4SS** release (`UE4SS_vX.X.X.zip`) from [UE4SS GitHub Releases](https://github.com/UE4SS-RE/RE-UE4SS/releases).
+2. Locate your game installation directory:
+   ```
+   Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/
+   ```
+3. Extract the contents of the UE4SS zip file so that `dwmapi.dll` and the `ue4ss/` folder sit alongside `RSDragonwilds-Win64-Shipping.exe`.
 
 ---
 
-## 3. EnhancedReticle Mod
+### Option A: Automated PowerShell Deployment (Recommended)
 
+If you cloned or downloaded this repository:
+
+1. Open PowerShell in the `RSDragonwilds-Tools` root folder.
+2. Run the deployment script:
+   ```powershell
+   # Deploy all tools automatically
+   .\deploy.ps1
+   ```
+3. To deploy a specific tool only:
+   ```powershell
+   .\deploy.ps1 -Tool QuickStack
+   .\deploy.ps1 -Tool OSRSMinimap
+   .\deploy.ps1 -Tool EnhancedReticle
+   .\deploy.ps1 -Tool TelekineticWoodcraft
+   .\deploy.ps1 -Tool ModMenu
+   ```
+4. The script copies files to your game directory and automatically updates `mods.txt`.
+
+---
+
+### Option B: Manual Installation
+
+<<<<<<< Updated upstream
 Transforms the faint vanilla white dot reticle into a prominent, high-contrast, scalable crosshair and spell-casting cursor.
 
 1. **Toggle On/Off:** Instant toggle (`F4`) between Enhanced Reticle and Vanilla Default.
@@ -71,68 +93,85 @@ Transforms the faint vanilla white dot reticle into a prominent, high-contrast, 
 7. **Respawn & World Persistence:** Spawning hooks ensure custom reticle styling persists seamlessly across fast travel, level changes, and deaths.
 
 Detailed configuration and usage: [EnhancedReticle README](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md).
+=======
+1. Copy the desired mod folders (`OSRSMinimap`, `QuickStack`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`) into:
+   ```
+   <GameRoot>/RSDragonwilds/Binaries/Win64/ue4ss/Mods/
+   ```
+2. Open `<GameRoot>/RSDragonwilds/Binaries/Win64/ue4ss/Mods/mods.txt` in a text editor.
+3. Ensure each mod you want to run has `: 1` appended:
+   ```ini
+   OSRSMinimap : 1
+   QuickStack : 1
+   EnhancedReticle : 1
+   TelekineticWoodcraft : 1
+   ModMenu : 1
+   ```
+4. Launch the game through Steam normally!
 
 ---
 
-### The Mathematics & Architecture (CRITICAL DEVELOPER NOTES)
+## Mod Highlights & Features
 
-#### 1. Why the Main Map Went Missing (The "Orphan Cleanup" Pitfall)
-The native Main Map UI is `WBP_TopNav_Map_C` (named `MapPanel` in the In-Game TopNav menu). Its inner map viewer is an instance of `WBP_DominionMinimap_C` owned directly by `BP_DominionGameInstance_C`.
-- **The Historical Bug:** A previous cleanup routine searched `FindAllOf("WBP_DominionMinimap_C")` and removed any widget whose full name did not contain `"MapPanel"`. Because the native map instance is owned by `BP_DominionGameInstance_C` (and does NOT contain `"MapPanel"` in its object path), the cleanup script literally detached the Official Map from its Canvas and collapsed it (`Visibility = 2`) on every reload!
-- **The True Fix:** 
-  1. Never detach or collapse `BP_DominionGameInstance_C` minimap instances.
-  2. Mod minimap widgets are owned by `BP_PlayerController_C`. The cleanup routine only cleans up orphaned `BP_PlayerController_C` instances.
-  3. The mod actively re-anchors `topNav.Map` into `topNav.WidgetTree.CanvasPanel_0` if it is ever missing, guaranteeing the Main Map is always 100% functional.
+### 1. Toolkit Mod Menu (`ModMenu`)
+- **Pause Menu Integration**: Injects a custom **"TOOLKIT MODS"** button into the native ESC Game Paused screen.
+- **In-Game Overlay (`F7`)**: Instantly shows an Old School RuneScape style Slate card with live status badges (`[ON]` / `[OFF]`) and keybind reminders.
+- **Real-Time Detection**: Automatically re-scans `mods.txt` whenever toggled, immediately showing changes without restarting.
+- **Zero Performance Impact**: Widget remains collapsed and uses 0 CPU cycles during normal gameplay.
 
-#### 2. Native Background Populating (No Stealing Required)
-- `WBP_DominionMinimap_C:InitFillBackground()` does not generate new backgrounds for secondary widgets.
-- Calling `Widget:AddMapBackground(bg)` for each `bg` in `MapTrackerComponent.MapBackgrounds` creates brand new, independent `WBP_Dominion_MinimapInternal_Background_C` widgets inside `Canvas_Backgrounds` using native `CreateWidget` calls. This completely eliminates background "stealing" and allows both the Main Map and the HUD Minimap to own their own background layers simultaneously.
+### 2. QuickStack (`QuickStack`)
+- **Smart Deposit**: Scans all nearby chests (25m radius) and deposits items from your backpack that already exist in those chests.
+- **Hotbar Protection**: Your active weapons, tools, and potions on the hotbar are never deposited.
+- **Audio Feedback**: Triggers authentic in-game chest sound effects upon successful stack.
 
-#### 3. GPS Coordinate Projection Math (`GetViewCoordinates`)
-- Do not use `Official.MapOffset`. In this engine plugin, `MapOffset` is an internal mouse-drag pan accumulator; while the map is closed, `MapOffset` is permanently `(0.0, 0.0)`.
-- Do not use hardcoded bounding box math, which easily results in inaccurate projections (e.g. appearing to stand in water).
-- **The Engine-Native Solution:** The plugin C++ class `MapViewComponent` provides:
-  ```lua
-  local out = {}
-  AreaMapView:GetViewCoordinates(PawnLocation, false, out, {})
-  local u = out.U  -- Normalized horizontal coordinate [0.0, 1.0] (West to East)
-  local v = out.V  -- Normalized vertical coordinate   [0.0, 1.0] (North to South)
-  ```
-  This is the exact mathematical projection function written into the game's C++ code, guaranteeing 100% pinpoint accuracy anywhere in the world.
+### 3. OSRS Minimap (`OSRSMinimap`)
+- **Compass Rotation**: Player icon remains locked pointing UP while the world map rotates and pans under you, matching traditional OSRS navigation.
+- **Resource Pin Tracking (`F9`)**: Real-time map pins for nearby high-tier ores (Runite, Adamant, Mithril, Coal, Blurite), trees (Yew, Maple, Willow, Oak), fishing spots, and elemental anima vents.
+- **Main Map Isolation**: Operates on an independent map layer—opening your full-screen World Map (`M`) is 100% unaffected.
 
-#### 4. OSRS Compass Transformation Math
-To make the map rotate around the player while keeping the player centered and pointing straight UP:
-1. **Pivot Point:** We set the `RenderTransformPivot` of `Canvas_Backgrounds` and the icon layers directly to the player's normalized coordinates:
-   $$\text{Pivot} = (u,\ v)$$
-   Because the affine transform pivot is on the player, scaling and rotation occur strictly around the player.
-2. **Translation:** Since the player coordinate is at $(u \times W,\ v \times H)$ on the map canvas, shifting the player to the center $(W/2,\ H/2)$ of the minimap window requires a translation of:
-   $$\text{Translation.X} = (0.5 - u) \times W$$
-   $$\text{Translation.Y} = (0.5 - v) \times H$$
-3. **Rotation:** Set the canvas angle to $-\text{PlayerYaw}$ to counteract player heading.
-4. **Player Icon:** Lock `Widget_Camera` rotation to $0.0^\circ$ and translation to $(0, 0)$.
+### 4. Enhanced Reticle (`EnhancedReticle`)
+- **High-Contrast Aiming**: Replaces the faint default reticle with bright, crisp crosshairs for precise spellcasting and archery.
+- **7 Color Presets (`F1`)**: Neon Green, OSRS Gold, Cyan, Crimson Red, Hot Pink, Amber Orange, Pure White.
+- **5 Scale Levels (`F2`)**: 1.0x (Vanilla), 1.5x, 2.0x, 2.5x, 3.2x (High-visibility).
+- **Universal State Coverage**: Seamlessly adapts across combat spells, utility magic, bow ADS, and stealth.
 
-#### 5. Main Map Aspect Ratio & Fog of War Alignment Mathematics
-- **The Visual Disconnect:** When pressing 'M', players previously observed that the Fog of War appeared positioned in a crisp square, but the terrain landmass underneath it was stretched horizontally into a wide oval.
-- **The Mathematical Cause:**
-  - **World Bounds (`BP_MapBackground_C`):** Extent $X = 210,000$, Extent $Y = 210,000$. Total area = $420,000 \times 420,000$ Unreal units. The world aspect ratio is strictly $1:1$ (a perfect square).
-  - **Fog of War:** The game's Fog of War projection natively renders as a $1:1$ square matching this $420,000 \times 420,000$ bounding box. On a widescreen monitor (e.g. $2580 \times 1080$), the fog covers an un-distorted $1080 \times 1080$ square centered horizontally between $X = 750$ and $X = 1830$.
-  - **The Stretch Bug:** The Main Map widget (`WBP_DominionMinimap_C`) was anchored with `Anchors = (0, 0) to (1, 1)` and `Offsets = (0, 0, 0, 0)` across the full $2580 \times 1080$ viewport. This stretched the background canvas horizontally by $\frac{2580}{1080} \approx 2.388\times$ relative to its height, creating massive aspect distortion.
-- **The Exact Geometric Solution:**
-  1. Determine the square dimension based on the viewport:
-     $$\text{mapSide} = \min(\text{ViewportWidth}, \text{ViewportHeight})$$
-     On standard landscape/ultrawide displays ($W \ge H$), $\text{mapSide} = H$ (e.g. $1080.0$).
-  2. Anchor `official.Slot` (`CanvasPanelSlot` inside `WBP_TopNav_Map_C`) to center horizontally while spanning full height:
-     - `Anchors`: `Minimum = { X = 0.5, Y = 0.0 }`, `Maximum = { X = 0.5, Y = 1.0 }`
-     - `Alignment`: `{ X = 0.5, Y = 0.0 }`
-     - `Offsets`: `Left = 0.0`, `Top = 0.0`, `Right = mapSide`, `Bottom = 0.0`
-     In UMG, when `Minimum.X == Maximum.X`, `Offsets.Right` sets the widget width. This constrains the widget to a precise $1080 \times 1080$ square centered from $X = \frac{W - H}{2}$ to $X = \frac{W + H}{2}$ ($750$ to $1830$).
-  3. Set `official.InitialMapSize.X = official.InitialMapSize.Y` and invoke native `official:SetDesiredAspectRatio(1.0)` and `official:EnforceAspectRatio()`.
-  4. With width equal to height, both the terrain texture and the Fog of War share the identical pixel-to-unit scale factor:
-     $$\text{Scale}_X = \text{Scale}_Y = \frac{\text{mapSide}}{420,000} \text{ px/unit}$$
-     The Main Map landmass and Fog of War now fit together in seamless, 1:1 pixel parity with zero stretching.
+### 5. Telekinetic Woodcraft (`TelekineticWoodcraft`)
+- **Single Log Drag (`E` or `V`)**: Aim at any felled tree or cut log to telekinetically carry it in front of you. Press again to settle it flat on the ground.
+- **Log Magnet Mass Gathering (`Z`)**: Pulls all logs within 150 meters into a compact, flat pyramid woodpile directly in front of you.
+- **Splinter Spell Multiplier (`F6`)**: Boosts the Splinter spell explosion radius (1.0x, 2.5x, 5.0x) to harvest an entire woodpile in a single cast.
+>>>>>>> Stashed changes
 
-#### 6. Performance Architecture & Zero-Scan Rules
-- **No Periodic `GUObjectArray` Scans:** Never call `FindAllOf` inside per-frame or high-frequency loops. Cache singleton pointers (`BP_DominionGameInstance_C`, `WBP_TopNav_Map_C`, `WBP_DominionMinimap_C`) and query `CachedOfficialTopNav:IsVisible()` in $O(1)$ time. Throttled fallback searches run at most once every 5 seconds.
-- **Dynamic Distance Culling:** Icons beyond 35 meters are not instantiated in Slate, keeping active icon widgets under ~220 at all times.
-- **Bypass RetainerBox Off-Screen Render Targets:** Calling `RetainerBox_Minimap:SetRetainRendering(false)` disables expensive GPU off-screen texture allocation and redraws on transformed layer hierarchies, relying instead on hardware GPU scissor clipping.
-- **Idle Dirty Checking:** If the player location, rotation, and zoom have not changed, Slate render transforms are skipped entirely, resulting in 0% CPU consumption while stationary.
+---
+
+## Technical Architecture & Crash Safety
+
+All mods in this suite follow strict UE5 stability guidelines:
+- **Zero CDO Touching**: Filters out Class Default Objects (`RF_ClassDefaultObject`) and Archetypes to prevent memory corruption.
+- **Game Thread Dispatch**: UMG and Slate operations are strictly dispatched to the engine's main game thread.
+- **Orphan Widget Pruning**: Persistent name-tracking cleans up orphaned widgets across reloads without leaving stale pointers in memory.
+- **Defensive UObject Guards**: All native engine calls are guarded by `IsValid()`, null address checks, and Lua `pcall` wrappers.
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+<details>
+<summary><b>How do I disable a specific mod?</b></summary>
+Open <code>ue4ss/Mods/mods.txt</code>, locate the mod name, and change <code>: 1</code> to <code>: 0</code>. In-game, press <code>Ctrl + R</code> to apply the change immediately.
+</details>
+
+<details>
+<summary><b>Do these mods work in multiplayer / co-op?</b></summary>
+Yes. All mods in this suite operate as client-side quality-of-life enhancements and work smoothly in single-player and co-op worlds.
+</details>
+
+<details>
+<summary><b>Why did pressing F10 open a console?</b></summary>
+UE4SS reserves <code>F10</code> by default for the built-in developer console (ConsoleEnablerMod). The Toolkit Mod Menu uses <b><code>[F7]</code></b> and the ESC <b>Pause Menu</b> button to prevent any keybind conflicts.
+</details>
+
+---
+
+## License
+
+This project is released under the **MIT License**. Free to use, modify, and distribute for the *RuneScape: Dragonwilds* community.
