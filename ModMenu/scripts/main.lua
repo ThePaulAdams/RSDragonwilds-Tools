@@ -330,9 +330,11 @@ LoopAsync(300, function()
 
         for _, pm in ipairs(pauseMenus) do
             if IsValidUObject(pm) then
-                local vis = 2
-                pcall(function() vis = pm:GetVisibility() end)
-                if vis == 0 then
+                local inViewport = false
+                pcall(function()
+                    inViewport = pm:IsInViewport() and pm:IsVisible()
+                end)
+                if inViewport then
                     isPauseMenuOpen = true
                     break
                 end
