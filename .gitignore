@@ -1,0 +1,4 @@
+# RSDragonwilds-Tools .gitignore
+*Staff*/
+*.log
+*.tmp
