@@ -7,19 +7,17 @@ end
 
 Log("==========================================")
 Log("Initializing RSDragonwilds Toolkit Mod Menu...")
-Log("Controls: Press [ESC] to view Toolkit Mods in Pause Menu")
-Log("          Or press [F8] anytime during gameplay")
+Log("Controls: Auto-displays when Game is Paused (ESC)")
+Log("          Or press [F8] anytime to toggle overlay")
 Log("==========================================")
 
 -- ============================================================
 -- State
 -- ============================================================
-local StandaloneOverlay = nil
-local IsStandaloneVisible = false
-
-local InjectedButton = nil
-local InjectedCard = nil
-local LastPauseMenuAddr = nil
+local OverlayWidget = nil
+local IsOverlayVisible = false
+local ManualToggleActive = false
+local LastPauseState = false
 
 -- Persist widget name across Lua reloads to clean up orphans
 local OwnedWidgetName = nil
@@ -54,8 +52,8 @@ local ToolkitMods = {
     {
         Id = "QuickStack",
         Name = "Quick Stack",
-        Keys = "[G] Quick Stack to Nearby Chests",
-        Desc = "Smart auto-depositing matching inventory items into chests within 25m.",
+        Keys = "[G] Quick Stack to Nearby Chests (25m)",
+        Desc = "Smart auto-depositing matching inventory items into chests.",
     },
     {
         Id = "EnhancedReticle",
@@ -72,7 +70,7 @@ local ToolkitMods = {
     {
         Id = "ModMenu",
         Name = "Toolkit Mod Menu",
-        Keys = "[F8] Toggle Anytime  |  ESC Pause Menu",
+        Keys = "[F8] Toggle Anytime  |  Auto-shown on ESC Pause",
         Desc = "In-game mod status dashboard and hotkey control reference.",
     },
 }
@@ -149,267 +147,209 @@ local function GenerateMenuText()
 
     table.insert(lines, "----------------------------------------------------------")
     table.insert(lines, string.format(" Status: %d / %d Toolkit Mods Active  |  UE4SS Mod System", activeCount, totalCount))
-    table.insert(lines, " Click [TOOLKIT MODS] or press [F8] to toggle overlay")
+    table.insert(lines, " Press [F8] to toggle overlay anytime during gameplay")
     table.insert(lines, "==========================================================")
     return table.concat(lines, "\n")
 end
 
-local function IsValidUObject(obj)
-    if not obj then return false end
-    local ok, valid = pcall(function()
-        if not obj:IsValid() or obj:GetAddress() == 0 then return false end
-        if obj:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject) then
-            return false
-        end
-        return true
-    end)
-    return ok and valid
+-- ============================================================
+-- Overlay Widget Creation & Positioning
+-- ============================================================
+
+local OverlayClass = nil
+local function GetOverlayClass()
+    if OverlayClass and OverlayClass:IsValid() then return OverlayClass end
+    local path = "/Game/UI/Common/WBP_TitleOnlyTooltip.WBP_TitleOnlyTooltip_C"
+    OverlayClass = StaticFindObject(path)
+    if OverlayClass and OverlayClass:IsValid() then return OverlayClass end
+    if StaticLoadObject then
+        local l = StaticLoadObject(nil, nil, path)
+        if l and l:IsValid() then OverlayClass = l; return OverlayClass end
+    end
+    return nil
 end
 
--- ============================================================
--- Pause Menu Injection: Button + In-Screen Dashboard Card
--- ============================================================
+local function UpdateMenuLayout(widget)
+    if not widget or not widget:IsValid() then return end
 
-local function SetupPauseMenuModCard(pauseMenu)
-    if not IsValidUObject(pauseMenu) then return end
-
-    local addr = pauseMenu:GetAddress()
-    if addr == LastPauseMenuAddr and InjectedButton and InjectedButton:IsValid() then
-        return
-    end
-
-    local vbox = nil
-    pcall(function() vbox = pauseMenu.VerticalBox_PauseMenu end)
-    if not vbox or not vbox:IsValid() then return end
-
-    local canvas = nil
-    pcall(function()
-        if pauseMenu.CanvasPanel_0 and pauseMenu.CanvasPanel_0:IsValid() then
-            canvas = pauseMenu.CanvasPanel_0
-        elseif pauseMenu.WidgetTree and pauseMenu.WidgetTree.CanvasPanel_0 and pauseMenu.WidgetTree.CanvasPanel_0:IsValid() then
-            canvas = pauseMenu.WidgetTree.CanvasPanel_0
-        end
-    end)
-
+    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
     local PC = UEHelpers.GetPlayerController()
-    if not PC or not PC:IsValid() then return end
+    if not PC or not PC:IsValid() or not layout or not layout:IsValid() then return end
 
-    local WBLib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
-    if not WBLib or not WBLib:IsValid() then return end
+    local viewport = layout:GetViewportSize(PC)
+    local dpi = layout:GetViewportScale(PC)
+    if not viewport or not dpi or dpi <= 0 then return end
 
-    -- 1. Create In-Screen Dashboard Card on Pause Menu's CanvasPanel
-    local card = nil
-    local tooltipClass = StaticFindObject("/Game/UI/Common/WBP_TitleOnlyTooltip.WBP_TitleOnlyTooltip_C")
-    if tooltipClass and tooltipClass:IsValid() and canvas and canvas:IsValid() then
-        pcall(function() card = WBLib:Create(PC, tooltipClass, PC) end)
-        if not card or not card:IsValid() then
-            pcall(function() card = StaticConstructObject(tooltipClass, PC) end)
-        end
+    local cardWidth = 640.0
+    local cardHeight = 580.0
 
-        if card and card:IsValid() then
-            -- Configure Card text & typography
-            pcall(function()
-                if card.Title and card.Title:IsValid() then
-                    card.Title:SetText(MakeFText(GenerateMenuText()))
-                    card.Title:SetAutoWrapText(true)
-                    card.Title:SetColorAndOpacity({
-                        SpecifiedColor = { R = 0.96, G = 0.89, B = 0.62, A = 1.0 },
-                        ColorUseRule = 0
-                    })
-                    card.Title:SetShadowOffset({ X = 1.5, Y = 1.5 })
-                    card.Title:SetShadowColorAndOpacity({ R = 0.0, G = 0.0, B = 0.0, A = 0.9 })
-                end
-                if card.Background and card.Background:IsValid() then
-                    card.Background:SetColorAndOpacity({ R = 0.03, G = 0.04, B = 0.08, A = 0.96 })
-                end
-                if card.SizeBox_2 and card.SizeBox_2:IsValid() then
-                    card.SizeBox_2:SetWidthOverride(620.0)
-                    card.SizeBox_2:SetHeightOverride(560.0)
-                end
-            end)
+    -- Position on the center-right side (clear of left pause menu)
+    local screenW = viewport.X / dpi
+    local screenH = viewport.Y / dpi
+    local posX = math.max(screenW * 0.42, 540.0)
+    local posY = math.max((screenH - cardHeight) * 0.42, 60.0)
 
-            -- Add to Pause Menu CanvasPanel
-            local slot = nil
-            pcall(function() slot = canvas:AddChildToCanvas(card) end)
-            if slot and slot:IsValid() then
-                pcall(function()
-                    slot:SetPosition({ X = 580.0, Y = 90.0 })
-                    slot:SetSize({ X = 620.0, Y = 560.0 })
-                    slot:SetZOrder(50)
-                    slot:SetAutoSize(false)
-                end)
-            end
+    widget:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
+    widget:SetPositionInViewport({ X = posX, Y = posY }, false)
+    widget:SetDesiredSizeInViewport({ X = cardWidth, Y = cardHeight })
+    widget:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
 
-            card:SetVisibility(0) -- Show by default when pause menu opens
-            InjectedCard = card
-            Log("Attached Toolkit Mod Dashboard card to Pause Menu CanvasPanel!")
-        end
-    end
-
-    -- 2. Inject "TOOLKIT MODS" Button into VerticalBox_PauseMenu
-    local btnClass = StaticFindObject("/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C")
-    local pauseStyle = StaticFindObject("/Game/UI/Styles/Buttons/PauseMenu/CUIS_PauseButtonStyle.CUIS_PauseButtonStyle_C")
-    if btnClass and btnClass:IsValid() then
-        local btn = nil
-        pcall(function() btn = WBLib:Create(PC, btnClass, PC) end)
-        if not btn or not btn:IsValid() then
-            pcall(function() btn = StaticConstructObject(btnClass, PC) end)
-        end
-
-        if btn and btn:IsValid() then
-            pcall(function() btn:SetLabelText(MakeFText("TOOLKIT MODS")) end)
-            if pauseStyle and pauseStyle:IsValid() then
-                pcall(function() btn:SetStyle(pauseStyle) end)
-            end
-
-            -- Toggle card visibility on button click
-            pcall(function()
-                if btn.OnButtonBaseClicked then
-                    btn.OnButtonBaseClicked:Add(function(clickedBtn)
-                        Log("TOOLKIT MODS button clicked in Pause Menu!")
-                        if InjectedCard and InjectedCard:IsValid() then
-                            local vis = InjectedCard:GetVisibility()
-                            if vis == 0 then
-                                InjectedCard:SetVisibility(2) -- Collapsed
-                                Log("Dashboard card collapsed.")
-                            else
-                                InjectedCard.Title:SetText(MakeFText(GenerateMenuText()))
-                                InjectedCard:SetVisibility(0) -- Visible
-                                Log("Dashboard card made visible.")
-                            end
-                        end
-                    end)
-                end
-            end)
-
-            -- Add to VerticalBox_PauseMenu
-            local addOk = pcall(function() vbox:AddChildToVerticalBox(btn) end)
-            if addOk then
-                InjectedButton = btn
-                LastPauseMenuAddr = addr
-                Log(string.format("Injected 'TOOLKIT MODS' button [0x%X] into Pause Menu VerticalBox!", btn:GetAddress()))
-            end
-        end
-    end
-end
-
--- ============================================================
--- Hook: On Pause Menu Opened (BP_GetDesiredFocusTarget)
--- ============================================================
-
-RegisterHook("/Game/UI/InGameMenus/WBP_PauseMenuScreen.WBP_PauseMenuScreen_C:BP_GetDesiredFocusTarget", function(Context)
-    local pm = Context:get()
-    if pm and pm:IsValid() then
-        ExecuteInGameThread(function()
-            SetupPauseMenuModCard(pm)
+    -- SizeBox overrides
+    if widget.SizeBox_2 and widget.SizeBox_2:IsValid() then
+        pcall(function()
+            widget.SizeBox_2:SetWidthOverride(cardWidth)
+            widget.SizeBox_2:SetHeightOverride(cardHeight)
         end)
     end
-end)
 
--- Polling fallback: ensures injection occurs even if hook didn't fire
-LoopAsync(300, function()
+    -- Background: dark translucent Slate card
+    if widget.Background and widget.Background:IsValid() then
+        pcall(function()
+            widget.Background:SetColorAndOpacity({ R = 0.03, G = 0.04, B = 0.08, A = 0.96 })
+        end)
+    end
+end
+
+local function RefreshOverlayText()
+    if not OverlayWidget or not OverlayWidget:IsValid() then return end
+    local content = GenerateMenuText()
+    local ftext = MakeFText(content)
+    if OverlayWidget.Title and OverlayWidget.Title:IsValid() then
+        pcall(function()
+            OverlayWidget.Title:SetText(ftext)
+            OverlayWidget.Title:SetAutoWrapText(true)
+            -- Warm gold / luminous runes typography
+            OverlayWidget.Title:SetColorAndOpacity({
+                SpecifiedColor = { R = 0.96, G = 0.89, B = 0.62, A = 1.0 },
+                ColorUseRule = 0
+            })
+            OverlayWidget.Title:SetShadowOffset({ X = 1.5, Y = 1.5 })
+            OverlayWidget.Title:SetShadowColorAndOpacity({ R = 0.0, G = 0.0, B = 0.0, A = 0.9 })
+        end)
+    end
+end
+
+local function CreateOverlay()
+    local PC = UEHelpers.GetPlayerController()
+    if not PC or not PC:IsValid() then return nil end
+
+    if OverlayWidget and OverlayWidget:IsValid() then
+        return OverlayWidget
+    end
+
+    CleanupAllOrphans(nil)
+
+    local Class = GetOverlayClass()
+    if not Class or not Class:IsValid() then
+        Log("[Error] WBP_TitleOnlyTooltip_C class not found.")
+        return nil
+    end
+
+    local widget = nil
+    local WBLib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if WBLib and WBLib:IsValid() and WBLib.Create then
+        pcall(function() widget = WBLib:Create(PC, Class, PC) end)
+    end
+    if not widget or not widget:IsValid() then
+        pcall(function() widget = StaticConstructObject(Class, PC) end)
+    end
+    if not widget or not widget:IsValid() then
+        Log("[Error] Failed to create overlay widget.")
+        return nil
+    end
+
+    OverlayWidget = widget
+    OwnedWidgetName = OverlayWidget:GetFullName()
+    if ModRef then
+        pcall(function() ModRef:SetSharedVariable("ModMenu.OwnedWidgetName", OwnedWidgetName) end)
+    end
+
+    -- Add to Viewport at top Z-Order (9999)
+    OverlayWidget:AddToViewport(9999)
+    OverlayWidget:SetVisibility(2) -- start hidden
+
+    UpdateMenuLayout(OverlayWidget)
+    RefreshOverlayText()
+
+    Log("Overlay widget created (Top Z-Order 9999).")
+    return OverlayWidget
+end
+
+local function ShowOverlay()
+    local w = CreateOverlay()
+    if not w then return end
+    RefreshOverlayText()
+    UpdateMenuLayout(w)
+    w:SetVisibility(0) -- Visible
+    IsOverlayVisible = true
+    Log(">>> Toolkit Mod Menu overlay SHOWN.")
+end
+
+local function HideOverlay()
+    if OverlayWidget and OverlayWidget:IsValid() then
+        OverlayWidget:SetVisibility(2) -- Collapsed
+    end
+    IsOverlayVisible = false
+    Log(">>> Toolkit Mod Menu overlay HIDDEN.")
+end
+
+local function ToggleOverlay()
+    if IsOverlayVisible then
+        HideOverlay()
+        ManualToggleActive = false
+    else
+        ShowOverlay()
+        ManualToggleActive = true
+    end
+end
+
+-- ============================================================
+-- Zero-Crash Pause Detection Loop (Pure Read-Only Engine State)
+-- ============================================================
+
+LoopAsync(250, function()
     ExecuteInGameThread(function()
-        local pauseMenus = FindAllOf("WBP_PauseMenuScreen_C") or {}
-        for _, pm in ipairs(pauseMenus) do
-            if IsValidUObject(pm) then
-                SetupPauseMenuModCard(pm)
-                break
+        local PC = UEHelpers.GetPlayerController()
+        if not PC or not PC:IsValid() then return end
+
+        local GameStatics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+        local isPaused = false
+        if GameStatics and GameStatics:IsValid() and GameStatics.IsGamePaused then
+            pcall(function() isPaused = GameStatics:IsGamePaused(PC) end)
+        end
+
+        -- Check transition into Pause
+        if isPaused and not LastPauseState then
+            LastPauseState = true
+            Log("Game Paused (ESC) detected -> Displaying Toolkit Mod Menu")
+            ShowOverlay()
+        -- Check transition out of Pause
+        elseif not isPaused and LastPauseState then
+            LastPauseState = false
+            Log("Game Resumed detected -> Hiding Toolkit Mod Menu")
+            if not ManualToggleActive then
+                HideOverlay()
             end
         end
 
-        -- Clean up references when pause menu closes
-        if InjectedButton and not InjectedButton:IsValid() then
-            InjectedButton = nil
-            InjectedCard = nil
-            LastPauseMenuAddr = nil
+        -- Keep layout synced if visible
+        if IsOverlayVisible and OverlayWidget and OverlayWidget:IsValid() then
+            UpdateMenuLayout(OverlayWidget)
         end
     end)
     return false
 end)
 
 -- ============================================================
--- Standalone Viewport Overlay for [F8] Keybind
+-- Keybind: [F8] Toggle Overlay anytime
 -- ============================================================
-
-local function ToggleStandaloneOverlay()
-    local PC = UEHelpers.GetPlayerController()
-    if not PC or not PC:IsValid() then return end
-
-    if IsStandaloneVisible and StandaloneOverlay and StandaloneOverlay:IsValid() then
-        StandaloneOverlay:SetVisibility(2)
-        IsStandaloneVisible = false
-        Log("Standalone Mod Menu overlay hidden [F8].")
-        return
-    end
-
-    if not StandaloneOverlay or not StandaloneOverlay:IsValid() then
-        CleanupAllOrphans(nil)
-        local tooltipClass = StaticFindObject("/Game/UI/Common/WBP_TitleOnlyTooltip.WBP_TitleOnlyTooltip_C")
-        if not tooltipClass or not tooltipClass:IsValid() then return end
-
-        local WBLib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
-        local widget = nil
-        if WBLib and WBLib:IsValid() and WBLib.Create then
-            pcall(function() widget = WBLib:Create(PC, tooltipClass, PC) end)
-        end
-        if not widget or not widget:IsValid() then
-            pcall(function() widget = StaticConstructObject(tooltipClass, PC) end)
-        end
-        if not widget or not widget:IsValid() then return end
-
-        StandaloneOverlay = widget
-        OwnedWidgetName = StandaloneOverlay:GetFullName()
-        if ModRef then
-            pcall(function() ModRef:SetSharedVariable("ModMenu.OwnedWidgetName", OwnedWidgetName) end)
-        end
-
-        StandaloneOverlay:AddToViewport(9999)
-    end
-
-    -- Update layout & text
-    pcall(function()
-        local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
-        local viewport = layout:GetViewportSize(PC)
-        local dpi = layout:GetViewportScale(PC)
-        local screenW = viewport.X / dpi
-        local screenH = viewport.Y / dpi
-
-        StandaloneOverlay:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
-        StandaloneOverlay:SetPositionInViewport({ X = math.max(screenW * 0.42, 540.0), Y = math.max((screenH - 580.0) * 0.42, 60.0) }, false)
-        StandaloneOverlay:SetDesiredSizeInViewport({ X = 640.0, Y = 580.0 })
-
-        if StandaloneOverlay.SizeBox_2 and StandaloneOverlay.SizeBox_2:IsValid() then
-            StandaloneOverlay.SizeBox_2:SetWidthOverride(640.0)
-            StandaloneOverlay.SizeBox_2:SetHeightOverride(580.0)
-        end
-        if StandaloneOverlay.Background and StandaloneOverlay.Background:IsValid() then
-            StandaloneOverlay.Background:SetColorAndOpacity({ R = 0.03, G = 0.04, B = 0.08, A = 0.96 })
-        end
-        if StandaloneOverlay.Title and StandaloneOverlay.Title:IsValid() then
-            StandaloneOverlay.Title:SetText(MakeFText(GenerateMenuText()))
-            StandaloneOverlay.Title:SetAutoWrapText(true)
-            StandaloneOverlay.Title:SetColorAndOpacity({
-                SpecifiedColor = { R = 0.96, G = 0.89, B = 0.62, A = 1.0 },
-                ColorUseRule = 0
-            })
-            StandaloneOverlay.Title:SetShadowOffset({ X = 1.5, Y = 1.5 })
-            StandaloneOverlay.Title:SetShadowColorAndOpacity({ R = 0.0, G = 0.0, B = 0.0, A = 0.9 })
-        end
-
-        StandaloneOverlay:SetVisibility(0)
-        IsStandaloneVisible = true
-        Log("Standalone Mod Menu overlay shown [F8].")
-    end)
-end
-
--- Keybind: [F8] Toggle Standalone Overlay
 if Key.F8 then
     RegisterKeyBind(Key.F8, function()
         ExecuteInGameThread(function()
-            ToggleStandaloneOverlay()
+            ToggleOverlay()
         end)
     end)
-    Log("Keybind registered: [F8: Toggle Standalone Mod Menu Overlay]")
+    Log("Keybind registered: [F8: Toggle Toolkit Mod Menu]")
 end
 
 Log("Toolkit Mod Menu initialized successfully.")
