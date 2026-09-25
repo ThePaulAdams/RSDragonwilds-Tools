@@ -7,8 +7,8 @@ end
 
 Log("==========================================")
 Log("Initializing RSDragonwilds Toolkit Mod Menu...")
-Log("Controls: [F8] or [Insert] Toggle Mod Menu Overlay")
-Log("          Or click 'TOOLKIT MODS' in the ESC Pause Menu!")
+Log("Controls: [F8] Toggle Mod Menu Overlay anytime")
+Log("          Auto-displays on the Pause Menu (ESC)!")
 Log("==========================================")
 
 -- ============================================================
@@ -16,8 +16,8 @@ Log("==========================================")
 -- ============================================================
 local OverlayWidget = nil
 local IsOverlayVisible = false
-local InjectedButton = nil
-local InjectedButtonAddr = nil
+local ManualToggleState = false
+local WasPauseMenuOpen = false
 
 -- Persist widget name across Lua reloads to clean up orphans
 local OwnedWidgetName = nil
@@ -46,8 +46,8 @@ local ToolkitMods = {
     {
         Id = "OSRSMinimap",
         Name = "OSRS Minimap",
-        Keys = "[F6] Toggle Map  |  [F9] Toggle Resource Icons",
-        Desc = "Old School RuneScape minimap with rotating compass & resource nodes.",
+        Keys = "[F6] Toggle Map  |  [F9] Resource Icons",
+        Desc = "Old School RuneScape minimap with rotating player compass & resource tracking.",
     },
     {
         Id = "QuickStack",
@@ -64,13 +64,13 @@ local ToolkitMods = {
     {
         Id = "TelekineticWoodcraft",
         Name = "Telekinetic Woodcraft",
-        Keys = "[E]/[V] Grab Log  |  [Z] Log Magnet  |  [F6] Splinter Radius",
+        Keys = "[E]/[V] Grab  |  [Z] Log Magnet  |  [F6] Radius",
         Desc = "Telekinetic log manipulation & 150m vacuum into flat woodpiles for Splinter.",
     },
     {
         Id = "ModMenu",
         Name = "Toolkit Mod Menu",
-        Keys = "[F8] / [Insert]  |  ESC Pause Menu Button",
+        Keys = "[F8] Toggle Overlay  |  Auto-shown on ESC",
         Desc = "In-game mod status dashboard and hotkey control reference.",
     },
 }
@@ -164,7 +164,7 @@ local function GenerateMenuText()
 
     table.insert(lines, "----------------------------------------------------------")
     table.insert(lines, string.format(" Status: %d / %d Toolkit Mods Active  |  UE4SS Mod System", activeCount, totalCount))
-    table.insert(lines, " Controls: Press [F8], [Insert], or Click to Close")
+    table.insert(lines, " Press [F8] to toggle overlay anytime during gameplay")
     table.insert(lines, "==========================================================")
     return table.concat(lines, "\n")
 end
@@ -296,16 +296,18 @@ end
 local function ToggleOverlay()
     if IsOverlayVisible then
         HideOverlay()
+        ManualToggleState = false
     else
         ShowOverlay()
+        ManualToggleState = true
     end
 end
 
 -- ============================================================
--- Pause Menu Button Injection & Reliable Click Detection
+-- Safe Pause Menu State Polling (Pure Game Thread Execution)
 -- ============================================================
 
-local function IsValidInstance(obj)
+local function IsValidUObject(obj)
     if not obj then return false end
     local ok, valid = pcall(function()
         if not obj:IsValid() or obj:GetAddress() == 0 then return false end
@@ -317,125 +319,51 @@ local function IsValidInstance(obj)
     return ok and valid
 end
 
-local function TryInjectPauseMenuButton()
-    local ok, instances = pcall(function() return FindAllOf("WBP_PauseMenuScreen_C") end)
-    if not ok or not instances then return end
-
-    for _, pauseMenu in ipairs(instances) do
-        if not IsValidInstance(pauseMenu) then goto continue_pm end
-
-        local vbox = nil
-        pcall(function() vbox = pauseMenu.VerticalBox_PauseMenu end)
-        if not vbox or not vbox:IsValid() then goto continue_pm end
-
-        -- Check if already injected
-        if InjectedButton and InjectedButton:IsValid() and InjectedButtonAddr then
-            goto continue_pm
-        end
-
-        local btnClass = StaticFindObject("/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C")
-        if not btnClass or not btnClass:IsValid() then goto continue_pm end
-
-        local pauseStyle = StaticFindObject("/Game/UI/Styles/Buttons/PauseMenu/CUIS_PauseButtonStyle.CUIS_PauseButtonStyle_C")
-
+LoopAsync(300, function()
+    ExecuteInGameThread(function()
         local PC = UEHelpers.GetPlayerController()
-        if not PC or not PC:IsValid() then goto continue_pm end
+        if not PC or not PC:IsValid() then return end
 
-        local btn = nil
-        local WBLib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
-        if WBLib and WBLib:IsValid() and WBLib.Create then
-            pcall(function() btn = WBLib:Create(PC, btnClass, PC) end)
-        end
-        if not btn or not btn:IsValid() then goto continue_pm end
+        -- Check if WBP_PauseMenuScreen_C is open and visible
+        local pauseMenus = FindAllOf("WBP_PauseMenuScreen_C") or {}
+        local isPauseMenuOpen = false
 
-        -- Set the button text
-        pcall(function()
-            btn:SetLabelText(MakeFText("TOOLKIT MODS"))
-        end)
-
-        -- Apply pause menu style
-        if pauseStyle and pauseStyle:IsValid() then
-            pcall(function() btn:SetStyle(pauseStyle) end)
-        end
-
-        -- Bind OnButtonBaseClicked delegate directly on button
-        pcall(function()
-            if btn.OnButtonBaseClicked then
-                btn.OnButtonBaseClicked:Add(function(clickedButton)
-                    Log("TOOLKIT MODS button clicked via OnButtonBaseClicked delegate!")
-                    ToggleOverlay()
-                end)
+        for _, pm in ipairs(pauseMenus) do
+            if IsValidUObject(pm) then
+                local vis = 2
+                pcall(function() vis = pm:GetVisibility() end)
+                if vis == 0 then
+                    isPauseMenuOpen = true
+                    break
+                end
             end
-        end)
+        end
 
-        -- Insert into the VerticalBox
-        local addOk = pcall(function()
-            vbox:AddChildToVerticalBox(btn)
-        end)
-        if not addOk then goto continue_pm end
+        -- Handle transition: Pause Menu Opened
+        if isPauseMenuOpen and not WasPauseMenuOpen then
+            WasPauseMenuOpen = true
+            Log("Pause Menu opened -> Showing Toolkit Mod Menu")
+            ShowOverlay()
+        -- Handle transition: Pause Menu Closed
+        elseif not isPauseMenuOpen and WasPauseMenuOpen then
+            WasPauseMenuOpen = false
+            Log("Pause Menu closed -> Hiding Toolkit Mod Menu")
+            if not ManualToggleState then
+                HideOverlay()
+            end
+        end
 
-        InjectedButton = btn
-        InjectedButtonAddr = btn:GetAddress()
-
-        Log(string.format("Injected 'TOOLKIT MODS' button [0x%X] into Pause Menu!", InjectedButtonAddr))
-
-        ::continue_pm::
-    end
-end
-
--- ============================================================
--- Universal C++ Click Hook for CommonButtonBase
--- ============================================================
-
--- Hook 1: HandleButtonClicked (C++ primary click dispatcher)
-RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(Context)
-    local btn = Context:get()
-    if btn and btn:IsValid() and InjectedButtonAddr and btn:GetAddress() == InjectedButtonAddr then
-        Log("TOOLKIT MODS button clicked via HandleButtonClicked!")
-        ExecuteInGameThread(function()
-            ToggleOverlay()
-        end)
-    end
-end)
-
--- Hook 2: BP_OnClicked (Blueprint click event)
-RegisterHook("/Script/CommonUI.CommonButtonBase:BP_OnClicked", function(Context)
-    local btn = Context:get()
-    if btn and btn:IsValid() and InjectedButtonAddr and btn:GetAddress() == InjectedButtonAddr then
-        Log("TOOLKIT MODS button clicked via BP_OnClicked!")
-        ExecuteInGameThread(function()
-            ToggleOverlay()
-        end)
-    end
-end)
-
--- ============================================================
--- Background Polling: Inject button when pause menu is opened
--- ============================================================
-
-LoopAsync(400, function()
-    pcall(TryInjectPauseMenuButton)
-
-    -- Auto-clean button address when pause menu closes
-    if InjectedButton and not InjectedButton:IsValid() then
-        InjectedButton = nil
-        InjectedButtonAddr = nil
-    end
-
-    -- If overlay is visible, keep layout synced with viewport
-    if IsOverlayVisible and OverlayWidget and OverlayWidget:IsValid() then
-        pcall(function()
-            ExecuteInGameThread(function()
-                UpdateMenuLayout(OverlayWidget)
-            end)
-        end)
-    end
+        -- If overlay is visible, keep layout synced
+        if IsOverlayVisible and OverlayWidget and OverlayWidget:IsValid() then
+            UpdateMenuLayout(OverlayWidget)
+        end
+    end)
 
     return false
 end)
 
 -- ============================================================
--- Keybinds: [F8] Toggle Overlay
+-- Keybind: [F8] Toggle Overlay anytime
 -- ============================================================
 if Key.F8 then
     RegisterKeyBind(Key.F8, function()
