@@ -820,6 +820,11 @@ local function ClassifyResource(actor)
     local ok, name = pcall(function() return actor:GetFullName() end)
     if not ok or not name then return nil end
 
+    -- Exclude plain stone
+    if string.find(name, "OreNode_Stone") or string.find(name, "Rock_Stone") then
+        return nil
+    end
+
     -- 1. Anima Vents (Element-specific via AnimaVentData or actor name)
     if string.find(name, "AnimaVent") then
         local elem = nil
@@ -851,7 +856,7 @@ local function ClassifyResource(actor)
         return "Fishing"
     end
 
-    -- 3. Trees (Woodcutting - High-Value Trees Only, matching classic OSRS map style)
+    -- 3. Trees (Woodcutting - High-Value Trees Only)
     if string.find(name, "Oak") then
         return "Oak"
     elseif string.find(name, "Willow") then
@@ -889,6 +894,32 @@ local function ClassifyResource(actor)
         return "Clay"
     elseif string.find(name, "Sandstone") then
         return "Sandstone"
+    end
+
+    -- 5. GameplayTag fallback (for actors named generically)
+    local tagStr = nil
+    pcall(function()
+        if actor.ResourceTag then
+            tagStr = tostring(actor.ResourceTag.TagName or "")
+        elseif actor.GetResourceTag then
+            local tag = actor:GetResourceTag()
+            if tag then tagStr = tostring(tag.TagName or "") end
+        end
+    end)
+    if tagStr and tagStr ~= "" then
+        if string.find(tagStr, "Copper") then return "Copper"
+        elseif string.find(tagStr, "Tin") then return "Tin"
+        elseif string.find(tagStr, "Iron") then return "Iron"
+        elseif string.find(tagStr, "Silver") then return "Silver"
+        elseif string.find(tagStr, "Gold") then return "Gold"
+        elseif string.find(tagStr, "Coal") then return "Coal"
+        elseif string.find(tagStr, "Clay") then return "Clay"
+        elseif string.find(tagStr, "Mithril") then return "Mithril"
+        elseif string.find(tagStr, "Adamant") then return "Adamantite"
+        elseif string.find(tagStr, "Runite") then return "Runite"
+        elseif string.find(tagStr, "Blurite") then return "Blurite"
+        elseif string.find(tagStr, "Sandstone") then return "Sandstone"
+        end
     end
 
     return nil
@@ -1058,14 +1089,8 @@ PurgeAllResourceComponents = function()
                 if not owner or not owner:IsValid() then
                     shouldDestroy = true
                 else
-                    local ownerName = owner:GetFullName()
-                    if string.find(ownerName, "Ash")
-                        or string.find(ownerName, "BP_FellableTree_Base")
-                        or string.find(ownerName, "BP_FelledTree")
-                        or string.find(ownerName, "BP_MiningRock_Base")
-                        or string.find(ownerName, "BP_OreNode_Stone") then
-                        shouldDestroy = true
-                    elseif comp.IconZOrder == 10 and ClassifyResource(owner) == nil then
+                    -- Only purge custom resource icons (IconZOrder == 10) that cannot be classified
+                    if comp.IconZOrder == 10 and ClassifyResource(owner) == nil then
                         shouldDestroy = true
                     end
                 end
@@ -1089,7 +1114,7 @@ PurgeAllResourceComponents = function()
                 official:ForgetDestroyedIcons()
             end
         end)
-        Log(string.format("[PURGE] Destroyed %d legacy Ash/generic rock icon components from world.", destroyed))
+        Log(string.format("[PURGE] Destroyed %d unclassified resource icon components from world.", destroyed))
     end
 end
 
@@ -1127,17 +1152,13 @@ local function PruneDeadIconWidgets(Widget)
                         if not owner or not owner:IsValid() then
                             shouldRemove = true
                         else
-                            local ownerName = owner:GetFullName()
-                            if string.find(ownerName, "Ash")
-                                or string.find(ownerName, "BP_FellableTree_Base")
-                                or string.find(ownerName, "BP_FelledTree")
-                                or string.find(ownerName, "BP_MiningRock_Base")
-                                or string.find(ownerName, "BP_OreNode_Stone") then
-                                shouldRemove = true
-                            elseif comp.IconZOrder == 10 then
+                            -- ONLY prune custom resource icons (ZOrder == 10) if they are no longer tracked or unclassified
+                            if comp.IconZOrder == 10 then
                                 local cAddr = nil
                                 pcall(function() cAddr = comp:GetAddress() end)
-                                if not cAddr or not activeAddrs[cAddr] or ClassifyResource(owner) == nil then
+                                if not cAddr or not activeAddrs[cAddr] then
+                                    shouldRemove = true
+                                elseif ClassifyResource(owner) == nil then
                                     shouldRemove = true
                                 end
                             end
@@ -1245,12 +1266,14 @@ local function ScanAndRegisterResources()
     local classesToScan = {
         "BP_AnimaVent_C",
         "BP_OreNode_C",
+        "BP_MiningRock_Base_C",
         "BP_DivineRockBase_C",
         "BP_RuneEssenceGeyser_Base_C",
         "BP_MiningRock_RuneEssence_Static_Base_C",
         "BP_MiningRock_GeyserRuneEssence_C",
         "BP_FishingNodeV2_C",
         "BP_CatchableFish_C",
+        "BP_FellableTree_Base_C",
         "BP_FellableTree_Oak_C",
         "BP_FellableTree_Willow_C",
         "BP_YewTree_01_C",
@@ -1261,8 +1284,13 @@ local function ScanAndRegisterResources()
     }
 
     local newCount = 0
+    local debugCounts = {}
     for _, className in ipairs(classesToScan) do
         local ok, actors = pcall(function() return FindAllOf(className) end)
+        local rawCount = (ok and actors) and #actors or 0
+        if rawCount > 0 then
+            table.insert(debugCounts, string.format("%s:%d", className, rawCount))
+        end
         if ok and actors then
             for _, actor in ipairs(actors) do
                 if IsValidResourceActor(actor, playerLoc, maxDistSq) then
