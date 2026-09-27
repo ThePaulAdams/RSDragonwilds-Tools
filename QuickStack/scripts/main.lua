@@ -3,12 +3,15 @@ local UEHelpers = require("UEHelpers")
 local ModName = "QuickStack"
 
 local Config = {
-    -- Keybind to activate Quick Stack / Quick Pull
+    -- Keybind to activate Quick Stack / Ground Magnetism
     Key = Key.G,
     Modifier = nil, -- Optional modifier key, e.g. ModifierKey.CONTROL or nil for just G
 
     -- Maximum distance (in Unreal Units) to search for chests. 2500 uu = 25 meters.
     SearchRadius = 2500.0,
+
+    -- Maximum distance (in Unreal Units) to magnetize ground items into inventory. 4000 uu = 40 meters.
+    GroundMagnetRadius = 4000.0,
 
     -- Maximum distance (in Unreal Units) to pack up ground items into Relocation Crate. 15000 uu = 150 meters.
     RelocationPackRadius = 15000.0,
@@ -20,8 +23,8 @@ local Config = {
     -- If false, only tops-off existing non-full stacks in the chest.
     OverflowToEmptySlots = false,
 
-    -- Hold duration (in seconds) to trigger Quick Pull (retrieval from chests)
-    HoldDuration = 0.35,
+    -- Hold duration (in seconds) to trigger Ground Item Magnetism
+    HoldDuration = 0.25,
 
     -- Print detailed information to the console log
     DebugLog = true
@@ -32,9 +35,9 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing QuickStack Mod with Relocation Crate...")
+Log("Initializing QuickStack Mod with Ground Magnetism...")
 Log("  [Tap G]    : Quick-stack matching items into nearby chests.")
-Log("  [Hold G]   : Hover over any item (in inventory or chest) to pull all matching items from nearby chests!")
+Log("  [Hold G]   : Ground Object Magnetism -> Pull all items (flax, ore, loot) within 40m into inventory!")
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items into nearby chests at your new base!")
 Log("==========================================")
@@ -301,6 +304,23 @@ local function IsGKeyDown(PC)
         return PC:IsInputKeyDown({ KeyName = FName("G") })
     end)
     return ok and res
+end
+
+-- Helper: Check if any modifier key (Ctrl, Shift, Alt) is currently held
+local function IsModifierDown(PC)
+    if not PC or not PC:IsValid() then return false end
+    local isDown = false
+    pcall(function()
+        if PC:IsInputKeyDown({ KeyName = FName("LeftControl") }) or
+           PC:IsInputKeyDown({ KeyName = FName("RightControl") }) or
+           PC:IsInputKeyDown({ KeyName = FName("LeftShift") }) or
+           PC:IsInputKeyDown({ KeyName = FName("RightShift") }) or
+           PC:IsInputKeyDown({ KeyName = FName("LeftAlt") }) or
+           PC:IsInputKeyDown({ KeyName = FName("RightAlt") }) then
+            isDown = true
+        end
+    end)
+    return isDown
 end
 
 -- =========================================================================
@@ -760,6 +780,127 @@ local function ExecuteQuickPull(target)
 end
 
 -- =========================================================================
+-- WIDE LOCAL GROUND ITEM MAGNETISM (Hold G)
+-- =========================================================================
+local function ExecuteGroundMagnetism()
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then
+        return
+    end
+
+    local pawn = PC.Pawn
+    local playerLoc = nil
+    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
+    if not playerLoc then return end
+
+    local radius = Config.GroundMagnetRadius or 4000.0 -- 40 meters
+    local radiusSq = radius * radius
+
+    local pawnLevel = nil
+    pcall(function() pawnLevel = pawn:GetLevel() end)
+
+    local okItems, foundItems = pcall(function() return FindAllOf("WorldItem") end)
+    if not okItems or not foundItems then return end
+
+    local magnetizedCount = 0
+    local magnetizedNames = {}
+
+    for _, actor in ipairs(foundItems) do
+        if IsValidWorldActor(actor) then
+            local sameLevel = true
+            if pawnLevel then
+                pcall(function()
+                    local aLevel = actor:GetLevel()
+                    if aLevel and aLevel:IsValid() and pawnLevel:IsValid() then
+                        sameLevel = (aLevel:GetAddress() == pawnLevel:GetAddress())
+                    end
+                end)
+            end
+
+            if sameLevel then
+                local loc = nil
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+                if loc then
+                    local dx = loc.X - playerLoc.X
+                    local dy = loc.Y - playerLoc.Y
+                    local dz = loc.Z - playerLoc.Z
+                    local distSq = dx * dx + dy * dy + dz * dz
+
+                    if distSq <= radiusSq then
+                        local dist = math.sqrt(distSq)
+
+                        -- Skip if currently manipulated by telekinesis
+                        local isManipulated = false
+                        pcall(function()
+                            if actor.IsBeingManipulated and actor:IsBeingManipulated() then
+                                isManipulated = true
+                            end
+                        end)
+
+                        if not isManipulated then
+                            local mag = nil
+                            pcall(function()
+                                if actor.GetMagneticComponent then
+                                    mag = actor:GetMagneticComponent()
+                                end
+                                if not mag or not mag:IsValid() then
+                                    mag = actor.MagneticComponentGrantItem
+                                end
+                            end)
+
+                            local magnetizedOk = false
+                            if mag and mag:IsValid() then
+                                local alreadyGranted = false
+                                pcall(function() alreadyGranted = mag.bHasBeenGranted end)
+
+                                if not alreadyGranted then
+                                    pcall(function()
+                                        mag.bAllowAutoMagnetization = true
+                                        mag.bAutoMagnetizationEnabled = true
+                                        mag.bMagnetizeWithFullInventory = true
+                                        mag.MinTimeBeforeMoving = 0.0
+                                        mag.ContactRange = 250.0
+                                        mag.LerpSpeed = 30.0
+                                        mag:BP_MagnetizeToPlayer(pawn, true)
+                                        magnetizedOk = true
+                                    end)
+                                end
+                            end
+
+                            -- Close-range interaction fallback
+                            if dist < 250.0 then
+                                pcall(function()
+                                    if actor.HandleInteraction then
+                                        actor:HandleInteraction(pawn)
+                                    elseif actor.InteractionComponent and actor.InteractionComponent:IsValid() then
+                                        actor.InteractionComponent:K2_OnInteraction(pawn)
+                                    end
+                                end)
+                            end
+
+                            if magnetizedOk then
+                                magnetizedCount = magnetizedCount + 1
+                                local name = GetItemName(actor)
+                                magnetizedNames[name] = (magnetizedNames[name] or 0) + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if magnetizedCount > 0 and Config.DebugLog then
+        local details = {}
+        for name, count in pairs(magnetizedNames) do
+            table.insert(details, string.format("%dx %s", count, name))
+        end
+        Log(string.format(">>> [Ground Magnet] Magnetized %d item(s) towards player! (%s)",
+            magnetizedCount, table.concat(details, ", ")))
+    end
+end
+
+-- =========================================================================
 -- BASE RELOCATION: PACK UP GROUND ITEMS (Ctrl + G)
 -- =========================================================================
 local function ExecutePackRelocationCrate()
@@ -1034,80 +1175,86 @@ end
 -- KEYBIND & TAP / HOLD STATE MACHINE
 -- =========================================================================
 local HoldState = {
-    IsActive = false,
+    IsHolding = false,
     PressTime = 0,
-    Target = nil,
-    TriggeredPull = false,
+    LastPulseTime = 0,
     RepeatCount = 0
 }
 
 local function OnKeyG()
+    local PC = UEHelpers.GetPlayerController()
+    if IsModifierDown(PC) then
+        return -- Ignore if Ctrl, Shift, or Alt is held (let Ctrl+G or Shift+G handle it)
+    end
+
     local now = os.clock()
 
     -- Case 1: Key is currently being held and OS typematic repeat is firing
-    if HoldState.IsActive and (now - HoldState.PressTime < 1.0) then
+    if HoldState.IsHolding then
+        HoldState.PressTime = now
         HoldState.RepeatCount = HoldState.RepeatCount + 1
-        if not HoldState.TriggeredPull and HoldState.Target then
-            HoldState.TriggeredPull = true
-            ExecuteQuickPull(HoldState.Target)
+        if (now - HoldState.LastPulseTime) >= 0.20 then
+            HoldState.LastPulseTime = now
+            ExecuteGroundMagnetism()
         end
         return
     end
 
-    -- Case 2: Fresh key press. Check if an item is currently hovered under the cursor
-    local hoverTarget = GetCurrentHoverTarget()
-
-    -- If no item is hovered, execute normal QuickStack immediately with ZERO delay
-    if not hoverTarget then
-        HoldState.IsActive = false
-        HoldState.Target = nil
-        ExecuteQuickStack()
-        return
-    end
-
-    -- An item IS hovered! Start hold detection
-    HoldState.IsActive = true
+    -- Case 2: Fresh key press
+    HoldState.IsHolding = false
     HoldState.PressTime = now
-    HoldState.Target = hoverTarget
-    HoldState.TriggeredPull = false
+    HoldState.LastPulseTime = 0
     HoldState.RepeatCount = 0
 
     local pressTimestamp = now
 
-    -- Run asynchronous hold checker
-    LoopAsync(40, function()
+    LoopAsync(30, function()
+        local curPC = UEHelpers.GetPlayerController()
+        local keyStillDown = IsGKeyDown(curPC)
         local elapsed = os.clock() - pressTimestamp
 
-        if elapsed < Config.HoldDuration then
-            return false -- Keep checking until hold threshold is reached
+        -- If key was released before reaching hold threshold: It's a TAP!
+        if not keyStillDown and elapsed < Config.HoldDuration then
+            ExecuteInGameThread(function()
+                ExecuteQuickStack()
+            end)
+            HoldState.IsHolding = false
+            return true -- Stop loop
         end
 
-        -- Hold threshold reached! Check if this hold state is still current
-        if HoldState.PressTime == pressTimestamp and not HoldState.TriggeredPull then
-            local PC = UEHelpers.GetPlayerController()
-            local keyStillDown = IsGKeyDown(PC)
-
-            if keyStillDown or HoldState.RepeatCount >= 1 then
-                -- Key was held! Execute Quick Pull
-                HoldState.TriggeredPull = true
+        -- If key is still held down and reached hold threshold: It's a HOLD!
+        if (keyStillDown or HoldState.RepeatCount >= 1) and elapsed >= Config.HoldDuration then
+            if not HoldState.IsHolding then
+                HoldState.IsHolding = true
+                HoldState.LastPulseTime = os.clock()
                 ExecuteInGameThread(function()
-                    ExecuteQuickPull(HoldState.Target)
+                    ExecuteGroundMagnetism()
                 end)
             else
-                -- Key was released before hold threshold! Treat as a normal QuickStack tap
-                ExecuteInGameThread(function()
-                    ExecuteQuickStack()
-                end)
+                -- While holding continues, pulse every 200ms
+                local curNow = os.clock()
+                if (curNow - HoldState.LastPulseTime) >= 0.20 then
+                    HoldState.LastPulseTime = curNow
+                    ExecuteInGameThread(function()
+                        ExecuteGroundMagnetism()
+                    end)
+                end
             end
         end
 
-        -- Reset hold state after 500ms and stop the loop
-        if elapsed >= 0.50 then
-            HoldState.IsActive = false
-            return true -- Stop LoopAsync
+        -- When key is finally released after holding:
+        if not keyStillDown and HoldState.IsHolding then
+            HoldState.IsHolding = false
+            return true -- Stop loop
         end
 
-        return false
+        -- Safety timeout if key was released
+        if not keyStillDown and elapsed >= (Config.HoldDuration + 0.1) then
+            HoldState.IsHolding = false
+            return true
+        end
+
+        return false -- Keep checking
     end)
 end
 
@@ -1127,7 +1274,7 @@ local okBind, errBind = pcall(function()
 end)
 
 if okBind then
-    Log(string.format("Keybind registered: [%s] -> Quick Stack / Quick Pull.", "G"))
+    Log(string.format("Keybind registered: [%s] -> Tap = Quick Stack, Hold = Ground Magnetism.", "G"))
 else
     Log("ERROR registering keybind [G]: " .. tostring(errBind))
 end
@@ -1151,6 +1298,7 @@ end)
 return {
     ExecuteQuickStack = ExecuteQuickStack,
     ExecuteQuickPull = ExecuteQuickPull,
+    ExecuteGroundMagnetism = ExecuteGroundMagnetism,
     ExecutePackRelocationCrate = ExecutePackRelocationCrate,
     ExecuteUnpackRelocationCrate = ExecuteUnpackRelocationCrate,
     RelocationCrate = RelocationCrate,
