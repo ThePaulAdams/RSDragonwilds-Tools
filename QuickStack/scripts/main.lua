@@ -10,6 +10,9 @@ local Config = {
     -- Maximum distance (in Unreal Units) to search for chests. 2500 uu = 25 meters.
     SearchRadius = 2500.0,
 
+    -- Maximum distance (in Unreal Units) to pack up ground items into Relocation Crate. 15000 uu = 150 meters.
+    RelocationPackRadius = 15000.0,
+
     -- Protect the player's quick-action hotbar slots from being deposited.
     ProtectHotbar = true,
 
@@ -29,10 +32,15 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing QuickStack Mod with Quick Pull...")
-Log("  [Tap G]  : Quick-stack matching items into nearby chests.")
-Log("  [Hold G] : Hover over any item (in inventory or chest) to pull all matching items from nearby chests!")
+Log("Initializing QuickStack Mod with Relocation Crate...")
+Log("  [Tap G]    : Quick-stack matching items into nearby chests.")
+Log("  [Hold G]   : Hover over any item (in inventory or chest) to pull all matching items from nearby chests!")
+Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
+Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items into nearby chests at your new base!")
 Log("==========================================")
+
+-- Persistent Virtual Storage for Base Relocation (cross-zone persistent, infinite capacity)
+local RelocationCrate = {}
 
 -- Helper: Check if an actor is a real world actor (filters out CDOs and archetypes)
 local function IsValidWorldActor(actor)
@@ -107,6 +115,22 @@ local function GetItemDataAddress(item)
         end
     end)
     return addr
+end
+
+-- Helper: Resolve ItemData object safely (with fallback to StaticFindObject by path)
+local function ResolveItemData(entry)
+    if not entry then return nil end
+    if entry.ItemData and entry.ItemData:IsValid() and entry.ItemData:GetAddress() ~= 0 then
+        return entry.ItemData
+    end
+    if entry.AssetPath and entry.AssetPath ~= "" then
+        local obj = nil
+        pcall(function() obj = StaticFindObject(entry.AssetPath) end)
+        if obj and obj:IsValid() then
+            return obj
+        end
+    end
+    return nil
 end
 
 -- Hover Detection: Find the item currently under the player's cursor
@@ -736,6 +760,277 @@ local function ExecuteQuickPull(target)
 end
 
 -- =========================================================================
+-- BASE RELOCATION: PACK UP GROUND ITEMS (Ctrl + G)
+-- =========================================================================
+local function ExecutePackRelocationCrate()
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then
+        Log("Relocation Pack failed: PlayerController or Character Pawn not ready.")
+        return
+    end
+
+    local pawn = PC.Pawn
+    local playerLoc = nil
+    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
+    if not playerLoc then
+        Log("Relocation Pack failed: Could not get player location.")
+        return
+    end
+
+    local radius = Config.RelocationPackRadius or 15000.0 -- 150 meters
+    local radiusSq = radius * radius
+
+    local pawnLevel = nil
+    pcall(function() pawnLevel = pawn:GetLevel() end)
+
+    local okItems, foundItems = pcall(function() return FindAllOf("WorldItem") end)
+    if not okItems or not foundItems then
+        Log("Relocation Pack: No WorldItem actors found.")
+        return
+    end
+
+    local candidateActors = {}
+    for _, actor in ipairs(foundItems) do
+        if IsValidWorldActor(actor) then
+            local sameLevel = true
+            if pawnLevel then
+                pcall(function()
+                    local aLevel = actor:GetLevel()
+                    if aLevel and aLevel:IsValid() and pawnLevel:IsValid() then
+                        sameLevel = (aLevel:GetAddress() == pawnLevel:GetAddress())
+                    end
+                end)
+            end
+
+            if sameLevel then
+                local loc = nil
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+                if loc then
+                    local dx = loc.X - playerLoc.X
+                    local dy = loc.Y - playerLoc.Y
+                    local dz = loc.Z - playerLoc.Z
+                    local distSq = dx * dx + dy * dy + dz * dz
+                    if distSq <= radiusSq then
+                        table.insert(candidateActors, actor)
+                    end
+                end
+            end
+        end
+    end
+
+    if #candidateActors == 0 then
+        Log(string.format("Relocation Pack: No ground items found within %.1f meters.", radius / 100.0))
+        return
+    end
+
+    Log(string.format(">>> PACKING BASE: Found %d ground item stack(s) within %.1f meters! Storing into Relocation Crate...",
+        #candidateActors, radius / 100.0))
+
+    local packedStacks = 0
+    local totalItemsCount = 0
+    local summaryByName = {}
+
+    for _, actor in ipairs(candidateActors) do
+        if IsValidWorldActor(actor) then
+            local itemData = nil
+            pcall(function() itemData = actor.ItemData end)
+
+            if itemData and itemData:IsValid() and itemData:GetAddress() ~= 0 then
+                local count = 1
+                pcall(function() count = actor:GetStackSize() end)
+                if not count or count <= 0 then count = 1 end
+
+                local name = GetItemName(actor)
+                local path = nil
+                pcall(function() path = itemData:GetPathName() end)
+
+                -- Insert into Relocation Crate
+                table.insert(RelocationCrate, {
+                    ItemData = itemData,
+                    AssetPath = path,
+                    Count = count,
+                    Name = name
+                })
+
+                packedStacks = packedStacks + 1
+                totalItemsCount = totalItemsCount + count
+                summaryByName[name] = (summaryByName[name] or 0) + count
+
+                -- Safely remove the world item actor from the ground
+                pcall(function()
+                    actor:K2_DestroyActor()
+                end)
+            end
+        end
+    end
+
+    -- Consolidate duplicate entries in the crate to save space
+    local consolidated = {}
+    for _, entry in ipairs(RelocationCrate) do
+        local key = entry.AssetPath or (entry.ItemData and tostring(entry.ItemData:GetAddress())) or entry.Name
+        if not consolidated[key] then
+            consolidated[key] = {
+                ItemData = entry.ItemData,
+                AssetPath = entry.AssetPath,
+                Count = 0,
+                Name = entry.Name
+            }
+        end
+        consolidated[key].Count = consolidated[key].Count + entry.Count
+    end
+
+    RelocationCrate = {}
+    for _, item in pairs(consolidated) do
+        table.insert(RelocationCrate, item)
+    end
+
+    -- Format summary for the player
+    local breakdown = {}
+    for name, cnt in pairs(summaryByName) do
+        table.insert(breakdown, string.format("%dx %s", cnt, name))
+    end
+
+    Log(string.format(">>> SUCCESS: Packed %d stack(s) (%d total items) into Relocation Crate!", packedStacks, totalItemsCount))
+    Log(string.format(">>> Packed contents: %s", table.concat(breakdown, ", ")))
+    Log(">>> NEXT STEP: Travel across the map to your new base, place down chests, and press [Shift + G] to unpack everything into your chests!")
+end
+
+-- =========================================================================
+-- BASE RELOCATION: UNPACK CRATE INTO CHESTS (Shift + G)
+-- =========================================================================
+local function ExecuteUnpackRelocationCrate()
+    if #RelocationCrate == 0 then
+        Log("Relocation Crate is empty! Go to your dismantled base and press [Ctrl + G] first to pack up ground items.")
+        return
+    end
+
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then
+        Log("Relocation Unpack failed: PlayerController or Character Pawn not ready.")
+        return
+    end
+
+    local pawn = PC.Pawn
+    local playerLoc = nil
+    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
+    if not playerLoc then
+        Log("Relocation Unpack failed: Could not get player location.")
+        return
+    end
+
+    local nearbyChests = FindNearbyChests(playerLoc)
+    local playerInv = PC.BP_Components_Inventory
+
+    if #nearbyChests == 0 and (not playerInv or not playerInv:IsValid()) then
+        Log("Relocation Unpack failed: No chests found nearby (within 25m). Place down chests and stand near them before unpacking!")
+        return
+    end
+
+    Log(string.format(">>> UNPACKING RELOCATION CRATE: Depositing items into %d nearby chest(s)...", #nearbyChests))
+
+    local totalItemsDeposited = 0
+    local remainingCrate = {}
+    local chestsUsed = {}
+    local depositedSummary = {}
+
+    for _, entry in ipairs(RelocationCrate) do
+        local itemData = ResolveItemData(entry)
+        local countRemaining = entry.Count
+        local itemName = entry.Name or "Item"
+
+        if itemData and countRemaining > 0 then
+            -- 1. Deposit into nearby chests using native AddItemByData
+            for _, chest in ipairs(nearbyChests) do
+                if countRemaining <= 0 then break end
+                local chestInv = chest.Inventory
+                if chestInv and chestInv:IsValid() then
+                    local availableSpace = 0
+                    pcall(function()
+                        availableSpace = chestInv:GetSpaceAvailableForItemByData(itemData)
+                    end)
+
+                    if availableSpace > 0 then
+                        local toAdd = math.min(countRemaining, availableSpace)
+                        local addedOk = false
+                        pcall(function()
+                            addedOk = chestInv:AddItemByData(itemData, toAdd, 1.0, {})
+                        end)
+
+                        if addedOk then
+                            countRemaining = countRemaining - toAdd
+                            totalItemsDeposited = totalItemsDeposited + toAdd
+                            chestsUsed[chest.Actor:GetAddress()] = true
+                            depositedSummary[itemName] = (depositedSummary[itemName] or 0) + toAdd
+
+                            if Config.DebugLog then
+                                Log(string.format("Unpacked %dx '%s' into chest.", toAdd, itemName))
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. If chests are full, deposit into player backpack slots
+            if countRemaining > 0 and playerInv and playerInv:IsValid() then
+                local pAvailable = 0
+                pcall(function()
+                    pAvailable = playerInv:GetSpaceAvailableForItemByData(itemData)
+                end)
+
+                if pAvailable > 0 then
+                    local toAdd = math.min(countRemaining, pAvailable)
+                    local addedOk = false
+                    pcall(function()
+                        addedOk = playerInv:AddItemByData(itemData, toAdd, 1.0, {})
+                    end)
+
+                    if addedOk then
+                        countRemaining = countRemaining - toAdd
+                        totalItemsDeposited = totalItemsDeposited + toAdd
+                        depositedSummary[itemName] = (depositedSummary[itemName] or 0) + toAdd
+
+                        if Config.DebugLog then
+                            Log(string.format("Chests full: Placed %dx '%s' into player inventory.", toAdd, itemName))
+                        end
+                    end
+                end
+            end
+
+            -- 3. If there is still leftover, keep it in the Crate for the next unpack!
+            if countRemaining > 0 then
+                entry.Count = countRemaining
+                table.insert(remainingCrate, entry)
+            end
+        end
+    end
+
+    RelocationCrate = remainingCrate
+
+    local chestCount = 0
+    for _ in pairs(chestsUsed) do chestCount = chestCount + 1 end
+
+    local breakdown = {}
+    for name, cnt in pairs(depositedSummary) do
+        table.insert(breakdown, string.format("%dx %s", cnt, name))
+    end
+
+    if #RelocationCrate == 0 then
+        Log(string.format(">>> SUCCESS: Fully unpacked %d item(s) into %d chest(s)! Relocation Crate is now empty.",
+            totalItemsDeposited, chestCount))
+        if #breakdown > 0 then
+            Log(string.format(">>> Unpacked: %s", table.concat(breakdown, ", ")))
+        end
+    else
+        local remainingTotal = 0
+        for _, rem in ipairs(RelocationCrate) do remainingTotal = remainingTotal + rem.Count end
+
+        Log(string.format(">>> PARTIAL UNPACK: Unpacked %d item(s) into %d chest(s).", totalItemsDeposited, chestCount))
+        Log(string.format(">>> ATTENTION: %d item(s) across %d stack(s) remain in the crate because all chests are full! Place down more chests and press [Shift + G] again to finish unpacking.",
+            remainingTotal, #RelocationCrate))
+    end
+end
+
+-- =========================================================================
 -- KEYBIND & TAP / HOLD STATE MACHINE
 -- =========================================================================
 local HoldState = {
@@ -816,7 +1111,7 @@ local function OnKeyG()
     end)
 end
 
--- Keybind Registration
+-- Keybind Registration: Normal G (Tap = Quick Stack, Hold on Item = Quick Pull)
 local keyCallback = function()
     ExecuteInGameThread(function()
         OnKeyG()
@@ -832,13 +1127,32 @@ local okBind, errBind = pcall(function()
 end)
 
 if okBind then
-    Log(string.format("Keybind registered successfully: [%s] -> Quick Stack / Quick Pull.", "G"))
+    Log(string.format("Keybind registered: [%s] -> Quick Stack / Quick Pull.", "G"))
 else
-    Log("ERROR registering keybind: " .. tostring(errBind))
+    Log("ERROR registering keybind [G]: " .. tostring(errBind))
 end
+
+-- Keybind Registration: Ctrl + G -> Pack up ground items into Relocation Crate
+pcall(function()
+    RegisterKeyBind(Config.Key, { ModifierKey.CONTROL }, function()
+        ExecuteInGameThread(ExecutePackRelocationCrate)
+    end)
+    Log("Keybind registered: [Ctrl + G] -> Pack Base into Relocation Crate.")
+end)
+
+-- Keybind Registration: Shift + G -> Unpack Relocation Crate into nearby chests
+pcall(function()
+    RegisterKeyBind(Config.Key, { ModifierKey.SHIFT }, function()
+        ExecuteInGameThread(ExecuteUnpackRelocationCrate)
+    end)
+    Log("Keybind registered: [Shift + G] -> Unpack Relocation Crate into nearby chests.")
+end)
 
 return {
     ExecuteQuickStack = ExecuteQuickStack,
     ExecuteQuickPull = ExecuteQuickPull,
+    ExecutePackRelocationCrate = ExecutePackRelocationCrate,
+    ExecuteUnpackRelocationCrate = ExecuteUnpackRelocationCrate,
+    RelocationCrate = RelocationCrate,
     Config = Config
 }
