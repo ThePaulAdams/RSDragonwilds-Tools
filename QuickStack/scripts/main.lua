@@ -5,10 +5,17 @@ local ModName = "QuickStack"
 local Config = {
     -- Keybind to activate Quick Stack / Quick Pull
     Key = Key.G,
-    Modifier = nil, -- Optional modifier key, e.g. ModifierKey.CONTROL or nil for just G
+    Modifier = nil, -- Optional modifier key for base G press
+
+    -- Modifier keys for instant Vacuum Ground Items & Stack
+    VacuumModifierCtrl = ModifierKey.CONTROL,
+    VacuumModifierShift = ModifierKey.SHIFT,
 
     -- Maximum distance (in Unreal Units) to search for chests. 2500 uu = 25 meters.
     SearchRadius = 2500.0,
+
+    -- Maximum distance (in Unreal Units) to vacuum ground items. 7500 uu = 75 meters.
+    VacuumRadius = 7500.0,
 
     -- Protect the player's quick-action hotbar slots from being deposited.
     ProtectHotbar = true,
@@ -17,7 +24,7 @@ local Config = {
     -- If false, only tops-off existing non-full stacks in the chest.
     OverflowToEmptySlots = false,
 
-    -- Hold duration (in seconds) to trigger Quick Pull (retrieval from chests)
+    -- Hold duration (in seconds) to trigger Quick Pull or Ground Vacuum
     HoldDuration = 0.35,
 
     -- Print detailed information to the console log
@@ -29,9 +36,11 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing QuickStack Mod with Quick Pull...")
-Log("  [Tap G]  : Quick-stack matching items into nearby chests.")
-Log("  [Hold G] : Hover over any item (in inventory or chest) to pull all matching items from nearby chests!")
+Log("Initializing QuickStack Mod with Quick Pull & Ground Item Vacuum...")
+Log("  [Tap G]            : Quick-stack matching items into nearby chests.")
+Log("  [Hold G on Item]   : Retrieve all matching items from nearby chests!")
+Log("  [Hold G in World]  : Vacuum all nearby ground items and stack into chests!")
+Log("  [Ctrl+G / Shift+G] : Instant vacuum all ground items and stack into chests!")
 Log("==========================================")
 
 -- Helper: Check if an actor is a real world actor (filters out CDOs and archetypes)
@@ -282,7 +291,7 @@ end
 -- =========================================================================
 -- EXECUTE QUICK STACK (Deposit matching items from player inventory to chests)
 -- =========================================================================
-local function ExecuteQuickStack()
+local function ExecuteQuickStack(allowOverflow)
     local PC = UEHelpers.GetPlayerController()
     if not IsValidWorldActor(PC) then
         Log("QuickStack failed: Local PlayerController not found or invalid.")
@@ -335,6 +344,8 @@ local function ExecuteQuickStack()
     local depositedItemsSummary = {}
     local affectedChests = {}
 
+    local canOverflow = Config.OverflowToEmptySlots or (allowOverflow == true)
+
     for _, entry in ipairs(nearbyChests) do
         local chestInv = entry.Inventory
         local chestActor = entry.Actor
@@ -380,7 +391,7 @@ local function ExecuteQuickStack()
             break
         end
 
-        if hasItems then
+        if hasItems or canOverflow then
             for pIdx = hotbarCount + 1, playerSlotCount do
                 local pSlotZero = pIdx - 1
                 local pItem = nil
@@ -391,30 +402,32 @@ local function ExecuteQuickStack()
                     local pCount = 0
                     pcall(function() pCount = pItem:GetStackSize() end)
 
-                    if pDataAddr and chestItemDataMap[pDataAddr] and pCount > 0 then
+                    if pDataAddr and pCount > 0 then
                         local itemName = GetItemName(pItem)
 
                         -- A: Fill existing non-full stacks
-                        local targets = chestTargetSlots[pDataAddr]
-                        if targets then
-                            for _, target in ipairs(targets) do
-                                if pCount <= 0 then break end
-                                if target.FreeSpace > 0 then
-                                    local moveAmount = math.min(pCount, target.FreeSpace)
-                                    local movedOk = false
-                                    pcall(function()
-                                        movedOk = playerInv:MoveItem(pSlotZero, chestInv, target.SlotZero, PC, moveAmount)
-                                    end)
+                        if chestItemDataMap[pDataAddr] then
+                            local targets = chestTargetSlots[pDataAddr]
+                            if targets then
+                                for _, target in ipairs(targets) do
+                                    if pCount <= 0 then break end
+                                    if target.FreeSpace > 0 then
+                                        local moveAmount = math.min(pCount, target.FreeSpace)
+                                        local movedOk = false
+                                        pcall(function()
+                                            movedOk = playerInv:MoveItem(pSlotZero, chestInv, target.SlotZero, PC, moveAmount)
+                                        end)
 
-                                    if movedOk then
-                                        pCount = pCount - moveAmount
-                                        target.FreeSpace = target.FreeSpace - moveAmount
-                                        totalItemsMoved = totalItemsMoved + moveAmount
-                                        depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
-                                        affectedChests[chestActor:GetAddress()] = true
+                                        if movedOk then
+                                            pCount = pCount - moveAmount
+                                            target.FreeSpace = target.FreeSpace - moveAmount
+                                            totalItemsMoved = totalItemsMoved + moveAmount
+                                            depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
+                                            affectedChests[chestActor:GetAddress()] = true
 
-                                        if Config.DebugLog then
-                                            Log(string.format("Stacked %dx '%s' into chest slot %d.", moveAmount, itemName, target.SlotZero))
+                                            if Config.DebugLog then
+                                                Log(string.format("Stacked %dx '%s' into chest slot %d.", moveAmount, itemName, target.SlotZero))
+                                            end
                                         end
                                     end
                                 end
@@ -422,7 +435,7 @@ local function ExecuteQuickStack()
                         end
 
                         -- B: Overflow to empty slots if enabled
-                        if pCount > 0 and Config.OverflowToEmptySlots and #chestEmptySlots > 0 then
+                        if pCount > 0 and canOverflow and #chestEmptySlots > 0 then
                             local emptySlotZero = table.remove(chestEmptySlots, 1)
                             local moveAmount = pCount
                             local movedOk = false
@@ -459,7 +472,9 @@ local function ExecuteQuickStack()
         Log(string.format(">>> SUCCESS: Quick-stacked %d item(s) into %d chest(s): %s",
             totalItemsMoved, chestCount, table.concat(breakdown, ", ")))
     else
-        Log("No matching items found in nearby chests to stack.")
+        if not allowOverflow then
+            Log("No matching items found in nearby chests to stack.")
+        end
     end
 end
 
@@ -736,6 +751,146 @@ local function ExecuteQuickPull(target)
 end
 
 -- =========================================================================
+-- EXECUTE VACUUM & STACK (Bring all ground items to player & stack into chests)
+-- =========================================================================
+local function ExecuteVacuumAndStack()
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) then
+        Log("Vacuum failed: Local PlayerController not found or invalid.")
+        return
+    end
+
+    local pawn = PC.Pawn
+    if not IsValidWorldActor(pawn) then
+        Log("Vacuum failed: Player character pawn not spawned.")
+        return
+    end
+
+    local playerLoc = nil
+    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
+    if not playerLoc then
+        Log("Vacuum failed: Unable to get player location.")
+        return
+    end
+
+    local radius = Config.VacuumRadius or 7500.0
+    local radiusSq = radius * radius
+
+    -- Find all WorldItem actors in the world within radius
+    local allItems = {}
+    local okItems, foundItems = pcall(function() return FindAllOf("WorldItem") end)
+    if okItems and foundItems then
+        for _, actor in ipairs(foundItems) do
+            if IsValidWorldActor(actor) then
+                local loc = nil
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+                if loc then
+                    local dx = loc.X - playerLoc.X
+                    local dy = loc.Y - playerLoc.Y
+                    local dz = loc.Z - playerLoc.Z
+                    local distSq = dx * dx + dy * dy + dz * dz
+                    if distSq <= radiusSq then
+                        table.insert(allItems, {
+                            Actor = actor,
+                            Distance = math.sqrt(distSq)
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    if #allItems == 0 then
+        Log(string.format("Vacuum: No ground items found within %.1f meters.", radius / 100.0))
+        return
+    end
+
+    Log(string.format(">>> VACUUM: Found %d ground item(s) within %.1f meters! Teleporting to player and stacking into chests...",
+        #allItems, radius / 100.0))
+
+    -- Sort closest items first
+    table.sort(allItems, function(a, b) return a.Distance < b.Distance end)
+
+    local function PulsePull()
+        local curPawn = PC.Pawn
+        if not IsValidWorldActor(curPawn) then return end
+        local curLoc = nil
+        pcall(function() curLoc = curPawn:K2_GetActorLocation() end)
+        if not curLoc then return end
+
+        local targetLoc = {
+            X = curLoc.X,
+            Y = curLoc.Y,
+            Z = curLoc.Z + 15.0
+        }
+
+        for _, entry in ipairs(allItems) do
+            local actor = entry.Actor
+            if IsValidWorldActor(actor) then
+                -- 1. Teleport directly to player's feet
+                pcall(function()
+                    actor:K2_SetActorLocation(targetLoc, false, nil, false)
+                end)
+
+                -- 2. Activate magnetic attraction & grant
+                pcall(function()
+                    local mag = nil
+                    if actor.GetMagneticComponent then
+                        mag = actor:GetMagneticComponent()
+                    end
+                    if not mag and actor.MagneticComponentGrantItem then
+                        mag = actor.MagneticComponentGrantItem
+                    end
+                    if mag and mag:IsValid() then
+                        mag.bAllowAutoMagnetization = true
+                        mag.bAutoMagnetizationEnabled = true
+                        mag.bMagnetizeWithFullInventory = true
+                        mag:BP_MagnetizeToPlayer(curPawn, true)
+                    end
+                end)
+
+                -- 3. Trigger interaction pickup
+                pcall(function()
+                    local interact = actor.InteractionComponent
+                    if interact and interact:IsValid() then
+                        interact:K2_OnInteraction(curPawn)
+                    end
+                end)
+            end
+        end
+    end
+
+    -- Run initial pull
+    PulsePull()
+
+    -- Run multi-pulse sequence to deposit items into chests and pull subsequent batches
+    local pulseCount = 0
+    local maxPulses = 6
+
+    LoopAsync(150, function()
+        pulseCount = pulseCount + 1
+
+        ExecuteInGameThread(function()
+            -- Deposit items currently collected into nearby chests (with overflow to empty slots enabled)
+            ExecuteQuickStack(true)
+
+            -- Pulse pull again for any items remaining on the ground
+            PulsePull()
+        end)
+
+        if pulseCount >= maxPulses then
+            ExecuteInGameThread(function()
+                ExecuteQuickStack(true)
+                Log(">>> VACUUM COMPLETE: All ground items gathered and stacked into chests.")
+            end)
+            return true -- Stop loop
+        end
+
+        return false
+    end)
+end
+
+-- =========================================================================
 -- KEYBIND & TAP / HOLD STATE MACHINE
 -- =========================================================================
 local HoldState = {
@@ -752,9 +907,14 @@ local function OnKeyG()
     -- Case 1: Key is currently being held and OS typematic repeat is firing
     if HoldState.IsActive and (now - HoldState.PressTime < 1.0) then
         HoldState.RepeatCount = HoldState.RepeatCount + 1
-        if not HoldState.TriggeredPull and HoldState.Target then
+        if not HoldState.TriggeredPull then
             HoldState.TriggeredPull = true
-            ExecuteQuickPull(HoldState.Target)
+            if HoldState.Target then
+                ExecuteQuickPull(HoldState.Target)
+            else
+                -- Held G in the open world! Trigger Ground Item Vacuum & Stack!
+                ExecuteVacuumAndStack()
+            end
         end
         return
     end
@@ -762,83 +922,132 @@ local function OnKeyG()
     -- Case 2: Fresh key press. Check if an item is currently hovered under the cursor
     local hoverTarget = GetCurrentHoverTarget()
 
-    -- If no item is hovered, execute normal QuickStack immediately with ZERO delay
-    if not hoverTarget then
-        HoldState.IsActive = false
-        HoldState.Target = nil
-        ExecuteQuickStack()
+    -- If an item IS hovered in inventory or chest:
+    if hoverTarget then
+        HoldState.IsActive = true
+        HoldState.PressTime = now
+        HoldState.Target = hoverTarget
+        HoldState.TriggeredPull = false
+        HoldState.RepeatCount = 0
+
+        local pressTimestamp = now
+
+        LoopAsync(40, function()
+            local elapsed = os.clock() - pressTimestamp
+
+            if elapsed < Config.HoldDuration then
+                return false -- Keep checking until hold threshold is reached
+            end
+
+            -- Hold threshold reached!
+            if HoldState.PressTime == pressTimestamp and not HoldState.TriggeredPull then
+                local PC = UEHelpers.GetPlayerController()
+                local keyStillDown = IsGKeyDown(PC)
+
+                if keyStillDown or HoldState.RepeatCount >= 1 then
+                    -- Key was held! Execute Quick Pull
+                    HoldState.TriggeredPull = true
+                    ExecuteInGameThread(function()
+                        ExecuteQuickPull(HoldState.Target)
+                    end)
+                else
+                    -- Key was released before hold threshold! Treat as normal QuickStack tap
+                    ExecuteInGameThread(function()
+                        ExecuteQuickStack()
+                    end)
+                end
+            end
+
+            if elapsed >= 0.50 then
+                HoldState.IsActive = false
+                return true -- Stop LoopAsync
+            end
+
+            return false
+        end)
         return
     end
 
-    -- An item IS hovered! Start hold detection
+    -- Case 3: No item hovered! Open world.
+    -- Immediately execute normal QuickStack at 0ms latency!
+    ExecuteQuickStack()
+
+    -- And simultaneously start hold detection for Ground Vacuum if user continues holding G!
     HoldState.IsActive = true
     HoldState.PressTime = now
-    HoldState.Target = hoverTarget
+    HoldState.Target = nil
     HoldState.TriggeredPull = false
     HoldState.RepeatCount = 0
 
     local pressTimestamp = now
 
-    -- Run asynchronous hold checker
     LoopAsync(40, function()
         local elapsed = os.clock() - pressTimestamp
 
         if elapsed < Config.HoldDuration then
-            return false -- Keep checking until hold threshold is reached
+            return false
         end
 
-        -- Hold threshold reached! Check if this hold state is still current
         if HoldState.PressTime == pressTimestamp and not HoldState.TriggeredPull then
             local PC = UEHelpers.GetPlayerController()
             local keyStillDown = IsGKeyDown(PC)
 
             if keyStillDown or HoldState.RepeatCount >= 1 then
-                -- Key was held! Execute Quick Pull
+                -- Key was held in open world! Trigger Ground Item Vacuum & Stack!
                 HoldState.TriggeredPull = true
                 ExecuteInGameThread(function()
-                    ExecuteQuickPull(HoldState.Target)
-                end)
-            else
-                -- Key was released before hold threshold! Treat as a normal QuickStack tap
-                ExecuteInGameThread(function()
-                    ExecuteQuickStack()
+                    ExecuteVacuumAndStack()
                 end)
             end
         end
 
-        -- Reset hold state after 500ms and stop the loop
         if elapsed >= 0.50 then
             HoldState.IsActive = false
-            return true -- Stop LoopAsync
+            return true
         end
 
         return false
     end)
 end
 
--- Keybind Registration
-local keyCallback = function()
-    ExecuteInGameThread(function()
-        OnKeyG()
-    end)
-end
-
+-- Keybind Registration: Normal G
 local okBind, errBind = pcall(function()
     if Config.Modifier then
-        RegisterKeyBind(Config.Key, { Config.Modifier }, keyCallback)
+        RegisterKeyBind(Config.Key, { Config.Modifier }, function()
+            ExecuteInGameThread(OnKeyG)
+        end)
     else
-        RegisterKeyBind(Config.Key, keyCallback)
+        RegisterKeyBind(Config.Key, function()
+            ExecuteInGameThread(OnKeyG)
+        end)
     end
 end)
 
 if okBind then
-    Log(string.format("Keybind registered successfully: [%s] -> Quick Stack / Quick Pull.", "G"))
+    Log(string.format("Keybind registered: [%s] -> Quick Stack / Quick Pull / Ground Vacuum.", "G"))
 else
-    Log("ERROR registering keybind: " .. tostring(errBind))
+    Log("ERROR registering keybind [G]: " .. tostring(errBind))
 end
+
+-- Keybind Registration: Ctrl + G (Instant Ground Item Vacuum & Chest Stack)
+pcall(function()
+    RegisterKeyBind(Config.Key, { Config.VacuumModifierCtrl }, function()
+        ExecuteInGameThread(ExecuteVacuumAndStack)
+    end)
+    Log("Keybind registered: [Ctrl + G] -> Instant Ground Item Vacuum & Chest Stack.")
+end)
+
+-- Keybind Registration: Shift + G (Instant Ground Item Vacuum & Chest Stack)
+pcall(function()
+    RegisterKeyBind(Config.Key, { Config.VacuumModifierShift }, function()
+        ExecuteInGameThread(ExecuteVacuumAndStack)
+    end)
+    Log("Keybind registered: [Shift + G] -> Instant Ground Item Vacuum & Chest Stack.")
+end)
 
 return {
     ExecuteQuickStack = ExecuteQuickStack,
     ExecuteQuickPull = ExecuteQuickPull,
+    ExecuteVacuumAndStack = ExecuteVacuumAndStack,
     Config = Config
 }
