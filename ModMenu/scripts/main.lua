@@ -27,8 +27,11 @@ local function Save(key, value)
 end
 local function Remove(widget)
     if Valid(widget) then
-        pcall(function() widget:SetVisibility(COLLAPSED) end)
+        Log("Removing orphan widget: " .. widget:GetFullName())
+        pcall(function() widget:SetVisibility(1) end)
+        pcall(function() widget:SetVisibility(2) end)
         pcall(function() widget:RemoveFromParent() end)
+        pcall(function() widget:RemoveFromViewport() end)
     end
 end
 local function Remember(widget)
@@ -42,19 +45,26 @@ local function Remember(widget)
     return widget
 end
 local function CleanupOrphans(pc)
+    Log("CleanupOrphans started")
     local names = {}
-    for _, key in ipairs({"ModMenu.OwnedWidgets", "ModMenu.OwnedName", "ModMenu.OwnedRows"}) do
+    for _, key in ipairs({"ModMenu.OwnedWidgets", "ModMenu.OwnedName", "ModMenu.OwnedRows", "ModMenu.OwnedWidgetName"}) do
         local value = Shared(key)
-        if type(value) == "string" then
+        if type(value) == "string" and #value > 0 then
+            Log("Found shared key " .. key .. ": " .. value)
             for name in value:gmatch("[^\n]+") do names[name] = true end
         end
     end
     for _, class in ipairs({"WBP_SettingsWidget_C", "WBP_MainMenuTabButton_C", "WBP_DomTextBlock_C",
         "WBP_PlayerList_C", "WBP_PlayerListItem_C", "WBP_TitleOnlyTooltip_C",
         "WBP_DomAllCapsButton_C", "WBP_DomMainMenuBottomNavButton_C"}) do
-        for _, widget in ipairs(FindAllOf(class) or {}) do
+        local found = FindAllOf(class) or {}
+        for _, widget in ipairs(found) do
             if Valid(widget) then
                 if names[widget:GetFullName()] then
+                    Log("Matched orphan by recorded name: " .. widget:GetFullName())
+                    Remove(widget)
+                elseif class == "WBP_TitleOnlyTooltip_C" then
+                    Log("Removing WBP_TitleOnlyTooltip_C instance: " .. widget:GetFullName())
                     Remove(widget)
                 elseif class == "WBP_DomAllCapsButton_C" and Valid(pc) then
                     -- The previous version forgot to persist its entry button.
@@ -63,13 +73,41 @@ local function CleanupOrphans(pc)
                         return widget:IsInViewport() and Same(widget:GetOwningPlayer(), pc)
                             and widget.ButtonLabel:ToString() == "Toolkit  /  MODS & HOTKEYS"
                     end)
-                    if ok and legacy then Remove(widget) end
+                    if ok and legacy then
+                        Log("Matched orphan legacy button: " .. widget:GetFullName())
+                        Remove(widget)
+                    end
                 end
             end
         end
     end
-    for _, key in ipairs({"ModMenu.OwnedWidgets", "ModMenu.OwnedName", "ModMenu.OwnedRows"}) do Save(key, "") end
+    -- Also sweep all UserWidgets currently in the viewport
+    local uws = FindAllOf("UserWidget") or {}
+    for _, widget in ipairs(uws) do
+        if Valid(widget) then
+            local inVp = false
+            pcall(function() inVp = widget:IsInViewport() end)
+            if inVp then
+                local fn = widget:GetFullName()
+                local textSample = ""
+                pcall(function()
+                    if widget.Title and widget.Title:IsValid() then
+                        textSample = "Title: " .. tostring(widget.Title:GetText():ToString())
+                    elseif widget.ButtonLabel and widget.ButtonLabel:IsValid() then
+                        textSample = "Label: " .. tostring(widget.ButtonLabel:ToString())
+                    end
+                end)
+                Log("Viewport widget: " .. fn .. " | " .. textSample)
+                if names[fn] or fn:find("WBP_TitleOnlyTooltip") or textSample:find("TOOLKIT") or textSample:find("MOD DASHBOARD") or textSample:find("RUNESCAPE") then
+                    Log("Removing viewport orphan UserWidget: " .. fn)
+                    Remove(widget)
+                end
+            end
+        end
+    end
+    for _, key in ipairs({"ModMenu.OwnedWidgets", "ModMenu.OwnedName", "ModMenu.OwnedRows", "ModMenu.OwnedWidgetName"}) do Save(key, "") end
     Cleaned = true
+    Log("CleanupOrphans completed")
 end
 local function Destroy()
     for _, widget in ipairs(Owned) do Remove(widget) end
@@ -371,4 +409,10 @@ RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(c
     -- Void hook: no return override, and no handling of the game's own buttons.
 end)
 Log("Menu flow v5 loaded: Settings layout with native tab items and selected feature details")
+
+ExecuteInGameThread(function()
+    Guard(function()
+        CleanupOrphans(UEHelpers.GetPlayerController())
+    end)
+end)
 
