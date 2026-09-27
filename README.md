@@ -20,6 +20,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
 | [**TelekineticWoodcraft**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`F6`). |
 | [**ModMenu**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/ModMenu/README.md) | Dashboard & UI | `[F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[F8]`. |
+| [**AutoRun**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
 
 ---
 
@@ -29,6 +30,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | :--- | :--- | :--- |
 | **`[ESC]`** | **Pause Menu** | Pausing automatically displays the active Toolkit Mod Dashboard |
 | **`[F8]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay anytime |
+| **`[Num Lock]`** | **AutoRun** | Toggle continuous camera-forward autorun on / off |
 | **`[G]`** | **Quick Stack** | Quick-stack matching inventory items to all nearby chests (25m) |
 | **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |
 | **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons on / off |
@@ -74,6 +76,7 @@ If you cloned or downloaded this repository:
    .\deploy.ps1 -Tool EnhancedReticle
    .\deploy.ps1 -Tool TelekineticWoodcraft
    .\deploy.ps1 -Tool ModMenu
+   .\deploy.ps1 -Tool AutoRun
    ```
 4. The script copies files to your game directory and automatically updates `mods.txt`.
 
@@ -81,20 +84,7 @@ If you cloned or downloaded this repository:
 
 ### Option B: Manual Installation
 
-<<<<<<< Updated upstream
-Transforms the faint vanilla white dot reticle into a prominent, high-contrast, scalable crosshair and spell-casting cursor.
-
-1. **Toggle On/Off:** Instant toggle (`F4`) between Enhanced Reticle and Vanilla Default.
-2. **High-Contrast Colors:** Instant keybind cycling (`F1`) through 7 luminous colors: Neon Green, OSRS Gold, Cyan, Crimson Red, Hot Pink, Amber Orange, and Pure White.
-3. **Centered Dynamic Scaling:** Instant keybind cycling (`F2`) through 5 size profiles (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) with centered pivot alignment for pixel-perfect targeting accuracy.
-4. **100% Opacity Boost:** Eliminates the semi-transparent washed-out look of the vanilla dot so it stays clear against all bright backgrounds (skies, snow, sand, spells).
-5. **Universal State Coverage:** Automatically styles roaming crosshairs (`ReticleDefault`), utility magic aiming cursors (`ReticleAimedUtilityMagic`), combat spell reticles (`ReticleMagic`), bow aiming (`ReticleRangedADS`), stealth mode (`ReticleStealth`), and repair tools (`ReticleRepair`).
-6. **Native UI State Respect:** Disappears automatically during menus, inventory, map, and dialogue.
-7. **Respawn & World Persistence:** Spawning hooks ensure custom reticle styling persists seamlessly across fast travel, level changes, and deaths.
-
-Detailed configuration and usage: [EnhancedReticle README](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md).
-=======
-1. Copy the desired mod folders (`OSRSMinimap`, `QuickStack`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`) into:
+1. Copy the desired mod folders (`OSRSMinimap`, `QuickStack`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`, `AutoRun`) into:
    ```
    <GameRoot>/RSDragonwilds/Binaries/Win64/ue4ss/Mods/
    ```
@@ -106,6 +96,7 @@ Detailed configuration and usage: [EnhancedReticle README](file:///C:/Users/admi
    EnhancedReticle : 1
    TelekineticWoodcraft : 1
    ModMenu : 1
+   AutoRun : 1
    ```
 4. Launch the game through Steam normally!
 

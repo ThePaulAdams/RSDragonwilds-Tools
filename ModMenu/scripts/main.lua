@@ -73,6 +73,12 @@ local ToolkitMods = {
         Keys = "[F8] Toggle Anytime  |  Auto-shown on ESC Pause",
         Desc = "In-game mod status dashboard and hotkey control reference.",
     },
+    {
+        Id = "AutoRun",
+        Name = "AutoRun",
+        Keys = "[Num Lock] Toggle  |  WASD / Menus Cancel",
+        Desc = "Camera-oriented continuous autorun with seamless natural input cancellation.",
+    },
 }
 
 -- ============================================================
