@@ -14,8 +14,8 @@ local Config = {
     -- Maximum distance (in Unreal Units) to search for chests. 2500 uu = 25 meters.
     SearchRadius = 2500.0,
 
-    -- Maximum distance (in Unreal Units) to vacuum ground items. 7500 uu = 75 meters.
-    VacuumRadius = 7500.0,
+    -- Maximum distance (in Unreal Units) to vacuum ground items. 0 = Unlimited (entire world / all zones).
+    VacuumRadius = 0,
 
     -- Protect the player's quick-action hotbar slots from being deposited.
     ProtectHotbar = true,
@@ -773,40 +773,91 @@ local function ExecuteVacuumAndStack()
         return
     end
 
-    local radius = Config.VacuumRadius or 7500.0
+    local radius = Config.VacuumRadius or 0
+    local isUnlimited = (radius <= 0)
     local radiusSq = radius * radius
 
-    -- Find all WorldItem actors in the world within radius
+    -- Find all WorldItem actors in the world
     local allItems = {}
+    local seenAddrs = {}
+    local totalInMemory = 0
+
     local okItems, foundItems = pcall(function() return FindAllOf("WorldItem") end)
     if okItems and foundItems then
+        totalInMemory = #foundItems
         for _, actor in ipairs(foundItems) do
             if IsValidWorldActor(actor) then
-                local loc = nil
-                pcall(function() loc = actor:K2_GetActorLocation() end)
-                if loc then
-                    local dx = loc.X - playerLoc.X
-                    local dy = loc.Y - playerLoc.Y
-                    local dz = loc.Z - playerLoc.Z
-                    local distSq = dx * dx + dy * dy + dz * dz
-                    if distSq <= radiusSq then
-                        table.insert(allItems, {
-                            Actor = actor,
-                            Distance = math.sqrt(distSq)
-                        })
+                local addr = actor:GetAddress()
+                if not seenAddrs[addr] then
+                    local loc = nil
+                    pcall(function() loc = actor:K2_GetActorLocation() end)
+                    if loc then
+                        local dx = loc.X - playerLoc.X
+                        local dy = loc.Y - playerLoc.Y
+                        local dz = loc.Z - playerLoc.Z
+                        local distSq = dx * dx + dy * dy + dz * dz
+                        local dist = math.sqrt(distSq)
+                        if isUnlimited or distSq <= radiusSq then
+                            seenAddrs[addr] = true
+                            table.insert(allItems, {
+                                Actor = actor,
+                                Distance = dist
+                            })
+                        end
                     end
                 end
             end
         end
     end
 
+    -- Also check WorldItemRuntimeCache for registered world items across zones
+    local okCache, caches = pcall(function() return FindAllOf("WorldItemRuntimeCache") end)
+    if okCache and caches then
+        for _, cache in ipairs(caches) do
+            pcall(function()
+                local regItems = cache.RegisteredWorldItems
+                if regItems then
+                    local num = regItems:GetArrayNum()
+                    for i = 1, num do
+                        local itemActor = regItems[i]
+                        if IsValidWorldActor(itemActor) then
+                            local addr = itemActor:GetAddress()
+                            if not seenAddrs[addr] then
+                                local loc = nil
+                                pcall(function() loc = itemActor:K2_GetActorLocation() end)
+                                if loc then
+                                    local dx = loc.X - playerLoc.X
+                                    local dy = loc.Y - playerLoc.Y
+                                    local dz = loc.Z - playerLoc.Z
+                                    local distSq = dx * dx + dy * dy + dz * dz
+                                    local dist = math.sqrt(distSq)
+                                    if isUnlimited or distSq <= radiusSq then
+                                        seenAddrs[addr] = true
+                                        table.insert(allItems, {
+                                            Actor = itemActor,
+                                            Distance = dist
+                                        })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+
     if #allItems == 0 then
-        Log(string.format("Vacuum: No ground items found within %.1f meters.", radius / 100.0))
+        Log(string.format("Vacuum: No ground items found in memory (total in RAM: %d).", totalInMemory))
         return
     end
 
-    Log(string.format(">>> VACUUM: Found %d ground item(s) within %.1f meters! Teleporting to player and stacking into chests...",
-        #allItems, radius / 100.0))
+    if isUnlimited then
+        Log(string.format(">>> VACUUM: Found %d ground item(s) across ALL zones! Teleporting to player and stacking into chests...", #allItems))
+    else
+        Log(string.format(">>> VACUUM: Found %d ground item(s) within %.1f meters! Teleporting to player and stacking into chests...",
+            #allItems, radius / 100.0))
+    end
 
     -- Sort closest items first
     table.sort(allItems, function(a, b) return a.Distance < b.Distance end)
