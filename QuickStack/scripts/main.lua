@@ -39,6 +39,10 @@ local Config = {
     -- instead of staying in the backpack. Build a chest for that category to separate them later.
     HomelessItemsToMisc = true,
 
+    -- Experimental: raise small chests to 48 slots and swap in the large chest mesh while sorting.
+    -- Off by default because it crashed the game.
+    UpgradeChestsTo48Slots = false,
+
     -- At base, tapping G also picks up loose items on the ground (within GroundMagnetRadius) and stores them in chests
     StoreGroundItemsAtBase = true,
 
@@ -67,6 +71,7 @@ local function GetSafeName(obj)
     if not obj then return "" end
     local name = ""
     pcall(function()
+        if obj.IsValid and not obj:IsValid() then return end
         if obj.GetFName then
             name = obj:GetFName():ToString()
         elseif obj.GetFullName then
@@ -81,8 +86,9 @@ local function GetSafeClassName(obj)
     if not obj then return "" end
     local clsName = ""
     pcall(function()
+        if obj.IsValid and not obj:IsValid() then return end
         local cls = obj:GetClass()
-        if cls then
+        if cls and cls:IsValid() then
             if cls.GetFName then
                 clsName = cls:GetFName():ToString()
             elseif cls.GetFullName then
@@ -1136,28 +1142,33 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
     Log(string.format(">>> Sorting %d nearby container(s) by category...", #chestStates))
 
     -- 1. UPGRADE REAL CHESTS TO HIGHEST TIER (48 SLOTS)
-    local largeMesh = nil
-    for _, state in ipairs(chestStates) do
-        if IsUpgradeableChest(state) and state.SlotCount >= 48 and state.Actor and state.Actor.Mesh then
-            pcall(function() largeMesh = state.Actor.Mesh.StaticMesh end)
-            if largeMesh then break end
+    -- Off by default: rewriting slot counts and swapping meshes in memory crashed the game (UE4SS null read)
+    if Config.UpgradeChestsTo48Slots then
+        local largeMesh = nil
+        for _, state in ipairs(chestStates) do
+            if IsUpgradeableChest(state) and state.SlotCount >= 48 and state.Actor and state.Actor.Mesh then
+                pcall(function() largeMesh = state.Actor.Mesh.StaticMesh end)
+                if largeMesh and largeMesh:IsValid() then break end
+                largeMesh = nil
+            end
         end
-    end
-    if not largeMesh then
-        pcall(function()
-            largeMesh = StaticFindObject("/Game/Art/Env/Base_Building/Furniture/Cosiness/Chest/SM_Storage_Chest_01v2.SM_Storage_Chest_01v2")
-        end)
-    end
-    for _, state in ipairs(chestStates) do
-        if IsUpgradeableChest(state) then
+        if not largeMesh then
             pcall(function()
-                if state.Inventory and state.Inventory:IsValid() and (state.Inventory.MaxSlotCount or 0) < 48 then
-                    state.Inventory.MaxSlotCount = 48
-                end
-                if largeMesh and state.Actor and state.Actor.Mesh and state.Actor.Mesh:IsValid() then
-                    state.Actor.Mesh:SetStaticMesh(largeMesh)
-                end
+                largeMesh = StaticFindObject("/Game/Art/Env/Base_Building/Furniture/Cosiness/Chest/SM_Storage_Chest_01v2.SM_Storage_Chest_01v2")
             end)
+            if largeMesh and not largeMesh:IsValid() then largeMesh = nil end
+        end
+        for _, state in ipairs(chestStates) do
+            if IsUpgradeableChest(state) then
+                pcall(function()
+                    if state.Inventory and state.Inventory:IsValid() and (state.Inventory.MaxSlotCount or 0) < 48 then
+                        state.Inventory.MaxSlotCount = 48
+                    end
+                    if largeMesh and state.Actor and state.Actor.Mesh and state.Actor.Mesh:IsValid() then
+                        state.Actor.Mesh:SetStaticMesh(largeMesh)
+                    end
+                end)
+            end
         end
     end
 
