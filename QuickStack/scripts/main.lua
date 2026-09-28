@@ -296,6 +296,11 @@ local function GetItemCategory(itemOrData)
        HasWord(name, "decree") or HasWord(name, "contract") or HasWord(name, "deed") then
         isRecipe = true
     end
+    -- Plan assets are named like DA_Consumable_Plan_Decoration_Food_Bowl_Onions; the display name
+    -- may not say "plan", and "consumable"/"food" would otherwise send them to the food chest
+    if path:find("da_consumable_plan") or path:find("da_consumable_recipe") then
+        isRecipe = true
+    end
     if isRecipe then
         return ItemCategories.RECIPES
     end
@@ -845,6 +850,9 @@ local function AnalyzeChest(chestEntry)
 
             state.CategoryCounts[category] = (state.CategoryCounts[category] or 0) + 1
             state.TotalItemCount = state.TotalItemCount + 1
+            state.NamesByCategory = state.NamesByCategory or {}
+            state.NamesByCategory[category] = state.NamesByCategory[category] or {}
+            table.insert(state.NamesByCategory[category], name)
 
             local slotInfo = {
                 SlotZero = cSlotZero,
@@ -1445,6 +1453,10 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
                     end
                     if moved then
                         movedStacks = movedStacks + 1
+                        if Config.DebugLog then
+                            Log(string.format("    Moved '%s' [%s] out of the %s chest.", GetItemName(item), cat,
+                                tostring(src.AssignedCategory or "spare")))
+                        end
                     else
                         stuckStacks = stuckStacks + 1
                     end
@@ -1518,6 +1530,20 @@ local function ExecuteQuickStack(depositOnly)
         chestStates = {}
         for _, chestEntry in ipairs(nearbyChests) do
             table.insert(chestStates, AnalyzeChest(chestEntry))
+        end
+        -- Report any chest still holding items from another category, so mix-ups are visible in the log
+        if Config.DebugLog then
+            for _, st in ipairs(chestStates) do
+                local home = st.DominantCategory
+                if home then
+                    for cat, names in pairs(st.NamesByCategory or {}) do
+                        if cat ~= home then
+                            Log(string.format("    Mixed: %s chest still holds %d %s item(s): %s", home, #names, cat,
+                                table.concat(names, ", ", 1, math.min(#names, 8))))
+                        end
+                    end
+                end
+            end
         end
     end
 
