@@ -15,12 +15,12 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 
 | Tool | Category | Hotkeys | Description |
 | :--- | :--- | :--- | :--- |
-| [**OSRSMinimap**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, and real-time resource tracking (ores, trees, essence, fishing). |
-| [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | `[G]`, `[Ctrl+G]`, `[Shift+G]` | Smart base inventory sorting into dedicated category chests, 48-slot chest auto-upgrades, 40m wild resource gathering & ground vacuum, and 150m Base Relocation Crate. |
-| [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
-| [**TelekineticWoodcraft**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`F6`). |
-| [**ModMenu**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/ModMenu/README.md) | Dashboard & UI | `[F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[F8]`. |
-| [**AutoRun**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
+| [**OSRSMinimap**](OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, and real-time resource tracking (ores, trees, essence, fishing). |
+| [**QuickStack**](QuickStack/README.md) | Quality of Life | `[G]`, `[Ctrl+G]`, `[Shift+G]` | Smart base inventory sorting into dedicated category chests, 48-slot chest auto-upgrades, 40m wild resource gathering & ground vacuum, and 150m Base Relocation Crate. |
+| [**EnhancedReticle**](EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
+| [**TelekineticWoodcraft**](TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[Shift+F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`Shift+F6`). |
+| [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
+| [**AutoRun**](AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
 
 ---
 
@@ -29,7 +29,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | Keybind | Tool | Action |
 | :--- | :--- | :--- |
 | **`[ESC]`** | **Pause Menu** | Pausing automatically displays the active Toolkit Mod Dashboard |
-| **`[F8]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay anytime |
+| **`[Ctrl+F8]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay anytime |
 | **`[Num Lock]`** | **AutoRun** | Toggle continuous camera-forward autorun on / off |
 | **`[G]` (Tap)** | **Quick Stack** | **At Base:** Auto-sort items into dedicated category chests & upgrade to 48 slots<br>**In Wild:** Instant harvest & ground magnetism for nearby plants/loot |
 | **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
@@ -42,7 +42,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[F2]`** | **Enhanced Reticle** | Cycle reticle size (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) |
 | **`[E]`** or **`[V]`** | **Telekinetic Woodcraft** | Telekinetically grab, carry, or drop targeted log / trunk |
 | **`[Z]`** | **Telekinetic Woodcraft** | [Log Magnet] Mass-gather all logs within 150m into a neat pile |
-| **`[F6]`** | **Telekinetic Woodcraft** | Cycle Splinter spell AoE radius multiplier (1x, 2.5x, 5.0x) |
+| **`[Shift + F6]`** | **Telekinetic Woodcraft** | Cycle Splinter spell AoE radius multiplier (1x, 2.5x, 5.0x) |
 | **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game |
 
 ---
@@ -72,6 +72,7 @@ If you cloned or downloaded this repository:
    # Deploy all tools automatically
    .\deploy.ps1
    ```
+   The script defaults to `F:\Steam\steamapps\common\RSDragonwilds\RSDragonwilds\Binaries\Win64\ue4ss\Mods`. If your game is installed elsewhere, pass your own path: `.\deploy.ps1 -GamePath "<GameRoot>\RSDragonwilds\Binaries\Win64\ue4ss\Mods"`.
 3. To deploy a specific tool only:
    ```powershell
    .\deploy.ps1 -Tool QuickStack
@@ -109,7 +110,7 @@ If you cloned or downloaded this repository:
 
 ### 1. Toolkit Mod Menu (`ModMenu`)
 - **Pause Menu Integration**: Injects a custom **"TOOLKIT MODS"** button into the native ESC Game Paused screen.
-- **In-Game Overlay (`F7`)**: Instantly shows an Old School RuneScape style Slate card with live status badges (`[ON]` / `[OFF]`) and keybind reminders.
+- **In-Game Overlay (`Ctrl+F8`)**: Instantly shows an Old School RuneScape style Slate card with live status badges (`[ON]` / `[OFF]`) and keybind reminders.
 - **Real-Time Detection**: Automatically re-scans `mods.txt` whenever toggled, immediately showing changes without restarting.
 - **Zero Performance Impact**: Widget remains collapsed and uses 0 CPU cycles during normal gameplay.
 
@@ -135,7 +136,7 @@ If you cloned or downloaded this repository:
 ### 5. Telekinetic Woodcraft (`TelekineticWoodcraft`)
 - **Single Log Drag (`E` or `V`)**: Aim at any felled tree or cut log to telekinetically carry it in front of you. Press again to settle it flat on the ground.
 - **Log Magnet Mass Gathering (`Z`)**: Pulls all logs within 150 meters into a compact, flat pyramid woodpile directly in front of you.
-- **Splinter Spell Multiplier (`F6`)**: Boosts the Splinter spell explosion radius (1.0x, 2.5x, 5.0x) to harvest an entire woodpile in a single cast.
+- **Splinter Spell Multiplier (`Shift+F6`)**: Boosts the Splinter spell explosion radius (1.0x, 2.5x, 5.0x) to harvest an entire woodpile in a single cast.
 
 ### 6. AutoRun (`AutoRun`)
 - **Hands-Free Traversal (`Num Lock`)**: Continuous camera-aligned movement without needing to hold W or Shift.
@@ -167,7 +168,7 @@ Yes. All mods in this suite operate as client-side quality-of-life enhancements 
 
 <details>
 <summary><b>Why did pressing F10 open a console?</b></summary>
-UE4SS reserves <code>F10</code> by default for the built-in developer console (ConsoleEnablerMod). The Toolkit Mod Menu uses <b><code>[F7]</code></b> and the ESC <b>Pause Menu</b> button to prevent any keybind conflicts.
+UE4SS reserves <code>F10</code> by default for the built-in developer console (ConsoleEnablerMod). The Toolkit Mod Menu uses <b><code>[Ctrl+F8]</code></b> and the ESC <b>Pause Menu</b> button to prevent any keybind conflicts.
 </details>
 
 ---
