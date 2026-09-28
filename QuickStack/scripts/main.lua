@@ -19,14 +19,21 @@ local Config = {
     -- Protect the player's quick-action hotbar slots from being deposited.
     ProtectHotbar = true,
 
+    -- Protect combat ammunition (arrows, bolts, quivers) from being deposited into chests
+    ProtectAmmo = true,
+
+    -- Protect magic runes and essence from being deposited into chests
+    ProtectRunes = true,
+
     -- QuickStack (Deposit): If true, sorts similar items into dedicated chests by category (e.g. all food together)
     SortSimilarIntoChests = true,
 
     -- Automatically reorganize misplaced items between nearby chests so chests stay tidy
     OrganizeNearbyChests = true,
 
-    -- If true, allows items to spill over into other chests if their category chest is completely full
-    OverflowWhenCategoryFull = true,
+    -- If true, allows items to spill over into other chests if their category chest is completely full.
+    -- Set to false so dedicated category chests (Food, Wood, Mining) never get contaminated!
+    OverflowWhenCategoryFull = false,
 
     -- Hold duration (in seconds) to trigger Ground Item Magnetism
     HoldDuration = 0.25,
@@ -311,6 +318,44 @@ local function GetItemCategory(itemOrData)
     return ItemCategories.MISC
 end
 
+-- Check if an item in the player's inventory should be protected from being deposited
+local function IsItemProtectedFromDeposit(item)
+    if not IsValidItem(item) then return false end
+
+    local name = GetItemName(item):lower()
+    local path = ""
+    local className = ""
+
+    pcall(function()
+        if item.ItemData and item.ItemData:IsValid() then
+            path = item.ItemData:GetPathName():lower()
+            className = item.ItemData:GetClass():GetName():lower()
+        elseif item.GetClass then
+            className = item:GetClass():GetName():lower()
+        end
+    end)
+
+    -- 1. Protect Arrows, Bolts, Quivers, Ammo
+    if Config.ProtectAmmo then
+        if name:find("arrow") or name:find("bolt") or name:find("quiver") or name:find("ammo") or
+           path:find("/ammo/") or path:find("item_ammo_") or path:find("arrow") or path:find("bolt") or
+           className:find("ammo") or className:find("arrow") or className:find("bolt") then
+            return true
+        end
+    end
+
+    -- 2. Protect Runes, Rune Pouches, Essence
+    if Config.ProtectRunes then
+        if name:find("rune") or name:find("essence") or
+           path:find("/rune/") or path:find("item_rune_") or path:find("/essence/") or
+           className:find("rune") or className:find("essence") then
+            return true
+        end
+    end
+
+    return false
+end
+
 -- Hover Detection: Find the item currently under the player's cursor
 local function GetHoveredItem()
     -- 1. Check all InventorySlotBase widgets (Main inventory slots & Chest slots)
@@ -561,8 +606,73 @@ local function AnalyzeChest(chestEntry)
     return state
 end
 
+-- Robust item transfer between chests with 3 fallback mechanisms:
+-- 1) PC.InventoryController:MoveItemBetweenInventories
+-- 2) Direct srcChest.Inventory:MoveItem
+-- 3) Bounce through an empty player backpack slot (guaranteed engine authority)
+local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZero, amount, PC, playerInv)
+    local movedOk = false
+
+    -- Method 1: Try PC.InventoryController
+    if PC and PC.InventoryController and PC.InventoryController:IsValid() then
+        pcall(function()
+            if destSlotZero then
+                movedOk = PC.InventoryController:MoveItemBetweenInventories(srcChest.Inventory, srcSlotZero, destChest.Inventory, destSlotZero)
+            else
+                movedOk = PC.InventoryController:MoveItemBetweenInventoriesAnySlot(srcChest.Inventory, srcSlotZero, destChest.Inventory)
+            end
+        end)
+    end
+
+    -- Method 2: Try direct chest-to-chest MoveItem
+    if not movedOk then
+        pcall(function()
+            movedOk = srcChest.Inventory:MoveItem(srcSlotZero, destChest.Inventory, destSlotZero, PC, amount)
+        end)
+    end
+
+    -- Method 3: Bounce through an empty player backpack slot
+    if not movedOk and playerInv and playerInv:IsValid() then
+        local emptyPlayerSlot = nil
+        local hotbarCount = 0
+        pcall(function() hotbarCount = playerInv.NumberOfQuickActionSlots or 8 end)
+        local pSlotCount = 0
+        pcall(function() pSlotCount = playerInv.ItemSlots:GetArrayNum() end)
+
+        for pIdx = hotbarCount + 1, pSlotCount do
+            local pSlotZero = pIdx - 1
+            local pItem = nil
+            pcall(function() pItem = playerInv.ItemSlots[pIdx] end)
+            if not IsValidItem(pItem) then
+                emptyPlayerSlot = pSlotZero
+                break
+            end
+        end
+
+        if emptyPlayerSlot ~= nil then
+            local toPlayerOk = false
+            pcall(function()
+                toPlayerOk = srcChest.Inventory:MoveItem(srcSlotZero, playerInv, emptyPlayerSlot, PC, amount)
+            end)
+            if toPlayerOk then
+                pcall(function()
+                    movedOk = playerInv:MoveItem(emptyPlayerSlot, destChest.Inventory, destSlotZero, PC, amount)
+                end)
+                if not movedOk then
+                    -- Destination rejected, move back to source chest
+                    pcall(function()
+                        playerInv:MoveItem(emptyPlayerSlot, srcChest.Inventory, srcSlotZero, PC, amount)
+                    end)
+                end
+            end
+        end
+    end
+
+    return movedOk
+end
+
 -- Reorganize misplaced items between nearby chests so similar items group into the same chests
-local function ReorganizeNearbyChests(chestStates, PC)
+local function ReorganizeNearbyChests(chestStates, PC, playerInv)
     if not chestStates or #chestStates < 2 then return 0 end
 
     -- 1. Determine the primary chest for each category
@@ -570,7 +680,8 @@ local function ReorganizeNearbyChests(chestStates, PC)
     for _, state in ipairs(chestStates) do
         if state.DominantCategory then
             local currentBest = categoryPrimaryChest[state.DominantCategory]
-            if not currentBest or (state.CategoryCounts[state.DominantCategory] or 0) > (currentBest.CategoryCounts[state.DominantCategory] or 0) then
+            local count = state.CategoryCounts[state.DominantCategory] or 0
+            if not currentBest or count > (currentBest.CategoryCounts[state.DominantCategory] or 0) then
                 categoryPrimaryChest[state.DominantCategory] = state
             end
         end
@@ -593,10 +704,7 @@ local function ReorganizeNearbyChests(chestStates, PC)
                         if slotInfo.Count <= 0 then break end
                         if target.FreeSpace > 0 then
                             local moveAmount = math.min(slotInfo.Count, target.FreeSpace)
-                            local movedOk = false
-                            pcall(function()
-                                movedOk = srcChest.Inventory:MoveItem(slotZero, destChest.Inventory, target.SlotZero, PC, moveAmount)
-                            end)
+                            local movedOk = MoveItemBetweenChests(srcChest, slotZero, destChest, target.SlotZero, moveAmount, PC, playerInv)
                             if movedOk then
                                 slotInfo.Count = slotInfo.Count - moveAmount
                                 target.FreeSpace = target.FreeSpace - moveAmount
@@ -610,10 +718,7 @@ local function ReorganizeNearbyChests(chestStates, PC)
                 if slotInfo.Count > 0 and #destChest.EmptySlots > 0 then
                     local destSlot = table.remove(destChest.EmptySlots, 1)
                     local moveAmount = slotInfo.Count
-                    local movedOk = false
-                    pcall(function()
-                        movedOk = srcChest.Inventory:MoveItem(slotZero, destChest.Inventory, destSlot, PC, moveAmount)
-                    end)
+                    local movedOk = MoveItemBetweenChests(srcChest, slotZero, destChest, destSlot, moveAmount, PC, playerInv)
                     if movedOk then
                         slotInfo.Count = 0
                         table.insert(srcChest.EmptySlots, slotZero)
@@ -676,7 +781,7 @@ local function ExecuteQuickStack()
 
     -- 2. Organize misplaced items between chests by category
     if Config.OrganizeNearbyChests and #chestStates >= 2 then
-        local reorganizedCount = ReorganizeNearbyChests(chestStates, PC)
+        local reorganizedCount = ReorganizeNearbyChests(chestStates, PC, playerInv)
         if reorganizedCount > 0 and Config.DebugLog then
             Log(string.format("Organized %d misplaced item(s) between chests into matching categories.", reorganizedCount))
         end
@@ -697,7 +802,7 @@ local function ExecuteQuickStack()
     pcall(function() playerSlotCount = playerInv.ItemSlots:GetArrayNum() end)
     if playerSlotCount <= 0 then
         Log("Player inventory has 0 slots.")
-        return
+        return true
     end
 
     local totalItemsMoved = 0
@@ -711,144 +816,157 @@ local function ExecuteQuickStack()
         pcall(function() pItem = playerInv.ItemSlots[pIdx] end)
 
         if IsValidItem(pItem) then
-            local pDataAddr = GetItemDataAddress(pItem)
-            local pCount = 0
-            pcall(function() pCount = pItem:GetStackSize() end)
+            -- Protect combat ammunition (arrows, bolts) and magic runes from being deposited
+            if IsItemProtectedFromDeposit(pItem) then
+                if Config.DebugLog then
+                    Log(string.format("Protected combat item: Kept '%s' in inventory.", GetItemName(pItem)))
+                end
+            else
+                local pDataAddr = GetItemDataAddress(pItem)
+                local pCount = 0
+                pcall(function() pCount = pItem:GetStackSize() end)
 
-            if pDataAddr and pCount > 0 then
-                local itemName = GetItemName(pItem)
-                local itemCat = GetItemCategory(pItem)
+                if pDataAddr and pCount > 0 then
+                    local itemName = GetItemName(pItem)
+                    local itemCat = GetItemCategory(pItem)
 
-                -- Pass 1: Top off existing non-full stacks of the EXACT same item across all chests
-                for _, chest in ipairs(chestStates) do
-                    if pCount <= 0 then break end
-                    local targets = chest.TargetSlotsByData[pDataAddr]
-                    if targets then
-                        for _, target in ipairs(targets) do
-                            if pCount <= 0 then break end
-                            if target.FreeSpace > 0 then
-                                local moveAmount = math.min(pCount, target.FreeSpace)
-                                local movedOk = false
-                                pcall(function()
-                                    movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, target.SlotZero, PC, moveAmount)
-                                end)
+                    -- Find all chests dedicated to this category
+                    local matchingChests = {}
+                    for _, chest in ipairs(chestStates) do
+                        if chest.DominantCategory == itemCat then
+                            table.insert(matchingChests, chest)
+                        end
+                    end
+                    table.sort(matchingChests, function(a, b)
+                        return (a.CategoryCounts[itemCat] or 0) > (b.CategoryCounts[itemCat] or 0)
+                    end)
 
-                                if movedOk then
-                                    pCount = pCount - moveAmount
-                                    target.FreeSpace = target.FreeSpace - moveAmount
-                                    totalItemsMoved = totalItemsMoved + moveAmount
-                                    depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
-                                    affectedChests[chest.Address] = true
+                    -- Pass 1: Top off existing non-full stacks IN MATCHING CATEGORY CHESTS ONLY
+                    for _, chest in ipairs(matchingChests) do
+                        if pCount <= 0 then break end
+                        local targets = chest.TargetSlotsByData[pDataAddr]
+                        if targets then
+                            for _, target in ipairs(targets) do
+                                if pCount <= 0 then break end
+                                if target.FreeSpace > 0 then
+                                    local moveAmount = math.min(pCount, target.FreeSpace)
+                                    local movedOk = false
+                                    pcall(function()
+                                        movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, target.SlotZero, PC, moveAmount)
+                                    end)
 
-                                    if Config.DebugLog then
-                                        Log(string.format("Stacked %dx '%s' into [%s] chest slot %d.", moveAmount, itemName, itemCat, target.SlotZero))
+                                    if movedOk then
+                                        pCount = pCount - moveAmount
+                                        target.FreeSpace = target.FreeSpace - moveAmount
+                                        totalItemsMoved = totalItemsMoved + moveAmount
+                                        depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
+                                        affectedChests[chest.Address] = true
+
+                                        if Config.DebugLog then
+                                            Log(string.format("Stacked %dx '%s' into dedicated [%s] chest slot %d.", moveAmount, itemName, itemCat, target.SlotZero))
+                                        end
                                     end
                                 end
                             end
                         end
                     end
-                end
 
-                -- Pass 2: If item still has count > 0, deposit into dedicated Category Chest (e.g. all Food in Food chest)
-                if pCount > 0 and Config.SortSimilarIntoChests then
-                    local categoryChests = {}
-                    for _, chest in ipairs(chestStates) do
-                        local catScore = (chest.DominantCategory == itemCat and 100 or 0) + (chest.CategoryCounts[itemCat] or 0)
-                        if catScore > 0 and #chest.EmptySlots > 0 then
-                            table.insert(categoryChests, { Chest = chest, Score = catScore })
-                        end
-                    end
-                    table.sort(categoryChests, function(a, b) return a.Score > b.Score end)
+                    -- Pass 2: If item still has count > 0, deposit into empty slots of dedicated Category Chests
+                    if pCount > 0 and Config.SortSimilarIntoChests then
+                        for _, chest in ipairs(matchingChests) do
+                            if pCount <= 0 then break end
+                            while pCount > 0 and #chest.EmptySlots > 0 do
+                                local emptySlotZero = table.remove(chest.EmptySlots, 1)
+                                local moveAmount = pCount
+                                local movedOk = false
+                                pcall(function()
+                                    movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
+                                end)
 
-                    for _, cand in ipairs(categoryChests) do
-                        if pCount <= 0 then break end
-                        local chest = cand.Chest
-                        while pCount > 0 and #chest.EmptySlots > 0 do
-                            local emptySlotZero = table.remove(chest.EmptySlots, 1)
-                            local moveAmount = pCount
-                            local movedOk = false
-                            pcall(function()
-                                movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
-                            end)
+                                if movedOk then
+                                    totalItemsMoved = totalItemsMoved + moveAmount
+                                    depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
+                                    affectedChests[chest.Address] = true
+                                    pCount = 0
 
-                            if movedOk then
-                                totalItemsMoved = totalItemsMoved + moveAmount
-                                depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
-                                affectedChests[chest.Address] = true
-                                pCount = 0
+                                    chest.CategoryCounts[itemCat] = (chest.CategoryCounts[itemCat] or 0) + 1
+                                    chest.TotalItemCount = chest.TotalItemCount + 1
 
-                                chest.CategoryCounts[itemCat] = (chest.CategoryCounts[itemCat] or 0) + 1
-                                if not chest.DominantCategory then chest.DominantCategory = itemCat end
-
-                                if Config.DebugLog then
-                                    Log(string.format("Sorted %dx '%s' into dedicated [%s] chest slot %d.", moveAmount, itemName, itemCat, emptySlotZero))
+                                    if Config.DebugLog then
+                                        Log(string.format("Sorted %dx '%s' into dedicated [%s] chest slot %d.", moveAmount, itemName, itemCat, emptySlotZero))
+                                    end
+                                else
+                                    table.insert(chest.EmptySlots, 1, emptySlotZero)
+                                    break
                                 end
-                            else
-                                table.insert(chest.EmptySlots, 1, emptySlotZero)
-                                break
                             end
                         end
                     end
-                end
 
-                -- Pass 3: If no chest has this category yet, claim an empty chest for this category!
-                if pCount > 0 and Config.SortSimilarIntoChests then
-                    for _, chest in ipairs(chestStates) do
-                        if pCount <= 0 then break end
-                        if chest.TotalItemCount == 0 and #chest.EmptySlots > 0 then
-                            local emptySlotZero = table.remove(chest.EmptySlots, 1)
-                            local moveAmount = pCount
-                            local movedOk = false
-                            pcall(function()
-                                movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
-                            end)
+                    -- Pass 3: If no chest has this category yet, claim an empty chest for this category!
+                    if pCount > 0 and Config.SortSimilarIntoChests and #matchingChests == 0 then
+                        for _, chest in ipairs(chestStates) do
+                            if pCount <= 0 then break end
+                            if chest.TotalItemCount == 0 and #chest.EmptySlots > 0 then
+                                local emptySlotZero = table.remove(chest.EmptySlots, 1)
+                                local moveAmount = pCount
+                                local movedOk = false
+                                pcall(function()
+                                    movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
+                                end)
 
-                            if movedOk then
-                                totalItemsMoved = totalItemsMoved + moveAmount
-                                depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
-                                affectedChests[chest.Address] = true
-                                pCount = 0
+                                if movedOk then
+                                    totalItemsMoved = totalItemsMoved + moveAmount
+                                    depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
+                                    affectedChests[chest.Address] = true
+                                    pCount = 0
 
-                                chest.TotalItemCount = 1
-                                chest.DominantCategory = itemCat
-                                chest.CategoryCounts[itemCat] = 1
+                                    chest.TotalItemCount = 1
+                                    chest.DominantCategory = itemCat
+                                    chest.CategoryCounts[itemCat] = 1
+                                    table.insert(matchingChests, chest)
 
-                                if Config.DebugLog then
-                                    Log(string.format("Assigned new [%s] chest! Placed %dx '%s' into slot %d.", itemCat, moveAmount, itemName, emptySlotZero))
+                                    if Config.DebugLog then
+                                        Log(string.format("Assigned new [%s] chest! Placed %dx '%s' into slot %d.", itemCat, moveAmount, itemName, emptySlotZero))
+                                    end
+                                else
+                                    table.insert(chest.EmptySlots, 1, emptySlotZero)
                                 end
-                            else
-                                table.insert(chest.EmptySlots, 1, emptySlotZero)
                             end
                         end
                     end
-                end
 
-                -- Pass 4: Fallback overflow into any chest with an empty slot
-                if pCount > 0 and Config.OverflowWhenCategoryFull then
-                    for _, chest in ipairs(chestStates) do
-                        if pCount <= 0 then break end
-                        while pCount > 0 and #chest.EmptySlots > 0 do
-                            local emptySlotZero = table.remove(chest.EmptySlots, 1)
-                            local moveAmount = pCount
-                            local movedOk = false
-                            pcall(function()
-                                movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
-                            end)
+                    -- Pass 4: Fallback overflow into any chest with an empty slot (only if explicitly enabled in Config)
+                    if pCount > 0 and Config.OverflowWhenCategoryFull then
+                        for _, chest in ipairs(chestStates) do
+                            if pCount <= 0 then break end
+                            while pCount > 0 and #chest.EmptySlots > 0 do
+                                local emptySlotZero = table.remove(chest.EmptySlots, 1)
+                                local moveAmount = pCount
+                                local movedOk = false
+                                pcall(function()
+                                    movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
+                                end)
 
-                            if movedOk then
-                                totalItemsMoved = totalItemsMoved + moveAmount
-                                depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
-                                affectedChests[chest.Address] = true
-                                pCount = 0
+                                if movedOk then
+                                    totalItemsMoved = totalItemsMoved + moveAmount
+                                    depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
+                                    affectedChests[chest.Address] = true
+                                    pCount = 0
 
-                                if Config.DebugLog then
-                                    Log(string.format("Overflowed %dx '%s' into chest slot %d.", moveAmount, itemName, emptySlotZero))
+                                    if Config.DebugLog then
+                                        Log(string.format("Overflowed %dx '%s' into chest slot %d.", moveAmount, itemName, emptySlotZero))
+                                    end
+                                else
+                                    table.insert(chest.EmptySlots, 1, emptySlotZero)
+                                    break
                                 end
-                            else
-                                table.insert(chest.EmptySlots, 1, emptySlotZero)
-                                break
                             end
                         end
+                    end
+
+                    if pCount > 0 and not Config.OverflowWhenCategoryFull and Config.DebugLog then
+                        Log(string.format("[%s] chest(s) full! Kept %dx '%s' in inventory.", itemCat, pCount, itemName))
                     end
                 end
             end
