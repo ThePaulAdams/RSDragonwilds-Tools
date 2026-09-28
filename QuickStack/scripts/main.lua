@@ -468,6 +468,46 @@ local function FindNearbyChests(playerLoc)
         local addr = chestActor:GetAddress()
         if seenAddresses[addr] then return end
 
+        local actorClass = ""
+        pcall(function() actorClass = chestActor:GetClass():GetName():lower() end)
+        local actorName = ""
+        pcall(function() actorName = chestActor:GetName():lower() end)
+
+        -- 1. STRICT BLACKLIST: Never touch any crafting stations, processors, furnaces, or utility actors!
+        local disallowedKeywords = {
+            "furnace", "smelter", "kiln", "campfire", "fire", "range", "cook",
+            "cauldron", "bench", "anvil", "wheel", "station", "crafting",
+            "grinder", "sawmill", "loom", "stonecutter", "tanning", "brew",
+            "pottery", "altar", "vent", "spawner", "pawn", "character", "npc",
+            "enemy", "bedroll", "lodestone", "torch", "light", "door", "wall",
+            "floor", "roof", "stair"
+        }
+        for _, kw in ipairs(disallowedKeywords) do
+            if actorClass:find(kw) or actorName:find(kw) then
+                return
+            end
+        end
+
+        -- 2. Must be an actual storage container class or have BP_Components_WorldItemInventory
+        local isStorage = false
+        local compClass = ""
+        pcall(function() compClass = chestInv:GetClass():GetName():lower() end)
+        if compClass:find("worlditeminventory") then
+            isStorage = true
+        elseif actorClass:find("chest") or actorClass:find("crate") or actorClass:find("storage")
+           or actorClass:find("rack") or actorClass:find("stand") or actorClass:find("mannequin")
+           or actorClass:find("wardrobe") or actorClass:find("coffer") or actorClass:find("trunk") then
+            isStorage = true
+        end
+
+        if not isStorage then return end
+
+        -- 3. Minimum slot check: Storage containers have at least 6 slots (small chests = 16, large chests = 48).
+        -- Crafting station fuel/material slots have 1-3 slots.
+        local slotCount = 0
+        pcall(function() slotCount = chestInv.ItemSlots:GetArrayNum() end)
+        if slotCount < 6 then return end
+
         local loc = nil
         pcall(function() loc = chestActor:K2_GetActorLocation() end)
         if not loc then return end
@@ -479,12 +519,10 @@ local function FindNearbyChests(playerLoc)
 
         if distSq <= maxRadiusSq then
             seenAddresses[addr] = true
-            local actorName = ""
-            pcall(function() actorName = chestActor:GetClass():GetName():lower() end)
             local preferredCat = nil
-            if actorName:find("armour") or actorName:find("armor") or actorName:find("rack") or actorName:find("mannequin") or actorName:find("stand") then
+            if actorClass:find("armour") or actorClass:find("armor") or actorClass:find("rack") or actorClass:find("mannequin") or actorClass:find("stand") then
                 preferredCat = ItemCategories.EQUIPMENT
-            elseif actorName:find("lumber") or actorName:find("wood") then
+            elseif actorClass:find("lumber") or actorClass:find("wood") then
                 preferredCat = ItemCategories.WOOD
             end
 
@@ -493,7 +531,7 @@ local function FindNearbyChests(playerLoc)
                 Inventory = chestInv,
                 Distance = math.sqrt(distSq),
                 PreferredCategory = preferredCat,
-                ActorName = actorName
+                ActorName = actorClass
             })
         end
     end
@@ -513,7 +551,7 @@ local function FindNearbyChests(playerLoc)
         end
     end
 
-    -- Scan method B: Find any remaining world inventory components
+    -- Scan method B: Find any remaining world inventory components (e.g. Small Chests, Crates, Lumber Storage)
     local okComps, allComps = pcall(function()
         return FindAllOf("BP_Components_WorldItemInventory_C")
     end)
@@ -523,24 +561,6 @@ local function FindNearbyChests(playerLoc)
                 local owner = nil
                 pcall(function() owner = comp:GetOwner() end)
                 if owner and IsValidWorldActor(owner) then
-                    RegisterCandidate(owner, comp)
-                end
-            end
-        end
-    end
-
-    -- Scan method C: Find any world InventoryComponent (e.g. Armour Racks, Mannequins, Lumber Storage, Crates)
-    local okInvComps, invComps = pcall(function()
-        return FindAllOf("InventoryComponent")
-    end)
-    if okInvComps and invComps then
-        local PC = UEHelpers.GetPlayerController()
-        local pawn = PC and PC.Pawn
-        for _, comp in ipairs(invComps) do
-            if comp and comp:IsValid() then
-                local owner = nil
-                pcall(function() owner = comp:GetOwner() end)
-                if owner and IsValidWorldActor(owner) and owner ~= pawn and owner ~= PC then
                     RegisterCandidate(owner, comp)
                 end
             end
@@ -698,7 +718,7 @@ local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZ
         end
     end
 
-    -- Method 3: Direct Native Transfer via AddItemByData + RemoveFromSlot (100% reliable without container UI)
+    -- Method 3: Direct Native UObject Transfer via AddItemToSlot / AddItem + RemoveItem
     if srcChest.Inventory and srcChest.Inventory:IsValid() and destChest.Inventory and destChest.Inventory:IsValid() then
         local srcItem = nil
         pcall(function() srcItem = srcChest.Inventory.ItemSlots[srcSlotZero + 1] end)
@@ -707,55 +727,119 @@ local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZ
         end
 
         if IsValidItem(srcItem) then
+            local added = false
+
+            -- 3A: Direct AddItemByDataToSlot with correct C++ signature:
+            -- (ItemData, SlotIndex, Count, DurabilityPercentage, GameplayTags)
             local itemData = nil
             pcall(function() itemData = srcItem.ItemData end)
             if itemData and itemData:IsValid() then
                 local durability = 1.0
                 pcall(function() durability = srcItem:GetDurability() or 1.0 end)
 
-                local added = false
                 if destSlotZero ~= nil then
-                    pcall(function()
-                        added = destChest.Inventory:AddItemByDataToSlot(itemData, amount, destSlotZero, durability, {})
+                    local okDataSlot, resDataSlot = pcall(function()
+                        return destChest.Inventory:AddItemByDataToSlot(itemData, destSlotZero, amount, durability, {})
                     end)
-                end
-                if not added then
-                    pcall(function()
-                        added = destChest.Inventory:AddItemByData(itemData, amount, durability, {})
-                    end)
+                    if okDataSlot and resDataSlot then
+                        added = true
+                    else
+                        -- Retry with nil if empty table was rejected
+                        pcall(function()
+                            if destChest.Inventory:AddItemByDataToSlot(itemData, destSlotZero, amount, durability, nil) then
+                                added = true
+                            end
+                        end)
+                        if not added then
+                            table.insert(errLog, "addItemByDataToSlot:" .. tostring(resDataSlot))
+                        end
+                    end
                 end
 
-                if added then
-                    local removed = false
+                -- 3B: Direct AddItemByData into any free slot
+                if not added then
+                    local okDataAdd, resDataAdd = pcall(function()
+                        return destChest.Inventory:AddItemByData(itemData, amount, durability, {})
+                    end)
+                    if okDataAdd and resDataAdd then
+                        added = true
+                    else
+                        pcall(function()
+                            if destChest.Inventory:AddItemByData(itemData, amount, durability, nil) then
+                                added = true
+                            end
+                        end)
+                        if not added then
+                            table.insert(errLog, "addItemByData:" .. tostring(resDataAdd))
+                        end
+                    end
+                end
+            end
+
+            -- 3C: Fallback via direct UObject AddItemToSlot / AddItem
+            if not added and destSlotZero ~= nil then
+                local okSlot, resSlot = pcall(function()
+                    return destChest.Inventory:AddItemToSlot(srcItem, destSlotZero)
+                end)
+                if okSlot and resSlot then
+                    added = true
+                else
+                    table.insert(errLog, "addItemToSlot:" .. tostring(resSlot))
+                end
+            end
+            if not added then
+                local okAdd, resAdd = pcall(function()
+                    return destChest.Inventory:AddItem(srcItem)
+                end)
+                if okAdd and resAdd then
+                    added = true
+                else
+                    table.insert(errLog, "addItem:" .. tostring(resAdd))
+                end
+            end
+
+            if added then
+                local removed = false
+                local curStack = 0
+                pcall(function() curStack = srcItem:GetStackSize() end)
+
+                -- If entire stack moved, try RemoveItem
+                if amount >= curStack and curStack > 0 then
+                    pcall(function()
+                        removed = srcChest.Inventory:RemoveItem(srcItem)
+                    end)
+                end
+                if not removed and itemData and itemData:IsValid() then
+                    pcall(function()
+                        removed = srcChest.Inventory:RemoveItemByData(itemData, amount)
+                    end)
+                end
+                if not removed then
                     pcall(function()
                         removed = srcChest.Inventory:RemoveFromSlot(srcSlotZero, amount, PC)
                     end)
-                    if not removed then
-                        pcall(function()
-                            removed = srcChest.Inventory:RemoveItem(srcItem)
-                        end)
-                    end
-                    if not removed then
-                        pcall(function()
-                            removed = srcChest.Inventory:RemoveItemByData(itemData, amount)
-                        end)
-                    end
+                end
+                if not removed and not (amount >= curStack) then
+                    pcall(function()
+                        removed = srcChest.Inventory:RemoveItem(srcItem)
+                    end)
+                end
 
-                    if removed then
-                        return true
-                    else
-                        table.insert(errLog, "directRemoveFailed")
-                        -- Rollback added items if removal failed
+                if removed then
+                    return true
+                else
+                    table.insert(errLog, "directRemoveFailed")
+                    -- Rollback added item if removal failed to prevent duplication
+                    if destSlotZero ~= nil then
                         pcall(function()
-                            if destSlotZero ~= nil then
-                                destChest.Inventory:RemoveFromSlot(destSlotZero, amount, PC)
-                            else
-                                destChest.Inventory:RemoveItemByData(itemData, amount)
-                            end
+                            destChest.Inventory:RemoveFromSlot(destSlotZero, amount, PC)
                         end)
                     end
-                else
-                    table.insert(errLog, "directAddFailed")
+                    if itemData and itemData:IsValid() then
+                        pcall(function()
+                            destChest.Inventory:RemoveItemByData(itemData, amount)
+                        end)
+                    end
                 end
             end
         end
