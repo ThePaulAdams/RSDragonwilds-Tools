@@ -35,6 +35,10 @@ local Config = {
     -- Set to false so dedicated category chests (Food, Wood, Mining) never get contaminated!
     OverflowWhenCategoryFull = false,
 
+    -- Items whose category has no chest at all go into the MISC chest (or any chest with room)
+    -- instead of staying in the backpack. Build a chest for that category to separate them later.
+    HomelessItemsToMisc = true,
+
     -- At base, tapping G also picks up loose items on the ground (within GroundMagnetRadius) and stores them in chests
     StoreGroundItemsAtBase = true,
 
@@ -524,7 +528,9 @@ local function IsChestActor(actor)
         "cauldron", "bench", "anvil", "wheel", "station", "crafting",
         "grinder", "sawmill", "loom", "stonecutter", "tanning", "brew",
         "pottery", "altar", "vent", "spawner", "pawn", "character", "npc",
-        "enemy", "bedroll", "lodestone", "torch", "light"
+        "enemy", "bedroll", "lodestone", "torch", "light",
+        -- World loot and buried treasure chests are not part of the base
+        "loot", "buried", "_world"
     }
     for _, kw in ipairs(disallowedKeywords) do
         if className:find(kw) or actorName:find(kw) then
@@ -1073,6 +1079,18 @@ local function FindFreeBackpackSlot(playerInv)
     return nil
 end
 
+local function CountFreeBackpackSlots(playerInv)
+    local hotbarCount = 8
+    pcall(function() hotbarCount = playerInv.NumberOfQuickActionSlots or 8 end)
+    local slotCount = 0
+    pcall(function() slotCount = playerInv.ItemSlots:GetArrayNum() end)
+    local free = 0
+    for pIdx = hotbarCount + 1, slotCount do
+        if not ReadSlot(playerInv, pIdx - 1) then free = free + 1 end
+    end
+    return free
+end
+
 -- Move one whole stack from a chest slot into an EMPTY slot of another chest.
 -- Uses only the same MoveItem calls as normal deposit (chest -> backpack -> chest) and targets
 -- known-empty slots, so nothing is created, deleted or dropped. Every step is checked by reading
@@ -1494,6 +1512,45 @@ local function ExecuteQuickStack(depositOnly)
                                     end
                                 else
                                     table.insert(chest.EmptySlots, 1, emptySlotZero)
+                                end
+                            end
+                        end
+                    end
+
+                    -- Pass 3b: Category has no chest at all -> MISC chest first, then any chest with room
+                    if pCount > 0 and Config.HomelessItemsToMisc and #matchingChests == 0 then
+                        local fallbacks = {}
+                        for _, chest in ipairs(chestStates) do
+                            if chest.DominantCategory == ItemCategories.MISC then table.insert(fallbacks, chest) end
+                        end
+                        for _, chest in ipairs(chestStates) do
+                            if chest.DominantCategory ~= ItemCategories.MISC and not chest.PreferredCategory then
+                                table.insert(fallbacks, chest)
+                            end
+                        end
+                        for _, chest in ipairs(fallbacks) do
+                            if pCount <= 0 then break end
+                            while pCount > 0 and #chest.EmptySlots > 0 do
+                                local emptySlotZero = table.remove(chest.EmptySlots, 1)
+                                local moveAmount = pCount
+                                local movedOk = false
+                                pcall(function()
+                                    movedOk = playerInv:MoveItem(pSlotZero, chest.Inventory, emptySlotZero, PC, moveAmount)
+                                end)
+
+                                if movedOk then
+                                    totalItemsMoved = totalItemsMoved + moveAmount
+                                    depositedItemsSummary[itemName] = (depositedItemsSummary[itemName] or 0) + moveAmount
+                                    affectedChests[chest.Address] = true
+                                    pCount = 0
+
+                                    if Config.DebugLog then
+                                        Log(string.format("No [%s] chest yet: stored %dx '%s' in [%s] chest slot %d.", itemCat, moveAmount, itemName,
+                                            tostring(chest.DominantCategory or "empty"), emptySlotZero))
+                                    end
+                                else
+                                    table.insert(chest.EmptySlots, 1, emptySlotZero)
+                                    break
                                 end
                             end
                         end
@@ -2013,7 +2070,7 @@ end
 
 -- Phase 2: Magnetize all loose WorldItem actors on the ground into the player's inventory
 -- allowFullInventory = false leaves items alone when the backpack has no room (no flinging items at the player)
-local function MagnetizeWorldItems(pawn, playerLoc, radius, allowFullInventory)
+local function MagnetizeWorldItems(pawn, playerLoc, radius, allowFullInventory, maxCount)
     if allowFullInventory == nil then allowFullInventory = true end
     local radiusSq = radius * radius
     local pWorld = nil
@@ -2026,6 +2083,7 @@ local function MagnetizeWorldItems(pawn, playerLoc, radius, allowFullInventory)
     local magnetizedNames = {}
 
     for _, actor in ipairs(foundItems) do
+        if maxCount and magnetizedCount >= maxCount then break end
         if IsValidWorldActor(actor) then
             local sameWorld = true
             if pWorld then
@@ -2465,7 +2523,10 @@ local function StoreGroundItems()
     local PC = UEHelpers.GetPlayerController()
     if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then return end
     local playerInv = PC.BP_Components_Inventory
-    if not playerInv or not playerInv:IsValid() or not FindFreeBackpackSlot(playerInv) then
+    if not playerInv or not playerInv:IsValid() then return end
+    -- Only pull as many items as the backpack can hold, or they bounce off and stay on the ground
+    local freeSlots = CountFreeBackpackSlots(playerInv)
+    if freeSlots <= 0 then
         Log("    Ground items left alone: your backpack has no free slot to pick them up.")
         return
     end
@@ -2473,9 +2534,9 @@ local function StoreGroundItems()
     pcall(function() loc = PC.Pawn:K2_GetActorLocation() end)
     if not loc then return end
 
-    local pulled = MagnetizeWorldItems(PC.Pawn, loc, Config.GroundMagnetRadius, false)
+    local pulled = MagnetizeWorldItems(PC.Pawn, loc, Config.GroundMagnetRadius, false, freeSlots)
     if pulled > 0 then
-        Log(string.format(">>> Picking up %d ground item(s) to store them...", pulled))
+        Log(string.format(">>> Picking up %d ground item(s) to store them (%d free backpack slot(s))...", pulled, freeSlots))
         -- Give the pickups time to land in the backpack, then deposit them into chests
         LoopAsync(1500, function()
             ExecuteInGameThread(function() ExecuteQuickStack(true) end)
