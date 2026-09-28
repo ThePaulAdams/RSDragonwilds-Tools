@@ -7,8 +7,8 @@ local Config = {
     Key = Key.G,
     Modifier = nil, -- Optional modifier key, e.g. ModifierKey.CONTROL or nil for just G
 
-    -- Maximum distance (in Unreal Units) to search for chests. 2500 uu = 25 meters.
-    SearchRadius = 2500.0,
+    -- Maximum distance (in Unreal Units) to search for chests. 4000 uu = 40 meters.
+    SearchRadius = 4000.0,
 
     -- Maximum distance (in Unreal Units) to magnetize ground items into inventory. 4000 uu = 40 meters.
     GroundMagnetRadius = 4000.0,
@@ -479,23 +479,6 @@ local function IsGKeyDown(PC)
         return PC:IsInputKeyDown({ KeyName = FName("G") })
     end)
     return ok and res
-end
-
--- Helper: Check if any modifier key (Ctrl, Shift, Alt) is currently held
-local function IsModifierDown(PC)
-    if not PC or not PC:IsValid() then return false end
-    local isDown = false
-    pcall(function()
-        if PC:IsInputKeyDown({ KeyName = FName("LeftControl") }) or
-           PC:IsInputKeyDown({ KeyName = FName("RightControl") }) or
-           PC:IsInputKeyDown({ KeyName = FName("LeftShift") }) or
-           PC:IsInputKeyDown({ KeyName = FName("RightShift") }) or
-           PC:IsInputKeyDown({ KeyName = FName("LeftAlt") }) or
-           PC:IsInputKeyDown({ KeyName = FName("RightAlt") }) then
-            isDown = true
-        end
-    end)
-    return isDown
 end
 
 -- =========================================================================
@@ -1577,86 +1560,43 @@ end
 -- KEYBIND & TAP / HOLD STATE MACHINE
 -- =========================================================================
 local HoldState = {
-    IsHolding = false,
     PressTime = 0,
-    LastPulseTime = 0,
-    RepeatCount = 0
+    LastMagnetPulse = 0
 }
 
 local function OnKeyG()
-    local PC = UEHelpers.GetPlayerController()
-    if IsModifierDown(PC) then
-        return -- Ignore if Ctrl, Shift, or Alt is held (let Ctrl+G or Shift+G handle it)
-    end
-
     local now = os.clock()
+    local timeSinceLast = now - HoldState.PressTime
 
-    -- Case 1: Key is currently being held and OS typematic repeat is firing
-    if HoldState.IsHolding then
-        HoldState.PressTime = now
-        HoldState.RepeatCount = HoldState.RepeatCount + 1
-        if (now - HoldState.LastPulseTime) >= 0.20 then
-            HoldState.LastPulseTime = now
+    -- If this is an OS typematic repeat (fired rapidly after holding G for > 0.25s):
+    if timeSinceLast < 0.6 and HoldState.PressTime > 0 then
+        -- Key is being HELD!
+        if (now - HoldState.LastMagnetPulse) >= 0.20 then
+            HoldState.LastMagnetPulse = now
             ExecuteGroundMagnetism()
         end
         return
     end
 
-    -- Case 2: Fresh key press
-    HoldState.IsHolding = false
+    -- Fresh key press!
     HoldState.PressTime = now
-    HoldState.LastPulseTime = 0
-    HoldState.RepeatCount = 0
+    HoldState.LastMagnetPulse = 0
 
+    Log(">>> Key [G] pressed! Executing Quick Stack & Smart Category Sorting...")
+
+    -- 1. Execute Quick Stack & Chest Sort IMMEDIATELY!
+    ExecuteQuickStack()
+
+    -- 2. Schedule Ground Magnetism if the user continues holding G past 250ms
     local pressTimestamp = now
-
-    LoopAsync(30, function()
-        local curPC = UEHelpers.GetPlayerController()
-        local keyStillDown = IsGKeyDown(curPC)
-        local elapsed = os.clock() - pressTimestamp
-
-        -- If key was released before reaching hold threshold: It's a TAP!
-        if not keyStillDown and elapsed < Config.HoldDuration then
-            ExecuteInGameThread(function()
-                ExecuteQuickStack()
-            end)
-            HoldState.IsHolding = false
-            return true -- Stop loop
-        end
-
-        -- If key is still held down and reached hold threshold: It's a HOLD!
-        if (keyStillDown or HoldState.RepeatCount >= 1) and elapsed >= Config.HoldDuration then
-            if not HoldState.IsHolding then
-                HoldState.IsHolding = true
-                HoldState.LastPulseTime = os.clock()
-                ExecuteInGameThread(function()
-                    ExecuteGroundMagnetism()
-                end)
-            else
-                -- While holding continues, pulse every 200ms
-                local curNow = os.clock()
-                if (curNow - HoldState.LastPulseTime) >= 0.20 then
-                    HoldState.LastPulseTime = curNow
-                    ExecuteInGameThread(function()
-                        ExecuteGroundMagnetism()
-                    end)
-                end
+    LoopAsync(250, function()
+        if HoldState.PressTime ~= pressTimestamp then return true end
+        ExecuteInGameThread(function()
+            if HoldState.PressTime == pressTimestamp then
+                ExecuteGroundMagnetism()
             end
-        end
-
-        -- When key is finally released after holding:
-        if not keyStillDown and HoldState.IsHolding then
-            HoldState.IsHolding = false
-            return true -- Stop loop
-        end
-
-        -- Safety timeout if key was released
-        if not keyStillDown and elapsed >= (Config.HoldDuration + 0.1) then
-            HoldState.IsHolding = false
-            return true
-        end
-
-        return false -- Keep checking
+        end)
+        return true -- one-shot timer
     end)
 end
 
