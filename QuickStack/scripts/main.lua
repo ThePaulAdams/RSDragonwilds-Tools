@@ -7,8 +7,8 @@ local Config = {
     Key = Key.G,
     Modifier = nil, -- Optional modifier key, e.g. ModifierKey.CONTROL or nil for just G
 
-    -- Maximum distance (in Unreal Units) to search for chests. 4000 uu = 40 meters.
-    SearchRadius = 4000.0,
+    -- Maximum distance (in Unreal Units) to search for chests. 6000 uu = 60 meters.
+    SearchRadius = 6000.0,
 
     -- Maximum distance (in Unreal Units) to magnetize ground items into inventory. 4000 uu = 40 meters.
     GroundMagnetRadius = 4000.0,
@@ -48,6 +48,7 @@ end
 
 Log("==========================================")
 Log("Initializing QuickStack Mod with Smart Category Sorting & Wild Gathering...")
+Log("  * Version: 2.1 (60m Base Scan, Small Chest Support, 48-Slot Upgrade, In-Memory Categorization)")
 Log("  [Tap G]    : At Base: Auto-stack & sort into matching chests / In Wild: Instant harvest & pull wild plants (onions, dwellberries, flax) & ground loot!")
 Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all wild resources & ground items as you run!")
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
@@ -65,8 +66,6 @@ local function IsValidWorldActor(actor)
         if actor:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject) then
             return false
         end
-        local world = actor:GetWorld()
-        if not world or not world:IsValid() then return false end
         return true
     end)
     return ok and valid
@@ -263,12 +262,13 @@ local function GetItemCategory(itemOrData)
     if name ~= "" then
         -- Food keywords
         if name:find("meat") or name:find("fish") or name:find("bread") or name:find("stew") or
-           name:find("soup") or name:find("berry") or name:find("berries") or name:find("apple") or
-           name:find("pie") or name:find("cake") or name:find("ration") or name:find("cabbage") or
-           name:find("potato") or name:find("onion") or name:find("mushroom") or name:find("cooked") or
-           name:find("raw") or name:find("drink") or name:find("potion") or name:find("brew") or
-           name:find("ale") or name:find("beer") or name:find("wine") or name:find("water") or
-           name:find("tea") or name:find("food") or name:find("egg") or name:find("cheese") then
+           name:find("soup") or name:find("berry") or name:find("berries") or name:find("dwellberry") or
+           name:find("dwellberries") or name:find("apple") or name:find("pie") or name:find("cake") or
+           name:find("ration") or name:find("cabbage") or name:find("potato") or name:find("onion") or
+           name:find("mushroom") or name:find("cooked") or name:find("raw") or name:find("burnt") or
+           name:find("drink") or name:find("potion") or name:find("brew") or name:find("ale") or
+           name:find("beer") or name:find("wine") or name:find("water") or name:find("tea") or
+           name:find("food") or name:find("egg") or name:find("cheese") then
             return ItemCategories.FOOD
         end
 
@@ -457,6 +457,43 @@ local function GetCurrentHoverTarget()
     return nil
 end
 
+-- Helper: Check if an actor is a legitimate chest or storage container
+local function IsChestActor(actor)
+    if not actor then return false end
+    local className = ""
+    pcall(function() className = actor:GetClass():GetName():lower() end)
+    local actorName = ""
+    pcall(function() actorName = actor:GetName():lower() end)
+
+    -- STRICT BLACKLIST: Never touch any crafting stations, processors, furnaces, or utility actors!
+    local disallowedKeywords = {
+        "furnace", "smelter", "kiln", "campfire", "fire", "range", "cook",
+        "cauldron", "bench", "anvil", "wheel", "station", "crafting",
+        "grinder", "sawmill", "loom", "stonecutter", "tanning", "brew",
+        "pottery", "altar", "vent", "spawner", "pawn", "character", "npc",
+        "enemy", "bedroll", "lodestone", "torch", "light"
+    }
+    for _, kw in ipairs(disallowedKeywords) do
+        if className:find(kw) or actorName:find(kw) then
+            return false
+        end
+    end
+
+    -- Allowed storage keywords
+    if className:find("chest") or className:find("crate") or className:find("storage")
+       or className:find("rack") or className:find("stand") or className:find("mannequin")
+       or className:find("wardrobe") or className:find("coffer") or className:find("trunk") then
+        return true
+    end
+
+    if actorName:find("chest") or actorName:find("crate") or actorName:find("storage")
+       or actorName:find("rack") or actorName:find("stand") or actorName:find("mannequin") then
+        return true
+    end
+
+    return false
+end
+
 -- Helper: Find all chests within SearchRadius, sorted closest first
 local function FindNearbyChests(playerLoc)
     local maxRadiusSq = Config.SearchRadius * Config.SearchRadius
@@ -464,51 +501,11 @@ local function FindNearbyChests(playerLoc)
     local seenAddresses = {}
 
     local function RegisterCandidate(chestActor, chestInv)
-        if not IsValidWorldActor(chestActor) or not chestInv or not chestInv:IsValid() then return end
+        if not chestActor or not chestInv or not chestInv:IsValid() then return end
         local addr = chestActor:GetAddress()
         if seenAddresses[addr] then return end
 
-        local actorClass = ""
-        pcall(function() actorClass = chestActor:GetClass():GetName():lower() end)
-        local actorName = ""
-        pcall(function() actorName = chestActor:GetName():lower() end)
-
-        -- 1. STRICT BLACKLIST: Never touch any crafting stations, processors, furnaces, or utility actors!
-        local disallowedKeywords = {
-            "furnace", "smelter", "kiln", "campfire", "fire", "range", "cook",
-            "cauldron", "bench", "anvil", "wheel", "station", "crafting",
-            "grinder", "sawmill", "loom", "stonecutter", "tanning", "brew",
-            "pottery", "altar", "vent", "spawner", "pawn", "character", "npc",
-            "enemy", "bedroll", "lodestone", "torch", "light", "door", "wall",
-            "floor", "roof", "stair"
-        }
-        for _, kw in ipairs(disallowedKeywords) do
-            if actorClass:find(kw) or actorName:find(kw) then
-                return
-            end
-        end
-
-        -- 2. Must be an actual storage container class or have BP_Components_WorldItemInventory
-        local isStorage = false
-        local compClass = ""
-        pcall(function() compClass = chestInv:GetClass():GetName():lower() end)
-        if compClass:find("worlditeminventory") then
-            isStorage = true
-        elseif actorClass:find("chest") or actorClass:find("crate") or actorClass:find("storage")
-           or actorClass:find("rack") or actorClass:find("stand") or actorClass:find("mannequin")
-           or actorClass:find("wardrobe") or actorClass:find("coffer") or actorClass:find("trunk") then
-            isStorage = true
-        end
-
-        if not isStorage then return end
-
-        -- 3. Minimum slot check: Only reject if strictly known to be 1-3 slots (like furnace fuel/input)
-        local slotCount = 0
-        pcall(function() slotCount = chestInv.MaxSlotCount end)
-        if not slotCount or slotCount == 0 then
-            pcall(function() slotCount = chestInv.ItemSlots:GetArrayNum() end)
-        end
-        if slotCount and slotCount > 0 and slotCount < 4 then return end
+        if not IsChestActor(chestActor) then return end
 
         local loc = nil
         pcall(function() loc = chestActor:K2_GetActorLocation() end)
@@ -521,6 +518,8 @@ local function FindNearbyChests(playerLoc)
 
         if distSq <= maxRadiusSq then
             seenAddresses[addr] = true
+            local actorClass = ""
+            pcall(function() actorClass = chestActor:GetClass():GetName():lower() end)
             local preferredCat = nil
             if actorClass:find("armour") or actorClass:find("armor") or actorClass:find("rack") or actorClass:find("mannequin") or actorClass:find("stand") then
                 preferredCat = ItemCategories.EQUIPMENT
@@ -538,31 +537,67 @@ local function FindNearbyChests(playerLoc)
         end
     end
 
-    -- Scan method A: Find all BP_BaseBuilding_Chest_C actors
-    local okChests, chestActors = pcall(function()
-        return FindAllOf("BP_BaseBuilding_Chest_C")
-    end)
-    if okChests and chestActors then
-        for _, actor in ipairs(chestActors) do
-            if IsValidWorldActor(actor) then
-                local inv = actor.BP_Components_WorldItemInventory
-                if inv and inv:IsValid() then
-                    RegisterCandidate(actor, inv)
+    -- Scan Method A: Explicit Base Building Storage Actor Classes
+    local chestClassesToScan = {
+        "BP_BaseBuilding_Chest_C",
+        "BP_BaseBuilding_Chest_Small_C",
+        "BP_BaseBuilding_Crate_C",
+        "BP_BaseBuilding_LumberStorage_C",
+    }
+    for _, clsName in ipairs(chestClassesToScan) do
+        local okActors, actors = pcall(function() return FindAllOf(clsName) end)
+        if okActors and actors then
+            for _, actor in ipairs(actors) do
+                if IsValidWorldActor(actor) and IsChestActor(actor) then
+                    local inv = nil
+                    pcall(function() inv = actor.BP_Components_WorldItemInventory end)
+                    if not inv or not inv:IsValid() then
+                        pcall(function() inv = actor.Inventory end)
+                    end
+                    if not inv or not inv:IsValid() then
+                        pcall(function()
+                            local invCls = StaticFindObject("/Script/Dominion.InventoryComponent")
+                            if invCls and invCls:IsValid() then
+                                inv = actor:GetComponentByClass(invCls)
+                            end
+                        end)
+                    end
+                    if inv and inv:IsValid() then
+                        RegisterCandidate(actor, inv)
+                    end
                 end
             end
         end
     end
 
-    -- Scan method B: Find any remaining world inventory components (e.g. Small Chests, Crates, Lumber Storage)
+    -- Scan Method B: World Item Inventories
     local okComps, allComps = pcall(function()
         return FindAllOf("BP_Components_WorldItemInventory_C")
     end)
     if okComps and allComps then
         for _, comp in ipairs(allComps) do
-            if IsValidWorldInventory(comp) then
+            if comp and comp:IsValid() then
                 local owner = nil
                 pcall(function() owner = comp:GetOwner() end)
-                if owner and IsValidWorldActor(owner) then
+                if owner and IsValidWorldActor(owner) and IsChestActor(owner) then
+                    RegisterCandidate(owner, comp)
+                end
+            end
+        end
+    end
+
+    -- Scan Method C: Any InventoryComponent with a validated storage owner
+    local okInvComps, invComps = pcall(function()
+        return FindAllOf("InventoryComponent")
+    end)
+    if okInvComps and invComps then
+        local PC = UEHelpers.GetPlayerController()
+        local pawn = PC and PC.Pawn
+        for _, comp in ipairs(invComps) do
+            if comp and comp:IsValid() then
+                local owner = nil
+                pcall(function() owner = comp:GetOwner() end)
+                if owner and owner ~= pawn and owner ~= PC and IsChestActor(owner) then
                     RegisterCandidate(owner, comp)
                 end
             end
@@ -1124,6 +1159,15 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
 
         for _, entry in ipairs(items) do
             local remaining = entry.TotalCount
+            local maxStack = 1
+            pcall(function()
+                if entry.ItemData.GetMaxStackSize then
+                    maxStack = entry.ItemData:GetMaxStackSize()
+                elseif entry.ItemData.MaxStackSize then
+                    maxStack = entry.ItemData.MaxStackSize
+                end
+            end)
+            if not maxStack or maxStack <= 0 then maxStack = 100 end
 
             while remaining > 0 do
                 local targetChest = chests[chestIdx]
@@ -1132,37 +1176,41 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
                     table.insert(chests, targetChest)
                 end
 
+                local toAdd = math.min(remaining, maxStack)
+
                 if not targetChest then
                     -- All base chests completely full! Safe fallback: deposit into player backpack
                     if playerInv and playerInv:IsValid() then
                         local addedP = false
                         pcall(function()
-                            addedP = playerInv:AddItemByData(entry.ItemData, remaining, entry.Durability, {})
+                            addedP = playerInv:AddItemByData(entry.ItemData, toAdd, entry.Durability, {})
                         end)
                         if addedP then
-                            totalRestored = totalRestored + remaining
-                            Log(string.format("    Chests full: Stored %dx '%s' into player inventory.", remaining, entry.Name))
-                            remaining = 0
+                            totalRestored = totalRestored + toAdd
+                            remaining = remaining - toAdd
+                            Log(string.format("    Chests full: Stored %dx '%s' into player inventory.", toAdd, entry.Name))
+                        else
+                            Log(string.format("    CRITICAL: No room anywhere for %dx '%s'!", remaining, entry.Name))
                             break
                         end
+                    else
+                        Log(string.format("    CRITICAL: No room anywhere for %dx '%s'!", remaining, entry.Name))
+                        break
                     end
-                    Log(string.format("    CRITICAL: No room anywhere for %dx '%s'!", remaining, entry.Name))
-                    break
-                end
-
-                local addedOk = false
-                local toAdd = remaining
-                pcall(function()
-                    addedOk = targetChest.Inventory:AddItemByData(entry.ItemData, toAdd, entry.Durability, {})
-                end)
-
-                if addedOk then
-                    remaining = 0
-                    totalRestored = totalRestored + toAdd
-                    targetChest.TotalItemCount = (targetChest.TotalItemCount or 0) + 1
                 else
-                    -- Target chest full, advance to next chest for this category
-                    chestIdx = chestIdx + 1
+                    local addedOk = false
+                    pcall(function()
+                        addedOk = targetChest.Inventory:AddItemByData(entry.ItemData, toAdd, entry.Durability, {})
+                    end)
+
+                    if addedOk then
+                        remaining = remaining - toAdd
+                        totalRestored = totalRestored + toAdd
+                        targetChest.TotalItemCount = (targetChest.TotalItemCount or 0) + 1
+                    else
+                        -- Target chest full, advance to next chest for this category
+                        chestIdx = chestIdx + 1
+                    end
                 end
             end
         end
@@ -1217,8 +1265,8 @@ local function ExecuteQuickStack()
         table.insert(chestStates, AnalyzeChest(chestEntry))
     end
 
-    -- 2. Organize misplaced items between chests by category
-    if Config.OrganizeNearbyChests and #chestStates >= 2 then
+    -- 2. Organize misplaced items between chests by category & Upgrade to 48 slots
+    if Config.OrganizeNearbyChests and #chestStates >= 1 then
         local reorganizedCount = ReorganizeNearbyChests(chestStates, PC, playerInv)
         if reorganizedCount > 0 and Config.DebugLog then
             Log(string.format("Organized %d misplaced item(s) between chests into matching categories.", reorganizedCount))
