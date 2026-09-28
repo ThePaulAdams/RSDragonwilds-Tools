@@ -15,10 +15,11 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 ### 1. In-Memory Chest Consolidation & Sorting (`[G]` Tap at Base)
 - **Stack Aggregation**: Merges split stacks and fragmented items by unique `ItemData` asset and durability.
 - **Dedicated Category Distribution**: Redistributes items strictly into dedicated category chests:
-  - 🍎 **FOOD**: Raw and cooked meats, burnt food, fish, bread, berries, dwellberries, drinks, rations, consumables.
+  - 🍎 **FOOD**: Raw and cooked meats, burnt food, fish, bread, berries, dwellberries, drinks, rations, consumables. Strictly protected from contamination by recipes, plans, or seeds!
+  - 📜 **RECIPES**: Cooking recipes, crafting plans, blueprints, schematics, skill tomes, books, scrolls, primers, diagrams. Placed on bookshelves/desks when present, or in their own dedicated chest.
   - 🪵 **WOOD**: Regular logs, oak, willow, maple, yew, planks, bark, timber, splinters, charcoal.
   - ⛏️ **MINING**: Ores (copper, tin, iron, blurite, silver, coal, gold, mithril, adamant, runite), ingots/bars, stone, clay, gems.
-  - 🌾 **FARMING**: Wild crops, onions, flax, seeds, herbs, fibers, textiles, leather, cloth, crafting parts.
+  - 🌾 **FARMING**: Wild crops, onions, flax, seeds, saplings, herbs, fibers, textiles, leather, cloth, crafting parts.
   - 🛡️ **ARMOUR**: Helms, bodies, legs, boots, gloves, capes and other worn pieces. Placed on armour stands/racks when you have them, otherwise in their own chest.
   - ⚔️ **EQUIPMENT**: Weapons, bows, staves, shields, tools, jewellery.
   - ✨ **MAGIC**: Runes, essences, staves, wands, talismans, enchanted materials.
@@ -119,6 +120,20 @@ During the development and testing of QuickStack in the live Unreal Engine 5 env
   2. Containers are safely emptied using native `ClearInventory()`.
   3. Chest slot capacities are dynamically updated to 48 (`MaxSlotCount = 48`).
   4. Items are aggregated and redistributed strictly into designated category chests, chunked cleanly by native `MaxStackSize`.
+
+### 5. Food Chest Contamination with Crafting Recipes, Building Plans, and Seeds
+- **The Issue**: Early sorting implementations frequently contaminated food chests with non-food items (e.g. "Recipe: Cooked Meat", "Bread Recipe", "Fish Stew Recipe", building plans, primers, Avernic lore books, and agricultural seeds like "Watermelon Seeds").
+  - Cooking recipes matched food keywords like `meat`, `cooked`, `bread`, and `fish`, misclassifying them as `FOOD`.
+  - "Watermelon Seeds" matched the substring `water`, misclassifying seeds as `FOOD`.
+  - Pass 3b of quick-stacking lacked category isolation: when the `MISC` chest filled up, homeless plans and quest books were dumped into any non-MISC chest with empty slots—actively polluting the food chest.
+- **The Fix**:
+  1. Created a dedicated `RECIPES` category with preferred routing to bookcases, bookshelves, and desks.
+  2. Enforced strict 3-tier categorization priority:
+     - **Priority 1 (Recipes & Knowledge)**: Checks for `recipe`, `plan`, `blueprint`, `schematic`, `book`, `tome`, `primer`, `manual`, `treatise`, `scroll`, `notes`, `journal`, `avernic`, etc. Evaluated first, guaranteeing food recipes and building plans never touch food keywords.
+     - **Priority 2 (Agricultural Seeds)**: Checks for `seed`, `seeds`, `sapling`, `spore`, `bulb`, `pip`. Returns `FARMING` immediately before food keywords run.
+     - **Priority 3 (Food & Drinks)**: Matches strict edible consumables; eliminated bare `water` substring matches in favor of explicit container phrases (`water bowl`, `water jug`, `water flask`).
+  3. Strict anti-contamination safeguards: Dedicated chests (especially `FOOD`) strictly reject homeless items from other categories. Overflow/homeless items may only enter dedicated `MISC` chests or completely empty/unassigned chests.
+  4. Added `PersistentAssignedCategories` to keep category designations sticky across multiple reorganizations.
 
 ---
 

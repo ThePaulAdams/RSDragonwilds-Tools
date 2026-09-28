@@ -76,11 +76,13 @@ QuickStack is a client-side Lua modification for ***RuneScape: Dragonwilds*** ru
 - **Category Taxonomies**:
   | Category | Included Items |
   | :--- | :--- |
-  | **FOOD** | Raw/cooked meat, burnt food, fish, bread, berries, dwellberries, potions, drinks, stews |
+  | **FOOD** | Strictly edible food & drinks: raw/cooked meat, burnt food, fish, bread, berries, dwellberries, potions, drinks, stews. (Zero recipes, plans, or seeds!) |
+  | **RECIPES**| Cooking recipes, crafting plans, blueprints, schematics, skill tomes, books, scrolls, primers, diagrams, Avernic lore texts. Routed to bookshelves/desks or dedicated recipe chests. |
   | **WOOD** | Normal/Oak/Willow/Maple/Yew logs, planks, bark, timber, splinters, charcoal |
   | **MINING** | Copper/Tin/Iron/Blurite/Silver/Coal/Gold/Mithril/Adamant/Runite ores, bars, stone, clay, gems |
-  | **FARMING** | Flax, onions, wild crops, seeds, fibers, herbs, leather, cloth, crafting textiles |
-  | **EQUIPMENT**| Swords, bows, shields, staves, armour (helm, chest, legs, boots, gloves, jewellery) |
+  | **FARMING** | Flax, onions, wild crops, seeds, saplings, spores, fibers, herbs, leather, cloth, crafting textiles |
+  | **ARMOUR** | Wearable armour pieces (helms, bodies, legs, boots, gloves, capes) -> preferred on armour mannequins/stands |
+  | **EQUIPMENT**| Weapons, bows, staves, shields, tools, jewellery, trinkets -> preferred on weapon racks |
   | **MAGIC** | Runes, rune pouches, essence, talismans, enchanted shards |
   | **MISC** | Coins, quest items, tools, utility components, keys |
 - **Chunked Redistribution**:
@@ -230,6 +232,23 @@ QuickStack is a client-side Lua modification for ***RuneScape: Dragonwilds*** ru
 
 ---
 
+### Challenge 6: Category Cross-Contamination (Food Chest Contamination with Recipes, Plans, and Seeds)
+- **Root Cause**:
+  1. Substring Collision: Cooking recipes ("Recipe: Cooked Meat", "Bread Recipe", "Fish Stew Recipe") matched common food keywords (`cooked`, `meat`, `bread`, `fish`), misclassifying them into `FOOD`. Similarly, "Watermelon Seeds" matched `water`, routing seeds into food storage.
+  2. Lack of Dedicated Recipe Category: Crafting plans and blueprints had no dedicated category, falling through to `MISC`.
+  3. Toxic Fallback Loop (Pass 3b): When `MISC` filled up, the fallback loop scanned all non-MISC chests and dumped homeless recipes, building plans, and books into any container with empty slots—actively polluting the food chest.
+- **Resolution**:
+  1. Introduced `ItemCategories.RECIPES` specifically for cooking recipes, crafting plans, blueprints, schematics, books, tomes, scrolls, primers, diagrams, and lore texts.
+  2. Implemented strict priority order in `GetItemCategory()`:
+     - **Priority 1**: All recipes, plans, blueprints, books, tomes, and lore documents evaluated first.
+     - **Priority 2**: All seeds, saplings, spores, and bulbs evaluated second (returning `FARMING`).
+     - **Priority 3**: Pure food consumables; bare `water` keyword replaced with explicit drink/container phrases (`water bowl`, `water flask`, `water jug`).
+  3. Rewrote Pass 3b to enforce zero-tolerance anti-contamination: dedicated category chests (`FOOD`, `WOOD`, `MINING`, `FARMING`, `RECIPES`, `EQUIPMENT`, `ARMOUR`, `MAGIC`) strictly reject homeless items from other categories. Homeless items can only enter `MISC` or empty chests.
+  4. Added `PersistentAssignedCategories` mapping to preserve chest category assignments across multiple reorganization cycles.
+  5. Added bookcase, bookshelf, and desk support with preferred category `RECIPES`.
+
+---
+
 ## 4. Safeguards & Protections Summary
 
 1. **Hotbar Preservation**: Slots 0 through 7 of the player's quick-access bar are never evaluated as deposit sources.
@@ -237,3 +256,4 @@ QuickStack is a client-side Lua modification for ***RuneScape: Dragonwilds*** ru
 3. **Magic Rune Preservation**: Strict keyword and path checks prevent elemental runes, essence, and rune pouches from being deposited.
 4. **Machine / Furnace Preservation**: Disallowed keywords prevent non-storage actors from being modified or receiving deposits.
 5. **Lossless Overflow Protection**: If total items exceed the combined capacity of all 48-slot chests, excess items are returned to player backpack; if backpack is full, items are spawned safely at the player's feet via `K2_DropItem`.
+6. **Food Chest Anti-Contamination Protection**: Zero-tolerance isolation ensures food chests contain only genuine edible foods and drinks. Recipes, plans, blueprints, and seeds are strictly isolated into `RECIPES` and `FARMING` containers.

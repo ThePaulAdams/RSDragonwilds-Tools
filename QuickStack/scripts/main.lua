@@ -195,11 +195,12 @@ end
 -- ITEM CATEGORIZATION SYSTEM
 -- =========================================================================
 local ItemCategories = {
-    FOOD = "FOOD",           -- Raw/cooked food, meat, fish, bread, berries, drinks, potions
+    FOOD = "FOOD",           -- Raw/cooked food, meat, fish, bread, berries, meals, rations, drinks, potions
+    RECIPES = "RECIPES",     -- Recipes, plans, blueprints, schematics, books, tomes, scrolls, primers, diagrams
     WOOD = "WOOD",           -- Logs, planks, bark, timber, splinters, charcoal
     MINING = "MINING",       -- Ores, ingots/bars, stone, clay, gems, minerals
-    FARMING = "FARMING",     -- Plants, flax, seeds, herbs, fibers, textiles, leather, cloth
-    MAGIC = "MAGIC",         -- Runes, essence, shards, anima, scrolls
+    FARMING = "FARMING",     -- Seeds, saplings, plants, flax, herbs, fibers, textiles, leather, cloth
+    MAGIC = "MAGIC",         -- Runes, essence, shards, anima
     ARMOUR = "ARMOUR",       -- Wearable armour pieces (helms, bodies, legs, boots, gloves, capes) -> armour stands
     EQUIPMENT = "EQUIPMENT", -- Weapons, shields, tools, jewellery, trinkets
     MISC = "MISC"            -- Quest items, currency, general items
@@ -251,13 +252,70 @@ local function GetItemCategory(itemOrData)
         end)
     end
 
+    -- =========================================================================
+    -- PRIORITY 1: RECIPES, PLANS, BLUEPRINTS, SCHEMATICS & KNOWLEDGE
+    -- =========================================================================
+    -- Must be evaluated first so food recipes ("Recipe: Cooked Meat", "Bread Recipe",
+    -- "Fish Stew Recipe") and crafting plans ("Plan: Cooking Station", "Plan: Woodcrafting")
+    -- are 100% categorized as RECIPES and NEVER pollute Food, Wood, or Equipment chests!
+    local isRecipe = false
+    if className:find("recipe") or className:find("plan") or className:find("blueprint") or
+       className:find("schematic") or className:find("diagram") or className:find("formula") or
+       className:find("book") or className:find("tome") or className:find("lore") or
+       className:find("readable") or className:find("scroll") or className:find("primer") or
+       className:find("paper") or className:find("journal") then
+        isRecipe = true
+    end
+    if path:find("/recipe") or path:find("/plan") or path:find("/blueprint") or
+       path:find("/schematic") or path:find("item_recipe") or path:find("item_plan") or
+       path:find("/book") or path:find("/lore") or path:find("/readable") or
+       path:find("/scroll") or path:find("/document") or path:find("item_book") or
+       path:find("item_lore") then
+        isRecipe = true
+    end
+    if tagName:find("recipe") or tagName:find("plan") or tagName:find("blueprint") or
+       tagName:find("schematic") or tagName:find("book") or tagName:find("tome") or
+       tagName:find("lore") or tagName:find("readable") or tagName:find("scroll") then
+        isRecipe = true
+    end
+    if name:find("recipe") or name:find("plan") or name:find("blueprint") or
+       name:find("schematic") or name:find("diagram") or name:find("formula") or
+       name:find("pattern") or name:find("book") or name:find("tome") or
+       name:find("primer") or name:find("manual") or name:find("treatise") or
+       name:find("scroll") or name:find("notes") or name:find("journal") or
+       name:find("almanac") or name:find("guide") or name:find("pamphlet") or
+       name:find("folio") or name:find("document") or name:find("manuscript") or
+       name:find("avernic") or name:find("codex") or name:find("grimoire") or
+       name:find("chronicle") or name:find("history of") or name:find("tales of") or
+       name:find("scripture") or name:find("parchment") or name:find("papyrus") or
+       name:find("letter") or name:find("missive") or name:find("charter") or
+       name:find("decree") or name:find("contract") or name:find("deed") then
+        isRecipe = true
+    end
+    if isRecipe then
+        return ItemCategories.RECIPES
+    end
+
+    -- =========================================================================
+    -- PRIORITY 2: AGRICULTURAL SEEDS, SAPLINGS, BULBS & SPORES -> FARMING
+    -- =========================================================================
+    -- Must be evaluated before food keywords so "Watermelon Seeds", "Cabbage Seeds",
+    -- "Onion Seeds", "Potato Seeds", etc. are categorized as FARMING, NEVER as Food!
+    if name:find("seed") or name:find("seeds") or name:find("sapling") or
+       name:find("saplings") or name:find("spore") or name:find("spores") or
+       name:find("bulb") or name:find("bulbs") or name:find("pip") or
+       name:find("pips") or path:find("/seed") or path:find("item_seed") or
+       className:find("seed") or tagName:find("seed") then
+        return ItemCategories.FARMING
+    end
+
     -- Wearable armour is split out of EQUIPMENT so it can go onto armour stands
     local function EquipmentOrArmour()
         if path:find("/armour/") or path:find("/armor/") or tagName:find("armour") or tagName:find("armor") then
             return ItemCategories.ARMOUR
         end
         local armourKeywords = {
-            "helm", "coif", "hood", "cowl", "armour", "armor", "boots", "gloves", "legs",
+            "helm", "helmet", "coif", "hood", "cowl", "armour", "armor", "boots", "gloves", "legs",
             "cuirass", "greaves", "gauntlet", "bracer", "vambrace", "robe", "tunic", "chainmail",
             "platebody", "plateleg", "chestplate", "hauberk", "sabaton", "pauldron", "gorget",
             "visor", "chaps", "torso", "cape", "cloak", "body", "trousers", "skirt"
@@ -268,7 +326,7 @@ local function GetItemCategory(itemOrData)
         return ItemCategories.EQUIPMENT
     end
 
-    -- 1. Check Class Type
+    -- 3. Check Class Type
     if className:find("food") or className:find("drink") or className:find("potion") or className:find("consumable") then
         return ItemCategories.FOOD
     end
@@ -276,7 +334,7 @@ local function GetItemCategory(itemOrData)
         return ItemCategories.EQUIPMENT
     end
 
-    -- 2. Check Asset Path
+    -- 4. Check Asset Path
     if path ~= "" then
         if path:find("/food/") or path:find("/consumable/") or path:find("/drink/") or path:find("/potion/") or path:find("item_food") then
             return ItemCategories.FOOD
@@ -298,7 +356,7 @@ local function GetItemCategory(itemOrData)
         end
     end
 
-    -- 3. Check GameplayTag
+    -- 5. Check GameplayTag
     if tagName ~= "" then
         if tagName:find("food") or tagName:find("cooking") or tagName:find("consumable") then
             return ItemCategories.FOOD
@@ -320,22 +378,9 @@ local function GetItemCategory(itemOrData)
         end
     end
 
-    -- 4. Check Display Name Keywords
+    -- 6. Check Display Name Keywords
     if name ~= "" then
-        -- Food keywords
-        if name:find("meat") or name:find("fish") or name:find("bread") or name:find("stew") or
-           name:find("soup") or name:find("berry") or name:find("berries") or name:find("dwellberry") or
-           name:find("dwellberries") or name:find("apple") or name:find("pie") or name:find("cake") or
-           name:find("ration") or name:find("cabbage") or name:find("potato") or name:find("onion") or
-           name:find("mushroom") or name:find("cooked") or name:find("raw") or name:find("burnt") or
-           name:find("drink") or name:find("potion") or name:find("brew") or name:find("ale") or
-           name:find("beer") or name:find("wine") or name:find("water") or name:find("tea") or
-           name:find("food") or name:find("egg") or name:find("cheese") then
-            return ItemCategories.FOOD
-        end
-
-        -- Equipment & Armour keywords (before the material words, so "Iron Helm" or "Leather Gloves"
-        -- counts as armour rather than MINING or FARMING)
+        -- A. Equipment & Armour keywords
         if name:find("sword") or name:find("axe") or name:find("pickaxe") or name:find("shield") or
            name:find("bow") or name:find("helmet") or name:find("helm") or name:find("coif") or
            name:find("armour") or name:find("armor") or name:find("boots") or name:find("gloves") or
@@ -348,42 +393,78 @@ local function GetItemCategory(itemOrData)
            name:find("hauberk") or name:find("sabaton") or name:find("pauldron") or name:find("gorget") or
            name:find("visor") or name:find("chap") or name:find("cowl") or name:find("chestplate") or
            name:find("torso") or name:find("buckler") or name:find("quiver") or name:find("hatchet") or
-           name:find("mace") then
+           name:find("mace") or name:find("scythe") or name:find("halberd") or name:find("crossbow") then
             return EquipmentOrArmour()
         end
 
-        -- Wood keywords
+        -- B. Strict Food & Drink keywords (only genuine edible food & potions)
+        if name:find("meat") or name:find("fish") or name:find("bread") or name:find("stew") or
+           name:find("soup") or name:find("berry") or name:find("berries") or name:find("dwellberry") or
+           name:find("dwellberries") or name:find("apple") or name:find("pie") or name:find("cake") or
+           name:find("ration") or name:find("cabbage") or name:find("potato") or name:find("onion") or
+           name:find("carrot") or name:find("tomato") or name:find("corn") or name:find("watermelon") or
+           name:find("melon") or name:find("grape") or name:find("grapes") or name:find("banana") or
+           name:find("pear") or name:find("plum") or name:find("pumpkin") or
+           name:find("mushroom") or name:find("cooked") or name:find("raw") or name:find("burnt") or
+           name:find("drink") or name:find("potion") or name:find("brew") or name:find("ale") or
+           name:find("beer") or name:find("wine") or name:find("cider") or name:find("tea") or
+           name:find("coffee") or name:find("milk") or name:find("cheese") or name:find("egg") or
+           name:find("food") or name:find("feast") or name:find("meal") or name:find("roast") or
+           name:find("steak") or name:find("ribs") or name:find("skewer") or name:find("jerky") or
+           name:find("trout") or name:find("salmon") or name:find("tuna") or name:find("lobster") or
+           name:find("bass") or name:find("swordfish") or name:find("shark") or name:find("shrimp") or
+           name:find("anchovy") or name:find("herring") or name:find("pike") or name:find("cod") or
+           name:find("chicken") or name:find("beef") or name:find("pork") or name:find("mutton") or
+           name:find("venison") or name:find("bacon") or name:find("dough") or name:find("pastry") or
+           name:find("toast") or name:find("omelette") or name:find("broth") or name:find("tart") or
+           name:find("pudding") or name:find("snack") then
+            return ItemCategories.FOOD
+        end
+        -- Only treat water as food if it's explicitly drinkable/liquid container, not water rune/essence
+        if (name:find("water bowl") or name:find("water jug") or name:find("water flask") or
+            name:find("water skin") or name:find("water bottle") or name:find("clean water") or
+            name:find("fresh water") or name:find("dirty water") or name:find("bucket of water") or
+            name:find("jug of water") or name:find("bowl of water")) then
+            return ItemCategories.FOOD
+        end
+
+        -- C. Wood keywords
         if name:find("wood") or name:find("log") or name:find("logs") or name:find("plank") or
            name:find("planks") or name:find("bark") or name:find("branch") or name:find("timber") or
            name:find("splinter") or name:find("charcoal") or name:find("ash") then
             return ItemCategories.WOOD
         end
 
-        -- Mining / Metal keywords
+        -- D. Mining / Metal / Gem keywords
         if name:find("ore") or name:find("bar") or name:find("bars") or name:find("ingot") or
            name:find("stone") or name:find("rock") or name:find("clay") or name:find("sand") or
            name:find("copper") or name:find("tin") or name:find("bronze") or name:find("iron") or
            name:find("steel") or name:find("mithril") or name:find("adamant") or name:find("runite") or
            name:find("gold") or name:find("silver") or name:find("coal") or name:find("sapphire") or
-           name:find("emerald") or name:find("ruby") or name:find("diamond") then
+           name:find("emerald") or name:find("ruby") or name:find("diamond") or name:find("mineral") or
+           name:find("nugget") or name:find("gravel") or name:find("flint") or name:find("slab") then
             return ItemCategories.MINING
         end
 
-        -- Farming / Herbs / Textiles keywords
-        if name:find("flax") or name:find("fiber") or name:find("fibre") or name:find("seed") or
+        -- E. Farming / Herbs / Textiles keywords
+        if name:find("flax") or name:find("fiber") or name:find("fibre") or
            name:find("herb") or name:find("plant") or name:find("leaf") or name:find("leaves") or
            name:find("toadflax") or name:find("thread") or name:find("cloth") or name:find("linen") or
            name:find("leather") or name:find("wool") or name:find("feather") or name:find("pelt") or
-           name:find("hide") or name:find("flower") or name:find("wheat") or name:find("cotton") then
+           name:find("hide") or name:find("flower") or name:find("wheat") or name:find("cotton") or
+           name:find("guam") or name:find("marrentill") or name:find("tarromin") or
+           name:find("harralander") or name:find("ranarr") or name:find("irit") or
+           name:find("avantoe") or name:find("kwuarm") or name:find("cadantine") or
+           name:find("lantadyme") or name:find("dwarf weed") or name:find("torstol") then
             return ItemCategories.FARMING
         end
 
-        -- Magic keywords
+        -- F. Magic keywords
         if name:find("rune") or name:find("essence") or name:find("shard") or name:find("anima") or
-           name:find("scroll") or name:find("tome") or name:find("talisman") or name:find("reagent") then
+           name:find("talisman") or name:find("reagent") or name:find("catalyst") or
+           name:find("enchanted") or name:find("crystal") then
             return ItemCategories.MAGIC
         end
-
     end
 
     return ItemCategories.MISC
@@ -547,12 +628,14 @@ local function IsChestActor(actor)
     -- Allowed storage keywords
     if className:find("chest") or className:find("crate") or className:find("storage")
        or className:find("rack") or className:find("stand") or className:find("mannequin")
-       or className:find("wardrobe") or className:find("coffer") or className:find("trunk") then
+       or className:find("wardrobe") or className:find("coffer") or className:find("trunk")
+       or className:find("shelf") or className:find("book") or className:find("desk") then
         return true
     end
 
     if actorName:find("chest") or actorName:find("crate") or actorName:find("storage")
-       or actorName:find("rack") or actorName:find("stand") or actorName:find("mannequin") then
+       or actorName:find("rack") or actorName:find("stand") or actorName:find("mannequin")
+       or actorName:find("shelf") or actorName:find("book") or actorName:find("desk") then
         return true
     end
 
@@ -595,6 +678,8 @@ local function FindNearbyChests(playerLoc)
                 preferredCat = ItemCategories.ARMOUR
             elseif actorClass:find("lumber") or actorClass:find("wood") then
                 preferredCat = ItemCategories.WOOD
+            elseif actorClass:find("book") or actorClass:find("scroll") or actorClass:find("library") or actorClass:find("desk") then
+                preferredCat = ItemCategories.RECIPES
             end
 
             table.insert(nearbyChests, {
@@ -709,9 +794,9 @@ local function IsGKeyDown(PC)
     return res
 end
 
--- =========================================================================
--- CHEST INVENTORY ANALYSIS & INTER-CHEST REORGANIZATION
--- =========================================================================
+-- Persistent mapping of Chest Address -> Assigned Category (e.g. dedicated FOOD chest, RECIPES chest)
+local PersistentAssignedCategories = {}
+
 local function AnalyzeChest(chestEntry)
     local chestInv = chestEntry.Inventory
     local chestActor = chestEntry.Actor
@@ -787,7 +872,12 @@ local function AnalyzeChest(chestEntry)
             maxCat = cat
         end
     end
-    state.DominantCategory = maxCat
+    local persisted = PersistentAssignedCategories[addr]
+    if persisted and (state.CategoryCounts[persisted] or 0) == 0 and maxCount > 0 then
+        PersistentAssignedCategories[addr] = nil
+        persisted = nil
+    end
+    state.DominantCategory = persisted or state.PreferredCategory or maxCat
     return state
 end
 
@@ -1105,24 +1195,39 @@ end
 local function CarryStack(src, srcSlot, dest, destSlot, carrySlot, PC, playerInv)
     local srcItem, srcCount = ReadSlot(src.Inventory, srcSlot)
     if not srcItem or srcCount <= 0 then return false end
-    if ReadSlot(dest.Inventory, destSlot) then return false end
-    if ReadSlot(playerInv, carrySlot) then return false end
+    local destItem = ReadSlot(dest.Inventory, destSlot)
     local dataAddr = GetItemDataAddress(srcItem)
+    local moveCount = srcCount
+    if destItem then
+        if GetItemDataAddress(destItem) ~= dataAddr then return false end
+        local freeSpace = 0
+        pcall(function() freeSpace = destItem:GetStackFreeSpace() end)
+        if freeSpace <= 0 then return false end
+        moveCount = math.min(srcCount, freeSpace)
+    end
+
+    -- Direct chest-to-chest transfer attempt first:
+    local okDirect = false
+    pcall(function()
+        okDirect = src.Inventory:MoveItem(srcSlot, dest.Inventory, destSlot, PC, moveCount)
+    end)
+    local _, remainingSrc = ReadSlot(src.Inventory, srcSlot)
+    if okDirect and (not remainingSrc or remainingSrc < srcCount) then
+        return true
+    end
+
+    if not carrySlot or ReadSlot(playerInv, carrySlot) then return false end
 
     -- Hop 1: chest -> backpack carry slot
-    pcall(function() src.Inventory:MoveItem(srcSlot, playerInv, carrySlot, PC, srcCount) end)
+    pcall(function() src.Inventory:MoveItem(srcSlot, playerInv, carrySlot, PC, moveCount) end)
     local carried, carriedCount = ReadSlot(playerInv, carrySlot)
     if not carried or GetItemDataAddress(carried) ~= dataAddr then
         return false -- nothing moved
     end
 
-    -- Hop 2: backpack carry slot -> destination chest's empty slot
+    -- Hop 2: backpack carry slot -> destination chest's slot
     pcall(function() playerInv:MoveItem(carrySlot, dest.Inventory, destSlot, PC, carriedCount) end)
     if not ReadSlot(playerInv, carrySlot) then
-        -- Carry slot is empty again: the stack should now be in the destination chest
-        if not ReadSlot(dest.Inventory, destSlot) then
-            Log(string.format("    WARNING: '%s' left your backpack but did not appear in the target chest slot.", GetItemName(carried)))
-        end
         return true
     end
 
@@ -1186,11 +1291,22 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
     local function Claim(state, cat)
         state.AssignedCategory = cat
         table.insert(assignedChestsByCategory[cat], state)
+        if state.Address then
+            PersistentAssignedCategories[state.Address] = cat
+        end
     end
 
-    -- Priority A: Containers built for one category (armour stands -> ARMOUR, weapon racks -> EQUIPMENT, lumber -> WOOD)
+    -- Priority A: Containers built for one category (armour stands -> ARMOUR, weapon racks -> EQUIPMENT, lumber -> WOOD, bookshelves -> RECIPES)
     for _, state in ipairs(chestStates) do
         if state.PreferredCategory then Claim(state, state.PreferredCategory) end
+    end
+
+    -- Priority A2: Containers with established persistent assignments from prior passes
+    for _, state in ipairs(chestStates) do
+        local persisted = state.Address and PersistentAssignedCategories[state.Address]
+        if persisted and not state.AssignedCategory and #assignedChestsByCategory[persisted] == 0 then
+            Claim(state, persisted)
+        end
     end
 
     -- Priority B: Sticky. A chest keeps the category it already holds most of,
@@ -1273,9 +1389,26 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
         return 0
     end
 
-    local function FreeSlotIn(state)
+    local function FreeSlotIn(state, item)
         local slotCount = 0
         pcall(function() slotCount = state.Inventory.ItemSlots:GetArrayNum() end)
+        -- First: look for an existing partial stack of the same item to merge into!
+        if item then
+            local dataAddr = GetItemDataAddress(item)
+            if dataAddr then
+                for s = 0, slotCount - 1 do
+                    local destItem = ReadSlot(state.Inventory, s)
+                    if destItem and GetItemDataAddress(destItem) == dataAddr then
+                        local freeSpace = 0
+                        pcall(function() freeSpace = destItem:GetStackFreeSpace() end)
+                        if freeSpace > 0 then
+                            return s
+                        end
+                    end
+                end
+            end
+        end
+        -- Second: look for an empty slot
         for s = 0, slotCount - 1 do
             if not ReadSlot(state.Inventory, s) then return s end
         end
@@ -1295,7 +1428,7 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
                 if #targets > 0 and src.AssignedCategory ~= cat then
                     local moved = false
                     for _, dest in ipairs(targets) do
-                        local destSlot = FreeSlotIn(dest)
+                        local destSlot = FreeSlotIn(dest, item)
                         if destSlot then
                             moved = CarryStack(src, s, dest, destSlot, carrySlot, PC, playerInv)
                             if moved then break end
@@ -1516,6 +1649,7 @@ local function ExecuteQuickStack(depositOnly)
                                     chest.TotalItemCount = 1
                                     chest.DominantCategory = itemCat
                                     chest.CategoryCounts[itemCat] = 1
+                                    PersistentAssignedCategories[chest.Address] = itemCat
                                     table.insert(matchingChests, chest)
 
                                     if Config.DebugLog then
@@ -1528,14 +1662,15 @@ local function ExecuteQuickStack(depositOnly)
                         end
                     end
 
-                    -- Pass 3b: Category has no chest at all -> MISC chest first, then any chest with room
+                    -- Pass 3b: Category has no chest at all -> Only MISC chest or unassigned/empty chest!
+                    -- Dedicated category chests (FOOD, WOOD, MINING, FARMING, RECIPES, EQUIPMENT, MAGIC, ARMOUR) are NEVER contaminated!
                     if pCount > 0 and Config.HomelessItemsToMisc and #matchingChests == 0 then
                         local fallbacks = {}
                         for _, chest in ipairs(chestStates) do
                             if chest.DominantCategory == ItemCategories.MISC then table.insert(fallbacks, chest) end
                         end
                         for _, chest in ipairs(chestStates) do
-                            if chest.DominantCategory ~= ItemCategories.MISC and not chest.PreferredCategory then
+                            if (chest.DominantCategory == nil or chest.TotalItemCount == 0) and not chest.PreferredCategory then
                                 table.insert(fallbacks, chest)
                             end
                         end
