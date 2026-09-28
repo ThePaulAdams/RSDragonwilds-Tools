@@ -258,38 +258,42 @@ local function GetItemCategory(itemOrData)
     -- Must be evaluated first so food recipes ("Recipe: Cooked Meat", "Bread Recipe",
     -- "Fish Stew Recipe") and crafting plans ("Plan: Cooking Station", "Plan: Woodcrafting")
     -- are 100% categorized as RECIPES and NEVER pollute Food, Wood, or Equipment chests!
+    -- Whole-word match, so "plan" does not match "plank"/"plant" and "tome" does not match "tomato"
+    local function HasWord(str, w)
+        return str:find("%f[%a]" .. w .. "s?%f[%A]") ~= nil
+    end
     local isRecipe = false
-    if className:find("recipe") or className:find("plan") or className:find("blueprint") or
-       className:find("schematic") or className:find("diagram") or className:find("formula") or
-       className:find("book") or className:find("tome") or className:find("lore") or
-       className:find("readable") or className:find("scroll") or className:find("primer") or
-       className:find("paper") or className:find("journal") then
+    if className:find("recipe") or HasWord(className, "plan") or className:find("blueprint") or
+       className:find("schematic") or HasWord(className, "diagram") or HasWord(className, "formula") or
+       HasWord(className, "book") or HasWord(className, "tome") or HasWord(className, "lore") or
+       className:find("readable") or HasWord(className, "scroll") or HasWord(className, "primer") or
+       HasWord(className, "paper") or HasWord(className, "journal") then
         isRecipe = true
     end
-    if path:find("/recipe") or path:find("/plan") or path:find("/blueprint") or
-       path:find("/schematic") or path:find("item_recipe") or path:find("item_plan") or
-       path:find("/book") or path:find("/lore") or path:find("/readable") or
-       path:find("/scroll") or path:find("/document") or path:find("item_book") or
-       path:find("item_lore") then
+    if path:find("/recipe") or HasWord(path, "plan") or path:find("/blueprint") or
+       path:find("/schematic") or path:find("item_recipe") or HasWord(path, "plan") or
+       HasWord(path, "book") or HasWord(path, "lore") or path:find("/readable") or
+       HasWord(path, "scroll") or HasWord(path, "document") or HasWord(path, "book") or
+       HasWord(path, "lore") then
         isRecipe = true
     end
-    if tagName:find("recipe") or tagName:find("plan") or tagName:find("blueprint") or
-       tagName:find("schematic") or tagName:find("book") or tagName:find("tome") or
-       tagName:find("lore") or tagName:find("readable") or tagName:find("scroll") then
+    if tagName:find("recipe") or HasWord(tagName, "plan") or tagName:find("blueprint") or
+       tagName:find("schematic") or HasWord(tagName, "book") or HasWord(tagName, "tome") or
+       HasWord(tagName, "lore") or tagName:find("readable") or HasWord(tagName, "scroll") then
         isRecipe = true
     end
-    if name:find("recipe") or name:find("plan") or name:find("blueprint") or
-       name:find("schematic") or name:find("diagram") or name:find("formula") or
-       name:find("pattern") or name:find("book") or name:find("tome") or
-       name:find("primer") or name:find("manual") or name:find("treatise") or
-       name:find("scroll") or name:find("notes") or name:find("journal") or
-       name:find("almanac") or name:find("guide") or name:find("pamphlet") or
-       name:find("folio") or name:find("document") or name:find("manuscript") or
+    if name:find("recipe") or HasWord(name, "plan") or name:find("blueprint") or
+       name:find("schematic") or HasWord(name, "diagram") or HasWord(name, "formula") or
+       HasWord(name, "pattern") or HasWord(name, "book") or HasWord(name, "tome") or
+       HasWord(name, "primer") or HasWord(name, "manual") or name:find("treatise") or
+       HasWord(name, "scroll") or HasWord(name, "notes") or HasWord(name, "journal") or
+       name:find("almanac") or HasWord(name, "guide") or name:find("pamphlet") or
+       name:find("folio") or HasWord(name, "document") or name:find("manuscript") or
        name:find("avernic") or name:find("codex") or name:find("grimoire") or
        name:find("chronicle") or name:find("history of") or name:find("tales of") or
        name:find("scripture") or name:find("parchment") or name:find("papyrus") or
-       name:find("letter") or name:find("missive") or name:find("charter") or
-       name:find("decree") or name:find("contract") or name:find("deed") then
+       HasWord(name, "letter") or name:find("missive") or HasWord(name, "charter") or
+       HasWord(name, "decree") or HasWord(name, "contract") or HasWord(name, "deed") then
         isRecipe = true
     end
     if isRecipe then
@@ -303,8 +307,7 @@ local function GetItemCategory(itemOrData)
     -- "Onion Seeds", "Potato Seeds", etc. are categorized as FARMING, NEVER as Food!
     if name:find("seed") or name:find("seeds") or name:find("sapling") or
        name:find("saplings") or name:find("spore") or name:find("spores") or
-       name:find("bulb") or name:find("bulbs") or name:find("pip") or
-       name:find("pips") or path:find("/seed") or path:find("item_seed") or
+       name:find("bulb") or name:find("bulbs") or HasWord(name, "pip") or path:find("/seed") or path:find("item_seed") or
        className:find("seed") or tagName:find("seed") then
         return ItemCategories.FARMING
     end
@@ -318,7 +321,7 @@ local function GetItemCategory(itemOrData)
             "helm", "helmet", "coif", "hood", "cowl", "armour", "armor", "boots", "gloves", "legs",
             "cuirass", "greaves", "gauntlet", "bracer", "vambrace", "robe", "tunic", "chainmail",
             "platebody", "plateleg", "chestplate", "hauberk", "sabaton", "pauldron", "gorget",
-            "visor", "chaps", "torso", "cape", "cloak", "body", "trousers", "skirt"
+            "visor", "chaps", "torso", "cape", "cloak", "body", "trousers", "skirt", "leggings", "mail"
         }
         for _, kw in ipairs(armourKeywords) do
             if name:find(kw) then return ItemCategories.ARMOUR end
@@ -393,31 +396,32 @@ local function GetItemCategory(itemOrData)
            name:find("hauberk") or name:find("sabaton") or name:find("pauldron") or name:find("gorget") or
            name:find("visor") or name:find("chap") or name:find("cowl") or name:find("chestplate") or
            name:find("torso") or name:find("buckler") or name:find("quiver") or name:find("hatchet") or
-           name:find("mace") or name:find("scythe") or name:find("halberd") or name:find("crossbow") then
+           name:find("mace") or name:find("leggings") or name:find("scythe") or name:find("halberd") or name:find("crossbow") then
             return EquipmentOrArmour()
         end
 
-        -- B. Strict Food & Drink keywords (only genuine edible food & potions)
-        if name:find("meat") or name:find("fish") or name:find("bread") or name:find("stew") or
-           name:find("soup") or name:find("berry") or name:find("berries") or name:find("dwellberry") or
-           name:find("dwellberries") or name:find("apple") or name:find("pie") or name:find("cake") or
-           name:find("ration") or name:find("cabbage") or name:find("potato") or name:find("onion") or
-           name:find("carrot") or name:find("tomato") or name:find("corn") or name:find("watermelon") or
-           name:find("melon") or name:find("grape") or name:find("grapes") or name:find("banana") or
-           name:find("pear") or name:find("plum") or name:find("pumpkin") or
-           name:find("mushroom") or name:find("cooked") or name:find("raw") or name:find("burnt") or
-           name:find("drink") or name:find("potion") or name:find("brew") or name:find("ale") or
-           name:find("beer") or name:find("wine") or name:find("cider") or name:find("tea") or
-           name:find("coffee") or name:find("milk") or name:find("cheese") or name:find("egg") or
-           name:find("food") or name:find("feast") or name:find("meal") or name:find("roast") or
-           name:find("steak") or name:find("ribs") or name:find("skewer") or name:find("jerky") or
-           name:find("trout") or name:find("salmon") or name:find("tuna") or name:find("lobster") or
-           name:find("bass") or name:find("swordfish") or name:find("shark") or name:find("shrimp") or
-           name:find("anchovy") or name:find("herring") or name:find("pike") or name:find("cod") or
-           name:find("chicken") or name:find("beef") or name:find("pork") or name:find("mutton") or
-           name:find("venison") or name:find("bacon") or name:find("dough") or name:find("pastry") or
-           name:find("toast") or name:find("omelette") or name:find("broth") or name:find("tart") or
-           name:find("pudding") or name:find("snack") then
+        -- B. Strict Food & Drink keywords (only genuine edible food & potions).
+        -- Whole words only, so "Pale Logs", "Leggings", "Spike" or "Plume" never count as food.
+        if HasWord(name, "meat") or HasWord(name, "fish") or HasWord(name, "bread") or HasWord(name, "stew") or
+           HasWord(name, "soup") or HasWord(name, "berry") or HasWord(name, "berries") or HasWord(name, "dwellberry") or
+           HasWord(name, "dwellberries") or HasWord(name, "apple") or HasWord(name, "pie") or HasWord(name, "cake") or
+           HasWord(name, "ration") or HasWord(name, "cabbage") or HasWord(name, "potato") or HasWord(name, "potatoes") or HasWord(name, "tomatoes") or HasWord(name, "onion") or
+           HasWord(name, "carrot") or HasWord(name, "tomato") or HasWord(name, "corn") or HasWord(name, "watermelon") or
+           HasWord(name, "melon") or HasWord(name, "grape") or HasWord(name, "grapes") or HasWord(name, "banana") or
+           HasWord(name, "pear") or HasWord(name, "plum") or HasWord(name, "pumpkin") or
+           HasWord(name, "mushroom") or HasWord(name, "cooked") or HasWord(name, "raw") or HasWord(name, "burnt") or
+           HasWord(name, "drink") or HasWord(name, "potion") or HasWord(name, "brew") or HasWord(name, "ale") or
+           HasWord(name, "beer") or HasWord(name, "wine") or HasWord(name, "cider") or HasWord(name, "tea") or
+           HasWord(name, "coffee") or HasWord(name, "milk") or HasWord(name, "cheese") or HasWord(name, "egg") or
+           HasWord(name, "food") or HasWord(name, "feast") or HasWord(name, "meal") or HasWord(name, "roast") or
+           HasWord(name, "steak") or HasWord(name, "ribs") or HasWord(name, "skewer") or HasWord(name, "jerky") or
+           HasWord(name, "trout") or HasWord(name, "salmon") or HasWord(name, "tuna") or HasWord(name, "lobster") or
+           HasWord(name, "bass") or HasWord(name, "swordfish") or HasWord(name, "shark") or HasWord(name, "shrimp") or
+           HasWord(name, "anchovy") or HasWord(name, "herring") or HasWord(name, "pike") or HasWord(name, "cod") or
+           HasWord(name, "chicken") or HasWord(name, "beef") or HasWord(name, "pork") or HasWord(name, "mutton") or
+           HasWord(name, "venison") or HasWord(name, "bacon") or HasWord(name, "dough") or HasWord(name, "pastry") or
+           HasWord(name, "toast") or HasWord(name, "omelette") or HasWord(name, "broth") or HasWord(name, "tart") or
+           HasWord(name, "pudding") or HasWord(name, "snack") then
             return ItemCategories.FOOD
         end
         -- Only treat water as food if it's explicitly drinkable/liquid container, not water rune/essence
