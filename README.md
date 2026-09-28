@@ -174,4 +174,4 @@ UE4SS reserves <code>F10</code> by default for the built-in developer console (C
 
 ## License
 
-This project is released under the **MIT License**. Free to use, modify, and distribute for the *RuneScape: Dragonwilds* community.
+This project is released under the **MIT License** (see [LICENSE](LICENSE)). Free to use, modify, and distribute for the *RuneScape: Dragonwilds* community.
