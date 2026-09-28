@@ -2484,10 +2484,13 @@ local function StoreGroundItems()
     end
 end
 
--- A normal tap: sort chests and store ground items at base, or harvest and vacuum in the wild
+-- A normal tap: empty the backpack into chests, sort chests and store ground items at base,
+-- or harvest and vacuum in the wild
 local function RunTapAction()
-    local foundChests = ExecuteQuickStack()
+    -- Deposit first so the backpack has free slots for sorting and ground pickup
+    local foundChests = ExecuteQuickStack(true)
     if foundChests then
+        ExecuteQuickStack()
         StoreGroundItems()
     else
         Log(">>> Outside base (no chests nearby): Harvesting & magnetizing ground resources...")
