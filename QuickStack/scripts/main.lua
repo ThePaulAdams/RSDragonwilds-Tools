@@ -35,6 +35,9 @@ local Config = {
     -- Set to false so dedicated category chests (Food, Wood, Mining) never get contaminated!
     OverflowWhenCategoryFull = false,
 
+    -- At base, tapping G also picks up loose items on the ground (within GroundMagnetRadius) and stores them in chests
+    StoreGroundItemsAtBase = true,
+
     -- Hold duration (in seconds) to trigger Ground Item Magnetism
     HoldDuration = 0.25,
 
@@ -1037,70 +1040,16 @@ local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZ
 end
 
 -- =========================================================================
--- IN-MEMORY CHEST UPGRADE & CATEGORY REORGANIZATION ENGINE
+-- CHEST CATEGORY SORTING (moves whole stacks; never clears, creates or drops items)
 -- =========================================================================
--- Helper: Total stack count of one ItemData (by address) across an inventory's slots
-local function CountItemInInventory(inv, dataAddr)
-    if not inv or not dataAddr then return 0 end
-    local total = 0
-    local slotCount = 0
-    pcall(function() slotCount = inv.ItemSlots:GetArrayNum() end)
-    for i = 1, slotCount do
-        local item = nil
-        pcall(function() item = inv.ItemSlots[i] end)
-        if IsValidItem(item) and GetItemDataAddress(item) == dataAddr then
-            local c = 0
-            pcall(function() c = item:GetStackSize() end)
-            total = total + (c or 0)
-        end
-    end
-    return total
-end
-
--- Helper: Count occupied slots in an inventory
-local function CountOccupiedSlots(inv)
-    local used = 0
-    local slotCount = 0
-    pcall(function() slotCount = inv.ItemSlots:GetArrayNum() end)
-    for i = 1, slotCount do
-        local item = nil
-        pcall(function() item = inv.ItemSlots[i] end)
-        if IsValidItem(item) then used = used + 1 end
-    end
-    return used
-end
-
--- Helper: Add items and return how many actually landed.
--- The container is recounted before and after, so a refused or partial add is never
--- mistaken for success (AddItemByData's return value alone is not trusted).
-local function AddItemVerified(inv, itemData, count, durability)
-    if not inv or count <= 0 or not itemData then return 0 end
-    local ok = false
-    pcall(function() ok = inv:IsValid() end)
-    if not ok then return 0 end
-
-    local dataAddr = nil
-    pcall(function() dataAddr = itemData:GetAddress() end)
-    if not dataAddr then return 0 end
-
-    local before = CountItemInInventory(inv, dataAddr)
-    local okCall, res = pcall(function()
-        return inv:AddItemByData(itemData, count, durability, {})
-    end)
-    local added = CountItemInInventory(inv, dataAddr) - before
-    if added < 0 then added = 0 end
-    if added > count then added = count end
-
-    -- If the slots did not change but the engine reported success, trust the engine:
-    -- a duplicate is recoverable, a lost item is not.
-    if added == 0 and okCall then
-        if res == true then
-            added = count
-        elseif type(res) == "number" and res > 0 then
-            added = math.min(res, count)
-        end
-    end
-    return added
+-- Helper: Read one slot of an inventory (slotZero is 0-based)
+local function ReadSlot(inv, slotZero)
+    local item = nil
+    pcall(function() item = inv.ItemSlots[slotZero + 1] end)
+    if not IsValidItem(item) then return nil, 0 end
+    local count = 0
+    pcall(function() count = item:GetStackSize() end)
+    return item, count or 0
 end
 
 -- Helper: Only real chests/crates get the 48-slot upgrade and chest mesh (never armour stands, racks or lumber storage)
@@ -1112,24 +1061,61 @@ local function IsUpgradeableChest(state)
     return n:find("chest") ~= nil or n:find("crate") ~= nil
 end
 
--- Helper: Stacks needed to hold an entry
-local function GetEntryMaxStack(entry)
-    local maxStack = 0
-    pcall(function()
-        if entry.ItemData.GetMaxStackSize then
-            maxStack = entry.ItemData:GetMaxStackSize()
-        elseif entry.ItemData.MaxStackSize then
-            maxStack = entry.ItemData.MaxStackSize
+-- Helper: Find a free player backpack slot (hotbar excluded) to carry items between chests
+local function FindFreeBackpackSlot(playerInv)
+    local hotbarCount = 8
+    pcall(function() hotbarCount = playerInv.NumberOfQuickActionSlots or 8 end)
+    local slotCount = 0
+    pcall(function() slotCount = playerInv.ItemSlots:GetArrayNum() end)
+    for pIdx = hotbarCount + 1, slotCount do
+        if not ReadSlot(playerInv, pIdx - 1) then return pIdx - 1 end
+    end
+    return nil
+end
+
+-- Move one whole stack from a chest slot into an EMPTY slot of another chest.
+-- Uses only the same MoveItem calls as normal deposit (chest -> backpack -> chest) and targets
+-- known-empty slots, so nothing is created, deleted or dropped. Every step is checked by reading
+-- the slots back. If the second hop fails, the stack goes back where it came from, and if even that
+-- fails it stays in your backpack.
+local function CarryStack(src, srcSlot, dest, destSlot, carrySlot, PC, playerInv)
+    local srcItem, srcCount = ReadSlot(src.Inventory, srcSlot)
+    if not srcItem or srcCount <= 0 then return false end
+    if ReadSlot(dest.Inventory, destSlot) then return false end
+    if ReadSlot(playerInv, carrySlot) then return false end
+    local dataAddr = GetItemDataAddress(srcItem)
+
+    -- Hop 1: chest -> backpack carry slot
+    pcall(function() src.Inventory:MoveItem(srcSlot, playerInv, carrySlot, PC, srcCount) end)
+    local carried, carriedCount = ReadSlot(playerInv, carrySlot)
+    if not carried or GetItemDataAddress(carried) ~= dataAddr then
+        return false -- nothing moved
+    end
+
+    -- Hop 2: backpack carry slot -> destination chest's empty slot
+    pcall(function() playerInv:MoveItem(carrySlot, dest.Inventory, destSlot, PC, carriedCount) end)
+    if not ReadSlot(playerInv, carrySlot) then
+        -- Carry slot is empty again: the stack should now be in the destination chest
+        if not ReadSlot(dest.Inventory, destSlot) then
+            Log(string.format("    WARNING: '%s' left your backpack but did not appear in the target chest slot.", GetItemName(carried)))
         end
-    end)
-    if not maxStack or maxStack <= 0 then maxStack = 100 end
-    return maxStack
+        return true
+    end
+
+    -- Hop 2 failed: put it back where it came from
+    local _, leftCount = ReadSlot(playerInv, carrySlot)
+    pcall(function() playerInv:MoveItem(carrySlot, src.Inventory, srcSlot, PC, leftCount) end)
+    if ReadSlot(playerInv, carrySlot) then
+        Log(string.format("    Could not return '%s' to its chest; it is safe in your backpack.", GetItemName(carried)))
+    end
+    return false
 end
 
 local function ReorganizeNearbyChests(chestStates, PC, playerInv)
     if not chestStates or #chestStates < 1 then return 0 end
+    if not playerInv or not playerInv:IsValid() then return 0 end
 
-    Log(string.format(">>> Starting In-Memory Chest Consolidation & Upgrade across %d container(s)...", #chestStates))
+    Log(string.format(">>> Sorting %d nearby container(s) by category...", #chestStates))
 
     -- 1. UPGRADE REAL CHESTS TO HIGHEST TIER (48 SLOTS)
     local largeMesh = nil
@@ -1144,17 +1130,11 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
             largeMesh = StaticFindObject("/Game/Art/Env/Base_Building/Furniture/Cosiness/Chest/SM_Storage_Chest_01v2.SM_Storage_Chest_01v2")
         end)
     end
-
-    local upgradedCount = 0
     for _, state in ipairs(chestStates) do
         if IsUpgradeableChest(state) then
             pcall(function()
-                if state.Inventory and state.Inventory:IsValid() then
-                    if (state.Inventory.MaxSlotCount or 0) < 48 then
-                        state.Inventory.MaxSlotCount = 48
-                        state.SlotCount = 48
-                        upgradedCount = upgradedCount + 1
-                    end
+                if state.Inventory and state.Inventory:IsValid() and (state.Inventory.MaxSlotCount or 0) < 48 then
+                    state.Inventory.MaxSlotCount = 48
                 end
                 if largeMesh and state.Actor and state.Actor.Mesh and state.Actor.Mesh:IsValid() then
                     state.Actor.Mesh:SetStaticMesh(largeMesh)
@@ -1162,122 +1142,35 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
             end)
         end
     end
-    if upgradedCount > 0 then
-        Log(string.format("    Upgraded %d chest(s) to Highest Tier (48 Slots each)!", upgradedCount))
-    end
 
-    -- 2. PULL ITEMS INTO THE IN-MEMORY POOL, ONE CONTAINER AT A TIME
-    -- A container's items only join the pool once ClearInventory() is confirmed to have emptied it.
-    -- If clearing fails, that container is left untouched and sits out of the sort (no duplicates, no loss).
-    local memoryPool = {} -- [key] = { ItemData, Name, TotalCount, Durability, Category, AssetPath }
+    -- 2. COUNT STACKS PER CATEGORY (read only; nothing is moved yet)
     local categoryStacks = {}
-    for _, cat in pairs(ItemCategories) do categoryStacks[cat] = 0 end
-
-    local participating = {}
-    local totalItemsInPool = 0
-    local totalStacksRead = 0
-
     for _, state in ipairs(chestStates) do
-        local inv = state.Inventory
-        local found = {}
-        local slotCount = 0
-        pcall(function() slotCount = inv.ItemSlots:GetArrayNum() end)
-        for cIdx = 1, slotCount do
-            local cItem = nil
-            pcall(function() cItem = inv.ItemSlots[cIdx] end)
-            if IsValidItem(cItem) then
-                local itemData = nil
-                pcall(function() itemData = cItem.ItemData end)
-                if itemData and itemData:IsValid() then
-                    local count = 0
-                    pcall(function() count = cItem:GetStackSize() end)
-                    if count > 0 then
-                        local durability = 1.0
-                        pcall(function() durability = cItem:GetDurability() or 1.0 end)
-                        local path = nil
-                        pcall(function() path = itemData:GetPathName() end)
-                        table.insert(found, {
-                            ItemData = itemData,
-                            AssetPath = path,
-                            Name = GetItemName(cItem),
-                            Count = count,
-                            Durability = durability,
-                            Category = GetItemCategory(cItem),
-                            DataAddr = GetItemDataAddress(cItem)
-                        })
-                    end
-                end
-            end
-        end
-
-        local cleared = true
-        if #found > 0 then
-            pcall(function() inv:ClearInventory() end)
-            cleared = CountOccupiedSlots(inv) == 0
-        end
-
-        if cleared then
-            table.insert(participating, state)
-            for _, f in ipairs(found) do
-                local key = string.format("%s_%.2f", tostring(f.DataAddr), f.Durability)
-                if memoryPool[key] then
-                    memoryPool[key].TotalCount = memoryPool[key].TotalCount + f.Count
-                else
-                    memoryPool[key] = {
-                        ItemData = f.ItemData,
-                        AssetPath = f.AssetPath,
-                        Name = f.Name,
-                        TotalCount = f.Count,
-                        Durability = f.Durability,
-                        Category = f.Category,
-                        Key = key
-                    }
-                end
-                totalItemsInPool = totalItemsInPool + f.Count
-                totalStacksRead = totalStacksRead + 1
-            end
-        else
-            Log(string.format("    WARNING: Could not empty container '%s'; leaving its items where they are.", tostring(state.ActorName)))
+        for cat, cnt in pairs(state.CategoryCounts or {}) do
+            categoryStacks[cat] = (categoryStacks[cat] or 0) + cnt
         end
     end
-
-    if totalItemsInPool == 0 then
-        Log("    Chests are currently empty. Nothing to reorganize.")
-        return 0
-    end
-
-    for _, entry in pairs(memoryPool) do
-        entry.MaxStack = GetEntryMaxStack(entry)
-        local cat = entry.Category or ItemCategories.MISC
-        categoryStacks[cat] = (categoryStacks[cat] or 0) + math.ceil(entry.TotalCount / entry.MaxStack)
-    end
-
-    Log(string.format("    Pulled %d total items (%d original stacks) from %d container(s) into In-Memory Buffer.",
-        totalItemsInPool, totalStacksRead, #participating))
 
     -- 3. ASSIGN DEDICATED CONTAINERS TO CATEGORIES
     local assignedChestsByCategory = {}
     for _, cat in pairs(ItemCategories) do assignedChestsByCategory[cat] = {} end
-
     local function Claim(state, cat)
         state.AssignedCategory = cat
         table.insert(assignedChestsByCategory[cat], state)
     end
 
     -- Priority A: Containers built for one category (armour stands -> ARMOUR, weapon racks -> EQUIPMENT, lumber -> WOOD)
-    for _, state in ipairs(participating) do
-        if state.PreferredCategory then
-            Claim(state, state.PreferredCategory)
-        end
+    for _, state in ipairs(chestStates) do
+        if state.PreferredCategory then Claim(state, state.PreferredCategory) end
     end
 
-    -- Priority B: Sticky assignment. A chest keeps the category it already held most of,
+    -- Priority B: Sticky. A chest keeps the category it already holds most of,
     -- so the food chest stays the food chest every time G is pressed.
     local pairsByCount = {}
-    for idx, state in ipairs(participating) do
+    for idx, state in ipairs(chestStates) do
         if not state.AssignedCategory then
             for cat, cnt in pairs(state.CategoryCounts or {}) do
-                if cnt > 0 and (categoryStacks[cat] or 0) > 0 then
+                if cnt > 0 then
                     table.insert(pairsByCount, { State = state, Category = cat, Count = cnt, Index = idx })
                 end
             end
@@ -1294,7 +1187,7 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
         end
     end
 
-    -- Priority C: Categories still without a home get the nearest free container, largest category first
+    -- Priority C: Categories still without a home get the nearest empty-handed chest, largest first
     local sortedCats = {}
     for cat, stacks in pairs(categoryStacks) do
         if stacks > 0 then table.insert(sortedCats, { Category = cat, Stacks = stacks }) end
@@ -1303,23 +1196,19 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
         if a.Stacks ~= b.Stacks then return a.Stacks > b.Stacks end
         return a.Category < b.Category
     end)
-
     local function NextFreeContainer()
-        -- Regular chests before special containers (stands, racks, lumber storage)
-        for _, state in ipairs(participating) do
+        for _, state in ipairs(chestStates) do
             if not state.AssignedCategory and not state.PreferredCategory then return state end
         end
         return nil
     end
-
     for _, cInfo in ipairs(sortedCats) do
         if #assignedChestsByCategory[cInfo.Category] == 0 then
             local free = NextFreeContainer()
             if free then Claim(free, cInfo.Category) end
         end
     end
-
-    -- Categories that need more room than their containers have get extra containers
+    -- Categories that need more room than their chests have get extra chests
     for _, cInfo in ipairs(sortedCats) do
         local cat = cInfo.Category
         local capacity = 0
@@ -1337,120 +1226,81 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
         if #assignedChestsByCategory[cInfo.Category] == 0 then table.insert(homeless, cInfo.Category) end
     end
     if #homeless > 0 then
-        Log(string.format("    Not enough containers for one per category. Build %d more chest(s) to separate: %s (they share leftover space for now).",
+        Log(string.format("    Not enough chests for one per category. Build %d more to separate: %s (those stay where they are for now).",
             #homeless, table.concat(homeless, ", ")))
     end
-
     if Config.DebugLog then
-        for idx, state in ipairs(participating) do
+        for idx, state in ipairs(chestStates) do
             Log(string.format("    Container #%d (%.1fm, %s) -> %s", idx, (state.Entry and state.Entry.Distance or 0) / 100.0,
                 tostring(state.ActorName), tostring(state.AssignedCategory or "spare")))
         end
     end
 
-    -- 4. SORT MEMORY ITEMS: GROUP BY CATEGORY, ALPHABETICAL BY NAME
-    local categoryItemLists = {}
-    for _, cat in pairs(ItemCategories) do categoryItemLists[cat] = {} end
-    for _, entry in pairs(memoryPool) do
-        local cat = entry.Category or ItemCategories.MISC
-        if not categoryItemLists[cat] then categoryItemLists[cat] = {} end
-        table.insert(categoryItemLists[cat], entry)
-    end
-    for _, list in pairs(categoryItemLists) do
-        table.sort(list, function(a, b) return a.Name < b.Name end)
+    -- 4. CARRY MISPLACED STACKS INTO THEIR CATEGORY'S CHESTS
+    -- Only items whose category has a home are moved; anything else stays exactly where it is.
+    local carrySlot = FindFreeBackpackSlot(playerInv)
+    if not carrySlot then
+        Log("    Sorting skipped: free up one backpack slot so QuickStack can carry items between chests.")
+        return 0
     end
 
-    -- 5. REDISTRIBUTE. Every added amount is verified, and anything that cannot be placed
-    -- falls through: category containers -> spare containers -> any container with room ->
-    -- player backpack -> Relocation Crate (recover with Shift + G). Nothing is dropped.
-    local totalRestored = 0
-    local sentToBackpack = 0
-    local sentToCrate = 0
-
-    local function PlaceInto(inv, entry, remaining)
-        local placed = 0
-        while remaining > 0 do
-            local toAdd = math.min(remaining, entry.MaxStack)
-            local added = AddItemVerified(inv, entry.ItemData, toAdd, entry.Durability)
-            placed = placed + added
-            remaining = remaining - added
-            if added < toAdd then break end
+    local function FreeSlotIn(state)
+        local slotCount = 0
+        pcall(function() slotCount = state.Inventory.ItemSlots:GetArrayNum() end)
+        for s = 0, slotCount - 1 do
+            if not ReadSlot(state.Inventory, s) then return s end
         end
-        return placed
+        return nil
     end
 
-    local function CandidateContainers(cat)
-        local list = {}
-        local seen = {}
-        local function push(st)
-            if st and not seen[st] then seen[st] = true; table.insert(list, st) end
-        end
-        for _, st in ipairs(assignedChestsByCategory[cat] or {}) do push(st) end
-        -- Spare chests, then other categories' regular chests, then special containers last
-        for _, st in ipairs(participating) do if not st.AssignedCategory then push(st) end end
-        for _, st in ipairs(participating) do if not st.PreferredCategory then push(st) end end
-        for _, st in ipairs(participating) do push(st) end
-        return list
-    end
-
-    -- Categories with a home first, so shared leftover space goes to homeless categories last
-    local catOrder = {}
-    for _, cInfo in ipairs(sortedCats) do
-        if #assignedChestsByCategory[cInfo.Category] > 0 then table.insert(catOrder, cInfo.Category) end
-    end
-    for _, cat in ipairs(homeless) do table.insert(catOrder, cat) end
-
-    for _, cat in ipairs(catOrder) do
-        local candidates = CandidateContainers(cat)
-        for _, entry in ipairs(categoryItemLists[cat] or {}) do
-            local remaining = entry.TotalCount
-
-            for _, st in ipairs(candidates) do
-                if remaining <= 0 then break end
-                local placed = PlaceInto(st.Inventory, entry, remaining)
-                if placed > 0 then
-                    remaining = remaining - placed
-                    totalRestored = totalRestored + placed
-                    if st.AssignedCategory ~= cat and Config.DebugLog then
-                        Log(string.format("    [%s] overflow: put %dx '%s' into a %s container.", cat, placed, entry.Name, tostring(st.AssignedCategory or "spare")))
+    local movedStacks = 0
+    local stuckStacks = 0
+    for _, src in ipairs(chestStates) do
+        local slotCount = 0
+        pcall(function() slotCount = src.Inventory.ItemSlots:GetArrayNum() end)
+        for s = 0, slotCount - 1 do
+            local item = ReadSlot(src.Inventory, s)
+            if item then
+                local cat = GetItemCategory(item)
+                local targets = assignedChestsByCategory[cat] or {}
+                if #targets > 0 and src.AssignedCategory ~= cat then
+                    local moved = false
+                    for _, dest in ipairs(targets) do
+                        local destSlot = FreeSlotIn(dest)
+                        if destSlot then
+                            moved = CarryStack(src, s, dest, destSlot, carrySlot, PC, playerInv)
+                            if moved then break end
+                        end
+                        -- The carry slot may be occupied if a hop failed; find another
+                        if ReadSlot(playerInv, carrySlot) then
+                            carrySlot = FindFreeBackpackSlot(playerInv)
+                            if not carrySlot then break end
+                        end
                     end
+                    if moved then
+                        movedStacks = movedStacks + 1
+                    else
+                        stuckStacks = stuckStacks + 1
+                    end
+                    if not carrySlot then break end
                 end
             end
-
-            if remaining > 0 and playerInv and playerInv:IsValid() then
-                local placed = PlaceInto(playerInv, entry, remaining)
-                if placed > 0 then
-                    remaining = remaining - placed
-                    totalRestored = totalRestored + placed
-                    sentToBackpack = sentToBackpack + placed
-                    Log(string.format("    Containers full: put %dx '%s' into your backpack.", placed, entry.Name))
-                end
-            end
-
-            if remaining > 0 then
-                table.insert(RelocationCrate, {
-                    ItemData = entry.ItemData,
-                    AssetPath = entry.AssetPath,
-                    Count = remaining,
-                    Name = entry.Name
-                })
-                sentToCrate = sentToCrate + remaining
-                Log(string.format("    WARNING: No room anywhere for %dx '%s'. Saved it in the Relocation Crate; press Shift + G near free space to get it back (it is lost if you quit the game first).",
-                    remaining, entry.Name))
-            end
+        end
+        if not carrySlot then
+            Log("    Sorting stopped early: no free backpack slot left to carry items.")
+            break
         end
     end
 
-    Log(string.format(">>> Chest Reorganization COMPLETE: %d item(s) sorted.%s%s", totalRestored,
-        sentToBackpack > 0 and string.format(" %d went to your backpack.", sentToBackpack) or "",
-        sentToCrate > 0 and string.format(" %d are waiting in the Relocation Crate (Shift + G).", sentToCrate) or ""))
-    return totalRestored
+    Log(string.format(">>> Chest sort COMPLETE: moved %d stack(s) into their category chests.%s", movedStacks,
+        stuckStacks > 0 and string.format(" %d stack(s) stayed put (target chests full or the move was refused).", stuckStacks) or ""))
+    return movedStacks
 end
 
 -- =========================================================================
 -- EXECUTE QUICK STACK (Deposit matching & categorized items to chests)
 -- =========================================================================
-local function ExecuteQuickStack()
+local function ExecuteQuickStack(depositOnly)
     local PC = UEHelpers.GetPlayerController()
     if not IsValidWorldActor(PC) then
         Log("QuickStack failed: Local PlayerController not found or invalid.")
@@ -1493,7 +1343,7 @@ local function ExecuteQuickStack()
     end
 
     -- 2. Organize misplaced items between chests by category & Upgrade to 48 slots
-    if Config.OrganizeNearbyChests and #chestStates >= 1 then
+    if Config.OrganizeNearbyChests and not depositOnly and #chestStates >= 1 then
         local reorganizedCount = ReorganizeNearbyChests(chestStates, PC, playerInv)
         if reorganizedCount > 0 and Config.DebugLog then
             Log(string.format("Organized %d misplaced item(s) between chests into matching categories.", reorganizedCount))
@@ -2162,7 +2012,9 @@ local function HarvestNearbyResources(pawn, playerLoc, radius)
 end
 
 -- Phase 2: Magnetize all loose WorldItem actors on the ground into the player's inventory
-local function MagnetizeWorldItems(pawn, playerLoc, radius)
+-- allowFullInventory = false leaves items alone when the backpack has no room (no flinging items at the player)
+local function MagnetizeWorldItems(pawn, playerLoc, radius, allowFullInventory)
+    if allowFullInventory == nil then allowFullInventory = true end
     local radiusSq = radius * radius
     local pWorld = nil
     pcall(function() pWorld = pawn:GetWorld() end)
@@ -2225,7 +2077,7 @@ local function MagnetizeWorldItems(pawn, playerLoc, radius)
                                     pcall(function()
                                         mag.bAllowAutoMagnetization = true
                                         mag.bAutoMagnetizationEnabled = true
-                                        mag.bMagnetizeWithFullInventory = true
+                                        mag.bMagnetizeWithFullInventory = allowFullInventory
                                         mag.MinTimeBeforeMoving = 0.0
                                         mag.ContactRange = 250.0
                                         mag.LerpSpeed = 30.0
@@ -2607,10 +2459,37 @@ local HoldState = {
     LastKeyEvent = 0 -- Time of the latest G key event, including ignored key-repeats
 }
 
--- A normal tap: sort chests at base, or harvest and vacuum in the wild
+-- At base: pull loose ground items into the backpack, then store them in the category chests
+local function StoreGroundItems()
+    if not Config.StoreGroundItemsAtBase then return end
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then return end
+    local playerInv = PC.BP_Components_Inventory
+    if not playerInv or not playerInv:IsValid() or not FindFreeBackpackSlot(playerInv) then
+        Log("    Ground items left alone: your backpack has no free slot to pick them up.")
+        return
+    end
+    local loc = nil
+    pcall(function() loc = PC.Pawn:K2_GetActorLocation() end)
+    if not loc then return end
+
+    local pulled = MagnetizeWorldItems(PC.Pawn, loc, Config.GroundMagnetRadius, false)
+    if pulled > 0 then
+        Log(string.format(">>> Picking up %d ground item(s) to store them...", pulled))
+        -- Give the pickups time to land in the backpack, then deposit them into chests
+        LoopAsync(1500, function()
+            ExecuteInGameThread(function() ExecuteQuickStack(true) end)
+            return true -- one-shot timer
+        end)
+    end
+end
+
+-- A normal tap: sort chests and store ground items at base, or harvest and vacuum in the wild
 local function RunTapAction()
     local foundChests = ExecuteQuickStack()
-    if not foundChests then
+    if foundChests then
+        StoreGroundItems()
+    else
         Log(">>> Outside base (no chests nearby): Harvesting & magnetizing ground resources...")
         ExecuteGroundMagnetism()
     end

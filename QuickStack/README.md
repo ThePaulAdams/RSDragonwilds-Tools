@@ -13,7 +13,6 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 ## Key Features
 
 ### 1. In-Memory Chest Consolidation & Sorting (`[G]` Tap at Base)
-- **Zero-Loss Memory Buffering**: Reads all items from nearby containers (up to 100m) into an in-memory staging table.
 - **Stack Aggregation**: Merges split stacks and fragmented items by unique `ItemData` asset and durability.
 - **Dedicated Category Distribution**: Redistributes items strictly into dedicated category chests:
   - 🍎 **FOOD**: Raw and cooked meats, burnt food, fish, bread, berries, dwellberries, drinks, rations, consumables.
@@ -26,7 +25,8 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
   - 📦 **MISC**: Gold coins, quest items, utility components, keys, unclassified valuables.
 - **Safe Stack-Chunking**: Splits aggregated quantities cleanly according to each item's native `GetMaxStackSize()`.
 - **Sticky Chests**: Each chest keeps the category it already holds most of, so your food chest stays your food chest every time you press `[G]`.
-- **Lossless Placement**: Every deposit is verified by recounting the chest. Items a chest refuses go to another chest with room, then your backpack, then the Relocation Crate (`[Shift + G]` to recover). A chest that can't be emptied is left untouched.
+- **Nothing Is Dropped**: Sorting carries whole stacks chest -> backpack slot -> chest using the same moves as a normal deposit, checking each step. A chest never gets emptied, and a refused move puts the stack back where it was. Needs one free backpack slot.
+- **Ground Items Stored Too**: Loose items on the ground near you are picked up and put into their category chests (only when your backpack has room). Turn off with `StoreGroundItemsAtBase = false`.
 - **Not Enough Chests?** Categories without their own chest share leftover space, and the UE4SS log says how many more chests to build.
 
 ### 2. Automatic 48-Slot Highest Tier Chest Upgrade
