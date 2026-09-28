@@ -20,7 +20,7 @@ A quality-of-life magic & gathering mod for **RuneScape: Dragonwilds** that give
 * Employs zero-momentum teleportation (`bTeleportPhysics = true`) and gentle rigid-body sleep to prevent Chaos physics collisions or logs launching into orbit.
 
 ### 3. Splinter AoE Radius Multiplier
-* Press **`F6`** to cycle the **Splinter** utility spell's area-of-effect radius:
+* Press **`F11`** to cycle the **Splinter** utility spell's area-of-effect radius:
   * **1.0x**: Vanilla Radius
   * **2.5x**: Adept Radius (covers wide clearing)
   * **5.0x**: Archmage Giant Radius (shatters everything in sight)
@@ -34,7 +34,7 @@ A quality-of-life magic & gathering mod for **RuneScape: Dragonwilds** that give
 | **`E`** | **Contextual Grab / Place** | Grabs targeted log if looking at one; places held log if carrying. If not looking at a log, normal game interaction (loot, talk, open) occurs uninterrupted. |
 | **`V`** | **Dedicated Grab / Place** | Dedicated toggle key for grabbing or dropping logs. |
 | **`Z`** | **Log Magnet (Mass Gather)** | Vacuums all fallen logs & trunks within 50m into a neat, flat stack in front of you. |
-| **`F6`** | **Cycle Splinter Radius** | Multiplies the explosion radius of the Splinter spell (1x $\to$ 2.5x $\to$ 5x). |
+| **`F11`** | **Cycle Splinter Radius** | Multiplies the explosion radius of the Splinter spell (1x $\to$ 2.5x $\to$ 5x). |
 
 ---
 

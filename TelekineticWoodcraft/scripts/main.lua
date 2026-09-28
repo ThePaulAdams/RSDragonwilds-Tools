@@ -11,7 +11,7 @@ Log("Single log drag + Mass Log Magnet for easy Splinter harvesting.")
 Log("Controls:")
 Log("  [E] or [V]   - Telekinetically Grab / Place targeted log")
 Log("  [Z]          - [Log Magnet] Mass-gather all nearby logs into a stack")
-Log("  [F6]         - Cycle Splinter Spell AoE Radius (1x -> 2.5x -> 5x)")
+Log("  [F11]        - Cycle Splinter Spell AoE Radius (1x -> 2.5x -> 5x)")
 Log("==========================================")
 
 -- State
@@ -626,7 +626,7 @@ local function MassGatherLogs()
     end)
 end
 
--- Cycle Splinter Spell Radius (F6)
+-- Cycle Splinter Spell Radius (F11)
 local function CycleSplinterRadius()
     Config.CurrentSplinterTierIndex = Config.CurrentSplinterTierIndex + 1
     if Config.CurrentSplinterTierIndex > #Config.SplinterTiers then
@@ -643,9 +643,9 @@ local function CycleSplinterRadius()
             end
             local newRadius = VanillaSplinterRadius * tier.Multiplier
             sphere.Radius = newRadius
-            Log(string.format(">>> [F6] Splinter Spell Radius set to: %s (Radius = %.1f)", tier.Name, newRadius))
+            Log(string.format(">>> [F11] Splinter Spell Radius set to: %s (Radius = %.1f)", tier.Name, newRadius))
         else
-            Log("[F6] Splinter Spell data not loaded yet (unlock or equip Splinter first).")
+            Log("[F11] Splinter Spell data not loaded yet (unlock or equip Splinter first).")
         end
     end)
 end
@@ -674,10 +674,10 @@ pcall(function()
 end)
 
 pcall(function()
-    RegisterKeyBind(Key.F6, function()
+    RegisterKeyBind(Key.F11, function()
         CycleSplinterRadius()
     end)
-    Log("Keybind registered: [F6: Cycle Splinter Spell Radius]")
+    Log("Keybind registered: [F11: Cycle Splinter Spell Radius]")
 end)
 
 Log("Telekinetic Woodcraft Mod initialized successfully.")

@@ -159,7 +159,7 @@ local Mods = {
     {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap and resource markers.", "F6 map | F7 reload | F9 icons | PgUp/PgDn zoom | [ / ] size"},
     {"QuickStack", "Quick Stack", "Stacks nearby items into nearby chests.", "G stack to nearby chests"},
     {"EnhancedReticle", "Enhanced Reticle", "Adds configurable reticle colour and size controls.", "F4 toggle | F1 colour | F2 size"},
-    {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance.", "E/V grab/place | Z log magnet | F6 radius"},
+    {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance.", "E/V grab/place | Z log magnet | F11 radius"},
     {
         string.char(69, 110, 104, 97, 110, 99, 101, 100, 77, 97, 103, 105, 99, 83, 116, 97, 102, 102),
         string.char(69, 110, 104, 97, 110, 99, 101, 100, 32, 77, 97, 103, 105, 99, 32, 83, 116, 97, 102, 102),

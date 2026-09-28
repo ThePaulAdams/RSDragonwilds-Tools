@@ -37,7 +37,7 @@ An in-game HUD status dashboard and hotkey reference overlay for **RuneScape: Dr
 4. **Telekinetic Woodcraft** (`TelekineticWoodcraft`)
    - `[E]` / `[V]` Grab & Carry Logs
    - `[Z]` Mass-gather logs into a tight woodpile
-   - `[F6]` Cycle Splinter Spell AoE Radius
+   - `[F11]` Cycle Splinter Spell AoE Radius
 5. **Toolkit Mod Menu** (`ModMenu`)
    - `[F7]` Toggle Menu Overlay
    - In-game Pause Menu "TOOLKIT MODS" button
