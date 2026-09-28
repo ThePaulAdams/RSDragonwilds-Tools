@@ -683,12 +683,15 @@ local function FindNearbyChests(playerLoc)
 end
 
 -- Helper: Check if key is currently pressed down via PlayerController
+-- Returns nil (unknown) if the key state cannot be read, so callers can fall back to key-repeat timing
 local function IsGKeyDown(PC)
-    if not PC or not PC:IsValid() then return false end
+    if not PC then return nil end
     local ok, res = pcall(function()
+        if not PC:IsValid() then error("invalid PC") end
         return PC:IsInputKeyDown({ KeyName = FName("G") })
     end)
-    return ok and res
+    if not ok or type(res) ~= "boolean" then return nil end
+    return res
 end
 
 -- =========================================================================
@@ -2598,53 +2601,96 @@ end
 -- KEYBIND & TAP / HOLD STATE MACHINE
 -- =========================================================================
 local HoldState = {
-    PressTime = 0,
-    LastMagnetPulse = 0
+    Active = false,  -- True from key-down until G is released (key-repeat events are ignored meanwhile)
+    Resolved = true, -- Whether a hovered-item press has been handled as a tap or a hold yet
+    PressId = 0,
+    LastKeyEvent = 0 -- Time of the latest G key event, including ignored key-repeats
 }
 
-local function OnKeyG()
-    local now = os.clock()
-    local timeSinceLast = now - HoldState.PressTime
-
-    -- If this is an OS typematic repeat (fired rapidly after holding G for > 0.25s):
-    if timeSinceLast < 0.6 and HoldState.PressTime > 0 then
-        -- Key is being HELD!
-        if (now - HoldState.LastMagnetPulse) >= 0.20 then
-            HoldState.LastMagnetPulse = now
-            ExecuteGroundMagnetism()
-        end
-        return
-    end
-
-    -- Fresh key press!
-    HoldState.PressTime = now
-    HoldState.LastMagnetPulse = 0
-
-    Log(">>> Key [G] pressed!")
-
-    -- 1. Check if nearby chests exist to quick-stack & sort
+-- A normal tap: sort chests at base, or harvest and vacuum in the wild
+local function RunTapAction()
     local foundChests = ExecuteQuickStack()
-
-    -- 2. If NO chests found nearby (outside base), execute Ground Gathering & Magnetism immediately!
     if not foundChests then
         Log(">>> Outside base (no chests nearby): Harvesting & magnetizing ground resources...")
         ExecuteGroundMagnetism()
-    else
-        -- If at base, schedule Ground Magnetism if the user holds G past 250ms
-        local pressTimestamp = now
-        LoopAsync(250, function()
-            if HoldState.PressTime ~= pressTimestamp then return true end
-            ExecuteInGameThread(function()
-                if HoldState.PressTime == pressTimestamp then
-                    ExecuteGroundMagnetism()
-                end
-            end)
-            return true -- one-shot timer
-        end)
     end
 end
 
--- Keybind Registration: Normal G (Tap = Quick Stack, Hold on Item = Quick Pull)
+local function OnKeyG()
+    HoldState.LastKeyEvent = os.clock()
+
+    -- Ignore OS key-repeat events while G is still held from the last press
+    if HoldState.Active then return end
+
+    HoldState.PressId = HoldState.PressId + 1
+    local pressId = HoldState.PressId
+    local pressTime = os.clock()
+    HoldState.Active = true
+    HoldState.Resolved = false
+
+    Log(">>> Key [G] pressed!")
+
+    -- Hovering an item in the inventory or a chest: wait to see whether this is a hold (Quick Pull)
+    -- or a tap (normal sort). Nothing is moved until that is known.
+    local hover = nil
+    pcall(function() hover = GetCurrentHoverTarget() end)
+
+    if not hover then
+        HoldState.Resolved = true
+        RunTapAction()
+    end
+
+    -- Poll the real key state every 100ms. Holds are detected by polling, never by timing alone,
+    -- so a quick tap never harvests or vacuums at base.
+    local lastPulse = 0
+    LoopAsync(100, function()
+        if HoldState.PressId ~= pressId or not HoldState.Active then return true end
+        ExecuteInGameThread(function()
+            if HoldState.PressId ~= pressId or not HoldState.Active then return end
+            local now = os.clock()
+            local elapsed = now - pressTime
+            local held = IsGKeyDown(UEHelpers.GetPlayerController())
+            if held == nil then
+                -- Key state unreadable: G counts as held only while OS key-repeat events keep arriving
+                if HoldState.LastKeyEvent > pressTime then
+                    held = (now - HoldState.LastKeyEvent) < 0.3
+                elseif elapsed < 0.6 then
+                    return -- no repeat yet; undecided until the OS repeat delay has passed
+                else
+                    held = false
+                end
+            end
+
+            -- Safety cap in case the key state can never be read as released
+            if elapsed > 30.0 then held = false end
+
+            if not held then
+                HoldState.Active = false
+                if not HoldState.Resolved then
+                    HoldState.Resolved = true
+                    RunTapAction()
+                end
+                return
+            end
+
+            if elapsed < Config.HoldDuration then return end
+
+            if hover then
+                if not HoldState.Resolved then
+                    HoldState.Resolved = true
+                    Log(string.format(">>> [Hold G] Quick Pull: '%s'", tostring(hover.Name)))
+                    ExecuteQuickPull(hover)
+                end
+            elseif (now - lastPulse) >= 0.20 then
+                lastPulse = now
+                ExecuteGroundMagnetism()
+            end
+        end)
+        return HoldState.PressId ~= pressId or not HoldState.Active
+    end)
+end
+
+-- Keybind Registration: Normal G (Tap = Quick Stack, Hold over an item = Quick Pull, Hold elsewhere = Ground Magnetism)
 local keyCallback = function()
     ExecuteInGameThread(function()
         OnKeyG()
@@ -2660,7 +2706,7 @@ local okBind, errBind = pcall(function()
 end)
 
 if okBind then
-    Log(string.format("Keybind registered: [%s] -> Tap = Quick Stack, Hold = Ground Magnetism.", "G"))
+    Log(string.format("Keybind registered: [%s] -> Tap = Quick Stack, Hold over item = Quick Pull, Hold = Ground Magnetism.", "G"))
 else
     Log("ERROR registering keybind [G]: " .. tostring(errBind))
 end

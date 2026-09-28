@@ -43,7 +43,8 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 
 ### 5. Targeted Quick-Pull (Hover + `[Hold G]`)
 - Hover your mouse cursor over any item in your inventory or an open container and hold `[G]`.
-- The mod scans all nearby chests within 100m and retrieves every matching stack directly into your backpack.
+- The mod scans all nearby chests within 100m and retrieves every matching stack directly into your backpack, stopping when your backpack is full.
+- While hovering an item, nothing is sorted or moved until QuickStack knows whether you tapped (sort) or held (pull).
 
 ### 6. Base Relocation Virtual Crate (`[Ctrl + G]` / `[Shift + G]`)
 - **Pack Base (`Ctrl + G`)**: Automatically sweeps all loose items on the ground within **150 meters** and packs them safely into a persistent virtual relocation crate.
