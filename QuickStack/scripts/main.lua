@@ -663,39 +663,106 @@ end
 -- 2) Direct srcChest.Inventory:MoveItem
 -- 3) Bounce through an empty player backpack slot (guaranteed engine authority)
 local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZero, amount, PC, playerInv)
-    if not srcChest or not destChest or srcSlotZero == nil or destSlotZero == nil or amount <= 0 then
+    if not srcChest or not destChest or srcSlotZero == nil or amount <= 0 then
         return false
     end
     local movedOk = false
-    local err1, err2, err3 = nil, nil, nil
+    local errLog = {}
 
-    -- Method 1: Try PC.InventoryController
+    -- Method 1: Try PC.InventoryController (engine native UI controller)
     local invCtrl = GetInventoryController(PC)
     if invCtrl and invCtrl:IsValid() then
         local ok, res = pcall(function()
-            return invCtrl:MoveItemBetweenInventories(srcChest.Inventory, srcSlotZero, destChest.Inventory, destSlotZero)
+            if destSlotZero ~= nil then
+                return invCtrl:MoveItemBetweenInventories(srcChest.Inventory, srcSlotZero, destChest.Inventory, destSlotZero)
+            else
+                return invCtrl:MoveItemBetweenInventoriesAnySlot(srcChest.Inventory, srcSlotZero, destChest.Inventory)
+            end
         end)
         if ok and res then
-            movedOk = true
+            return true
         else
-            err1 = tostring(res)
+            table.insert(errLog, "invCtrl:" .. tostring(res))
         end
     end
 
     -- Method 2: Try direct chest-to-chest MoveItem
-    if not movedOk and srcChest.Inventory and srcChest.Inventory:IsValid() and destChest.Inventory and destChest.Inventory:IsValid() then
+    if srcChest.Inventory and srcChest.Inventory:IsValid() and destChest.Inventory and destChest.Inventory:IsValid() then
         local ok, res = pcall(function()
-            return srcChest.Inventory:MoveItem(srcSlotZero, destChest.Inventory, destSlotZero, PC, amount)
+            return srcChest.Inventory:MoveItem(srcSlotZero, destChest.Inventory, destSlotZero or 0, PC, amount)
         end)
         if ok and res then
-            movedOk = true
+            return true
         else
-            err2 = tostring(res)
+            table.insert(errLog, "srcMoveItem:" .. tostring(res))
         end
     end
 
-    -- Method 3: Bounce through an empty player backpack slot
-    if not movedOk and playerInv and playerInv:IsValid() then
+    -- Method 3: Direct Native Transfer via AddItemByData + RemoveFromSlot (100% reliable without container UI)
+    if srcChest.Inventory and srcChest.Inventory:IsValid() and destChest.Inventory and destChest.Inventory:IsValid() then
+        local srcItem = nil
+        pcall(function() srcItem = srcChest.Inventory.ItemSlots[srcSlotZero + 1] end)
+        if not IsValidItem(srcItem) and srcChest.Slots and srcChest.Slots[srcSlotZero] then
+            srcItem = srcChest.Slots[srcSlotZero].Item
+        end
+
+        if IsValidItem(srcItem) then
+            local itemData = nil
+            pcall(function() itemData = srcItem.ItemData end)
+            if itemData and itemData:IsValid() then
+                local durability = 1.0
+                pcall(function() durability = srcItem:GetDurability() or 1.0 end)
+
+                local added = false
+                if destSlotZero ~= nil then
+                    pcall(function()
+                        added = destChest.Inventory:AddItemByDataToSlot(itemData, amount, destSlotZero, durability, {})
+                    end)
+                end
+                if not added then
+                    pcall(function()
+                        added = destChest.Inventory:AddItemByData(itemData, amount, durability, {})
+                    end)
+                end
+
+                if added then
+                    local removed = false
+                    pcall(function()
+                        removed = srcChest.Inventory:RemoveFromSlot(srcSlotZero, amount, PC)
+                    end)
+                    if not removed then
+                        pcall(function()
+                            removed = srcChest.Inventory:RemoveItem(srcItem)
+                        end)
+                    end
+                    if not removed then
+                        pcall(function()
+                            removed = srcChest.Inventory:RemoveItemByData(itemData, amount)
+                        end)
+                    end
+
+                    if removed then
+                        return true
+                    else
+                        table.insert(errLog, "directRemoveFailed")
+                        -- Rollback added items if removal failed
+                        pcall(function()
+                            if destSlotZero ~= nil then
+                                destChest.Inventory:RemoveFromSlot(destSlotZero, amount, PC)
+                            else
+                                destChest.Inventory:RemoveItemByData(itemData, amount)
+                            end
+                        end)
+                    end
+                else
+                    table.insert(errLog, "directAddFailed")
+                end
+            end
+        end
+    end
+
+    -- Method 4: Bounce through player backpack slot (with temporary unblocker if backpack is full)
+    if playerInv and playerInv:IsValid() then
         local emptyPlayerSlot = nil
         local hotbarCount = 0
         pcall(function() hotbarCount = playerInv.NumberOfQuickActionSlots or 8 end)
@@ -712,6 +779,29 @@ local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZ
             end
         end
 
+        local borrowedSlot = nil
+        -- If player backpack is 100% full, temporarily stash 1 non-combat backpack item into destSlotZero
+        if emptyPlayerSlot == nil and destSlotZero ~= nil then
+            for pIdx = hotbarCount + 1, pSlotCount do
+                local pSlotZero = pIdx - 1
+                local pItem = nil
+                pcall(function() pItem = playerInv.ItemSlots[pIdx] end)
+                if IsValidItem(pItem) and not IsItemProtectedFromDeposit(pItem) then
+                    local pCount = 1
+                    pcall(function() pCount = pItem:GetStackSize() end)
+                    local stashed = false
+                    pcall(function()
+                        stashed = playerInv:MoveItem(pSlotZero, destChest.Inventory, destSlotZero, PC, pCount)
+                    end)
+                    if stashed then
+                        borrowedSlot = { PlayerSlot = pSlotZero, Count = pCount }
+                        emptyPlayerSlot = pSlotZero
+                        break
+                    end
+                end
+            end
+        end
+
         if emptyPlayerSlot ~= nil then
             local toPlayerOk = false
             pcall(function()
@@ -719,28 +809,34 @@ local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZ
             end)
             if toPlayerOk then
                 pcall(function()
-                    movedOk = playerInv:MoveItem(emptyPlayerSlot, destChest.Inventory, destSlotZero, PC, amount)
+                    movedOk = playerInv:MoveItem(emptyPlayerSlot, destChest.Inventory, destSlotZero or 0, PC, amount)
                 end)
                 if not movedOk then
-                    -- Destination rejected, move back to source chest
                     pcall(function()
                         playerInv:MoveItem(emptyPlayerSlot, srcChest.Inventory, srcSlotZero, PC, amount)
                     end)
                 end
-            else
-                err3 = "toPlayerOk failed"
             end
-        else
-            err3 = "No empty player backpack slot available for bounce"
+
+            -- If we borrowed a slot by stashing an item into destChest, restore the player's original item!
+            if borrowedSlot then
+                pcall(function()
+                    playerInv:MoveItem(emptyPlayerSlot, destChest.Inventory, destSlotZero, PC, borrowedSlot.Count)
+                end)
+            end
+
+            if movedOk then
+                return true
+            end
         end
     end
 
-    if not movedOk and Config.DebugLog then
-        Log(string.format(">>> MoveItemBetweenChests FAILED: amount=%d, srcSlot=%s, destSlot=%s, err1=%s, err2=%s, err3=%s",
-            amount, tostring(srcSlotZero), tostring(destSlotZero), tostring(err1), tostring(err2), tostring(err3)))
+    if Config.DebugLog then
+        Log(string.format(">>> MoveItemBetweenChests FAILED: amount=%d, srcSlot=%s, destSlot=%s, errors=[%s]",
+            amount, tostring(srcSlotZero), tostring(destSlotZero), table.concat(errLog, ", ")))
     end
 
-    return movedOk
+    return false
 end
 
 -- Reorganize misplaced items between nearby chests so similar items group into the same chests
