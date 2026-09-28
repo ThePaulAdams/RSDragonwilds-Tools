@@ -40,9 +40,9 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing QuickStack Mod with Smart Category Sorting...")
-Log("  [Tap G]    : Auto-stack & sort inventory into chests (all food in food chest, wood in wood chest, etc.)!")
-Log("  [Hold G]   : Ground Object Magnetism -> Pull all items (flax, ore, loot) within 40m into inventory!")
+Log("Initializing QuickStack Mod with Smart Category Sorting & Wild Gathering...")
+Log("  [Tap G]    : At Base: Auto-stack & sort into matching chests / In Wild: Instant harvest & pull wild plants (onions, dwellberries, flax) & ground loot!")
+Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all wild resources & ground items as you run!")
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items organized into nearby chests!")
 Log("==========================================")
@@ -660,8 +660,8 @@ local function ExecuteQuickStack()
 
     local nearbyChests = FindNearbyChests(playerLoc)
     if #nearbyChests == 0 then
-        Log(string.format("No chests found within %.1f meters.", Config.SearchRadius / 100.0))
-        return
+        Log(string.format("QuickStack: No chests found within %.1f meters.", Config.SearchRadius / 100.0))
+        return false
     end
 
     if Config.DebugLog then
@@ -869,6 +869,7 @@ local function ExecuteQuickStack()
     else
         Log("No matching items found in nearby chests to stack.")
     end
+    return true
 end
 
 -- =========================================================================
@@ -1144,44 +1145,216 @@ local function ExecuteQuickPull(target)
 end
 
 -- =========================================================================
--- WIDE LOCAL GROUND ITEM MAGNETISM (Hold G)
+-- WIDE LOCAL GROUND ITEM MAGNETISM & WILD RESOURCE HARVESTING (G)
 -- =========================================================================
-local function ExecuteGroundMagnetism()
-    local PC = UEHelpers.GetPlayerController()
-    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then
-        return
+
+-- List of harvestable/gatherable resource classes (native C++ & specific Blueprints)
+local HarvestableResourceClasses = {
+    -- Native C++ classes (automatically matches derived blueprints in UE4SS)
+    "BaseInteractableResource",
+    "GatherableResource",
+    "HarvestableResource",
+    "SalvageableResource",
+    -- Explicit Blueprints to guarantee 100% coverage
+    "BP_Spawner_Onion_C",
+    "BP_Spawner_Flax_C",
+    "BP_Spawner_Cabbage_C",
+    "BP_Spawner_Pumpkin_C",
+    "BP_Spawner_Pumpkin_02_C",
+    "BP_Spawner_Pumpkin_03_C",
+    "BP_Spawner_Mushroom_C",
+    "BP_Spawner_BittercapMushroom_C",
+    "BP_Spawner_Marrentil_C",
+    "BP_Spawner_Harralander_C",
+    "BP_Spawner_AshBranch_01_C",
+    "BP_Spawner_AshBranch_02_C",
+    "BP_Spawner_AshBranch_03_C",
+    "BP_Spawner_Stone_C",
+    "BP_Spawner_Swamp_Tar_C",
+    "BP_Spawner_AnimaInfusedBark_C",
+    "BP_DwellberryBush_C",
+    "BP_RedberryBush_C",
+    "BP_CadavaBush_C"
+}
+
+-- Helper to get a human-readable name for a harvestable resource actor
+local function GetResourceActorName(actor)
+    local name = nil
+    pcall(function()
+        if actor.GetDisplayName then
+            local dn = actor:GetDisplayName()
+            if dn then name = dn:ToString() end
+        end
+    end)
+    if not name or name == "" then
+        pcall(function()
+            if actor.DisplayNameOverride then
+                name = actor.DisplayNameOverride:ToString()
+            end
+        end)
+    end
+    if not name or name == "" then
+        pcall(function()
+            if actor.ItemData and actor.ItemData:IsValid() and actor.ItemData.ItemName then
+                name = actor.ItemData.ItemName:ToString()
+            end
+        end)
+    end
+    if not name or name == "" then
+        pcall(function()
+            name = actor:GetClass():GetName():gsub("^BP_Spawner_", ""):gsub("^BP_", ""):gsub("_C$", "")
+        end)
+    end
+    return name or "Resource"
+end
+
+-- Phase 1: Harvest nearby wild resources (onions, dwellberries, flax, pumpkins, branches, stones, herbs)
+local function HarvestNearbyResources(pawn, playerLoc, radius)
+    local radiusSq = radius * radius
+    local seen = {}
+    local harvestedCount = 0
+    local harvestedSummary = {}
+
+    local pWorld = nil
+    pcall(function() pWorld = pawn:GetWorld() end)
+
+    for _, className in ipairs(HarvestableResourceClasses) do
+        local ok, actors = pcall(function() return FindAllOf(className) end)
+        if ok and actors then
+            for _, actor in ipairs(actors) do
+                if IsValidWorldActor(actor) then
+                    local addr = actor:GetAddress()
+                    if not seen[addr] then
+                        seen[addr] = true
+
+                        local sameWorld = true
+                        if pWorld then
+                            pcall(function()
+                                local aWorld = actor:GetWorld()
+                                if aWorld and aWorld:IsValid() and pWorld:IsValid() then
+                                    sameWorld = (aWorld:GetAddress() == pWorld:GetAddress())
+                                end
+                            end)
+                        end
+
+                        if sameWorld then
+                            local loc = nil
+                            pcall(function() loc = actor:K2_GetActorLocation() end)
+                            if loc then
+                                local dx = loc.X - playerLoc.X
+                                local dy = loc.Y - playerLoc.Y
+                                local dz = loc.Z - playerLoc.Z
+                                local distSq = dx * dx + dy * dy + dz * dz
+
+                                if distSq <= radiusSq then
+                                    -- Check if resource is available (not depleted/already harvested)
+                                    local isAvail = true
+                                    pcall(function()
+                                        if actor.IsResourceAvailable then
+                                            isAvail = actor:IsResourceAvailable()
+                                        end
+                                    end)
+
+                                    if isAvail then
+                                        local didHarvest = false
+
+                                        -- Method 1: Plant's InteractionComponent
+                                        pcall(function()
+                                            local comp = actor.InteractionComponent
+                                            if comp and comp:IsValid() then
+                                                local canInteract = true
+                                                if comp.K2_IsInteractable then
+                                                    canInteract = comp:K2_IsInteractable(pawn)
+                                                end
+                                                if canInteract then
+                                                    comp:K2_OnInteraction(pawn)
+                                                    didHarvest = true
+                                                end
+                                            end
+                                        end)
+
+                                        -- Method 2 & 3: Actor-level OnInteraction / DropItems / HandleInteraction
+                                        pcall(function()
+                                            local stillAvail = true
+                                            if actor.IsResourceAvailable then
+                                                stillAvail = actor:IsResourceAvailable()
+                                            else
+                                                stillAvail = not didHarvest
+                                            end
+
+                                            if stillAvail then
+                                                if actor.OnInteraction then
+                                                    actor:OnInteraction(pawn)
+                                                    didHarvest = true
+                                                elseif actor.DropItems then
+                                                    local dropped = actor:DropItems(pawn)
+                                                    if dropped then didHarvest = true end
+                                                elseif actor.HandleInteraction then
+                                                    actor:HandleInteraction(pawn)
+                                                    didHarvest = true
+                                                end
+                                            end
+                                        end)
+
+                                        -- Method 3: Mark resource unavailable if harvested
+                                        pcall(function()
+                                            if didHarvest and actor.ForceResourceUnavailable and actor.IsResourceAvailable and actor:IsResourceAvailable() then
+                                                actor:ForceResourceUnavailable(pawn)
+                                            end
+                                        end)
+
+                                        if didHarvest then
+                                            harvestedCount = harvestedCount + 1
+                                            local rName = GetResourceActorName(actor)
+                                            harvestedSummary[rName] = (harvestedSummary[rName] or 0) + 1
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
 
-    local pawn = PC.Pawn
-    local playerLoc = nil
-    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
-    if not playerLoc then return end
+    if harvestedCount > 0 and Config.DebugLog then
+        local details = {}
+        for name, count in pairs(harvestedSummary) do
+            table.insert(details, string.format("%dx %s", count, name))
+        end
+        Log(string.format(">>> [Wild Harvest] Harvested %d resource(s): %s",
+            harvestedCount, table.concat(details, ", ")))
+    end
 
-    local radius = Config.GroundMagnetRadius or 4000.0 -- 40 meters
+    return harvestedCount
+end
+
+-- Phase 2: Magnetize all loose WorldItem actors on the ground into the player's inventory
+local function MagnetizeWorldItems(pawn, playerLoc, radius)
     local radiusSq = radius * radius
-
-    local pawnLevel = nil
-    pcall(function() pawnLevel = pawn:GetLevel() end)
+    local pWorld = nil
+    pcall(function() pWorld = pawn:GetWorld() end)
 
     local okItems, foundItems = pcall(function() return FindAllOf("WorldItem") end)
-    if not okItems or not foundItems then return end
+    if not okItems or not foundItems then return 0 end
 
     local magnetizedCount = 0
     local magnetizedNames = {}
 
     for _, actor in ipairs(foundItems) do
         if IsValidWorldActor(actor) then
-            local sameLevel = true
-            if pawnLevel then
+            local sameWorld = true
+            if pWorld then
                 pcall(function()
-                    local aLevel = actor:GetLevel()
-                    if aLevel and aLevel:IsValid() and pawnLevel:IsValid() then
-                        sameLevel = (aLevel:GetAddress() == pawnLevel:GetAddress())
+                    local aWorld = actor:GetWorld()
+                    if aWorld and aWorld:IsValid() and pWorld:IsValid() then
+                        sameWorld = (aWorld:GetAddress() == pWorld:GetAddress())
                     end
                 end)
             end
 
-            if sameLevel then
+            if sameWorld then
                 local loc = nil
                 pcall(function() loc = actor:K2_GetActorLocation() end)
                 if loc then
@@ -1262,6 +1435,43 @@ local function ExecuteGroundMagnetism()
         Log(string.format(">>> [Ground Magnet] Magnetized %d item(s) towards player! (%s)",
             magnetizedCount, table.concat(details, ", ")))
     end
+
+    return magnetizedCount
+end
+
+local function ExecuteGroundMagnetism()
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then
+        return
+    end
+
+    local pawn = PC.Pawn
+    local playerLoc = nil
+    pcall(function() playerLoc = pawn:K2_GetActorLocation() end)
+    if not playerLoc then return end
+
+    local radius = Config.GroundMagnetRadius or 4000.0 -- 40 meters
+
+    -- 1. Harvest wild plants, herbs, bushes (onions, dwellberries, flax, etc.)
+    HarvestNearbyResources(pawn, playerLoc, radius)
+
+    -- 2. Magnetize existing ground items and items that dropped immediately
+    MagnetizeWorldItems(pawn, playerLoc, radius)
+
+    -- 3. Follow-up micro-pulse after 150ms to sweep up any items that took a frame to drop
+    LoopAsync(150, function()
+        ExecuteInGameThread(function()
+            local PC2 = UEHelpers.GetPlayerController()
+            if PC2 and PC2:IsValid() and PC2.Pawn and PC2.Pawn:IsValid() then
+                local loc2 = nil
+                pcall(function() loc2 = PC2.Pawn:K2_GetActorLocation() end)
+                if loc2 then
+                    MagnetizeWorldItems(PC2.Pawn, loc2, radius)
+                end
+            end
+        end)
+        return true -- one-shot timer
+    end)
 end
 
 -- =========================================================================
@@ -1285,8 +1495,8 @@ local function ExecutePackRelocationCrate()
     local radius = Config.RelocationPackRadius or 15000.0 -- 150 meters
     local radiusSq = radius * radius
 
-    local pawnLevel = nil
-    pcall(function() pawnLevel = pawn:GetLevel() end)
+    local pawnWorld = nil
+    pcall(function() pawnWorld = pawn:GetWorld() end)
 
     local okItems, foundItems = pcall(function() return FindAllOf("WorldItem") end)
     if not okItems or not foundItems then
@@ -1297,17 +1507,17 @@ local function ExecutePackRelocationCrate()
     local candidateActors = {}
     for _, actor in ipairs(foundItems) do
         if IsValidWorldActor(actor) then
-            local sameLevel = true
-            if pawnLevel then
+            local sameWorld = true
+            if pawnWorld then
                 pcall(function()
-                    local aLevel = actor:GetLevel()
-                    if aLevel and aLevel:IsValid() and pawnLevel:IsValid() then
-                        sameLevel = (aLevel:GetAddress() == pawnLevel:GetAddress())
+                    local aWorld = actor:GetWorld()
+                    if aWorld and aWorld:IsValid() and pawnWorld:IsValid() then
+                        sameWorld = (aWorld:GetAddress() == pawnWorld:GetAddress())
                     end
                 end)
             end
 
-            if sameLevel then
+            if sameWorld then
                 local loc = nil
                 pcall(function() loc = actor:K2_GetActorLocation() end)
                 if loc then
@@ -1582,22 +1792,28 @@ local function OnKeyG()
     HoldState.PressTime = now
     HoldState.LastMagnetPulse = 0
 
-    Log(">>> Key [G] pressed! Executing Quick Stack & Smart Category Sorting...")
+    Log(">>> Key [G] pressed!")
 
-    -- 1. Execute Quick Stack & Chest Sort IMMEDIATELY!
-    ExecuteQuickStack()
+    -- 1. Check if nearby chests exist to quick-stack & sort
+    local foundChests = ExecuteQuickStack()
 
-    -- 2. Schedule Ground Magnetism if the user continues holding G past 250ms
-    local pressTimestamp = now
-    LoopAsync(250, function()
-        if HoldState.PressTime ~= pressTimestamp then return true end
-        ExecuteInGameThread(function()
-            if HoldState.PressTime == pressTimestamp then
-                ExecuteGroundMagnetism()
-            end
+    -- 2. If NO chests found nearby (outside base), execute Ground Gathering & Magnetism immediately!
+    if not foundChests then
+        Log(">>> Outside base (no chests nearby): Harvesting & magnetizing ground resources...")
+        ExecuteGroundMagnetism()
+    else
+        -- If at base, schedule Ground Magnetism if the user holds G past 250ms
+        local pressTimestamp = now
+        LoopAsync(250, function()
+            if HoldState.PressTime ~= pressTimestamp then return true end
+            ExecuteInGameThread(function()
+                if HoldState.PressTime == pressTimestamp then
+                    ExecuteGroundMagnetism()
+                end
+            end)
+            return true -- one-shot timer
         end)
-        return true -- one-shot timer
-    end)
+    end
 end
 
 -- Keybind Registration: Normal G (Tap = Quick Stack, Hold on Item = Quick Pull)
