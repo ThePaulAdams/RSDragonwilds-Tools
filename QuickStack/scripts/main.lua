@@ -7,8 +7,8 @@ local Config = {
     Key = Key.G,
     Modifier = nil, -- Optional modifier key, e.g. ModifierKey.CONTROL or nil for just G
 
-    -- Maximum distance (in Unreal Units) to search for chests. 6000 uu = 60 meters.
-    SearchRadius = 6000.0,
+    -- Maximum distance (in Unreal Units) to search for chests. 10000 uu = 100 meters.
+    SearchRadius = 10000.0,
 
     -- Maximum distance (in Unreal Units) to magnetize ground items into inventory. 4000 uu = 40 meters.
     GroundMagnetRadius = 4000.0,
@@ -54,6 +54,37 @@ Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all w
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items organized into nearby chests!")
 Log("==========================================")
+
+-- Helper: Safely get the name of any UObject, UClass, or UActorComponent without TrivialObject crashes
+local function GetSafeName(obj)
+    if not obj then return "" end
+    local name = ""
+    pcall(function()
+        if obj.GetFName then
+            name = obj:GetFName():ToString()
+        elseif obj.GetFullName then
+            name = obj:GetFullName()
+        end
+    end)
+    return name or ""
+end
+
+-- Helper: Safely get class name of any UObject without TrivialObject crashes
+local function GetSafeClassName(obj)
+    if not obj then return "" end
+    local clsName = ""
+    pcall(function()
+        local cls = obj:GetClass()
+        if cls then
+            if cls.GetFName then
+                clsName = cls:GetFName():ToString()
+            elseif cls.GetFullName then
+                clsName = cls:GetFullName()
+            end
+        end
+    end)
+    return clsName or ""
+end
 
 -- Persistent Virtual Storage for Base Relocation (cross-zone persistent, infinite capacity)
 local RelocationCrate = {}
@@ -113,7 +144,7 @@ local function GetItemName(item)
 
     pcall(function()
         if item.ItemData and item.ItemData:IsValid() then
-            name = item.ItemData:GetName()
+            name = GetSafeName(item.ItemData)
         end
     end)
     return name or "Item"
@@ -187,7 +218,7 @@ local function GetItemCategory(itemOrData)
 
     if itemData and itemData:IsValid() then
         pcall(function() path = itemData:GetPathName():lower() end)
-        pcall(function() className = itemData:GetClass():GetName():lower() end)
+        className = GetSafeClassName(itemData):lower()
         pcall(function()
             if itemData.Category and itemData.Category.TagName then
                 tagName = itemData.Category.TagName:ToString():lower()
@@ -335,9 +366,9 @@ local function IsItemProtectedFromDeposit(item)
     pcall(function()
         if item.ItemData and item.ItemData:IsValid() then
             path = item.ItemData:GetPathName():lower()
-            className = item.ItemData:GetClass():GetName():lower()
+            className = GetSafeClassName(item.ItemData):lower()
         elseif item.GetClass then
-            className = item:GetClass():GetName():lower()
+            className = GetSafeClassName(item):lower()
         end
     end)
 
@@ -460,10 +491,8 @@ end
 -- Helper: Check if an actor is a legitimate chest or storage container
 local function IsChestActor(actor)
     if not actor then return false end
-    local className = ""
-    pcall(function() className = actor:GetClass():GetName():lower() end)
-    local actorName = ""
-    pcall(function() actorName = actor:GetName():lower() end)
+    local className = GetSafeClassName(actor):lower()
+    local actorName = GetSafeName(actor):lower()
 
     -- STRICT BLACKLIST: Never touch any crafting stations, processors, furnaces, or utility actors!
     local disallowedKeywords = {
@@ -500,7 +529,7 @@ local function FindNearbyChests(playerLoc)
     local nearbyChests = {}
     local seenAddresses = {}
 
-    local function RegisterCandidate(chestActor, chestInv)
+    local function RegisterCandidate(chestActor, chestInv, forceInclude)
         if not chestActor or not chestInv or not chestInv:IsValid() then return end
         local addr = chestActor:GetAddress()
         if seenAddresses[addr] then return end
@@ -509,17 +538,20 @@ local function FindNearbyChests(playerLoc)
 
         local loc = nil
         pcall(function() loc = chestActor:K2_GetActorLocation() end)
-        if not loc then return end
 
-        local dx = loc.X - playerLoc.X
-        local dy = loc.Y - playerLoc.Y
-        local dz = loc.Z - playerLoc.Z
-        local distSq = dx * dx + dy * dy + dz * dz
+        local distSq = 0
+        local dist = 0
+        if loc and playerLoc then
+            local dx = loc.X - playerLoc.X
+            local dy = loc.Y - playerLoc.Y
+            local dz = loc.Z - playerLoc.Z
+            distSq = dx * dx + dy * dy + dz * dz
+            dist = math.sqrt(distSq)
+        end
 
-        if distSq <= maxRadiusSq then
+        if forceInclude or (loc and distSq <= maxRadiusSq) then
             seenAddresses[addr] = true
-            local actorClass = ""
-            pcall(function() actorClass = chestActor:GetClass():GetName():lower() end)
+            local actorClass = GetSafeClassName(chestActor):lower()
             local preferredCat = nil
             if actorClass:find("armour") or actorClass:find("armor") or actorClass:find("rack") or actorClass:find("mannequin") or actorClass:find("stand") then
                 preferredCat = ItemCategories.EQUIPMENT
@@ -530,10 +562,28 @@ local function FindNearbyChests(playerLoc)
             table.insert(nearbyChests, {
                 Actor = chestActor,
                 Inventory = chestInv,
-                Distance = math.sqrt(distSq),
+                Distance = dist,
                 PreferredCategory = preferredCat,
                 ActorName = actorClass
             })
+        end
+    end
+
+    -- Scan Method 0: Currently Open Chest via WorldActorInventoryUIAPI
+    local okUI, uis = pcall(function() return FindAllOf("WorldActorInventoryUIAPI") end)
+    if okUI and uis then
+        for _, ui in ipairs(uis) do
+            if ui and ui:IsValid() then
+                local comp = nil
+                pcall(function() comp = ui:GetInventoryComponent() end)
+                if comp and comp:IsValid() then
+                    local owner = nil
+                    pcall(function() owner = comp:GetOwner() end)
+                    if owner and IsValidWorldActor(owner) and IsChestActor(owner) then
+                        RegisterCandidate(owner, comp, true)
+                    end
+                end
+            end
         end
     end
 
@@ -1806,7 +1856,7 @@ local function GetResourceActorName(actor)
     end
     if not name or name == "" then
         pcall(function()
-            name = actor:GetClass():GetName():gsub("^BP_Spawner_", ""):gsub("^BP_", ""):gsub("_C$", "")
+            name = GetSafeClassName(actor):gsub("^BP_Spawner_", ""):gsub("^BP_", ""):gsub("_C$", "")
         end)
     end
     return name or "Resource"

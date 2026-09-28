@@ -16,7 +16,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | Tool | Category | Hotkeys | Description |
 | :--- | :--- | :--- | :--- |
 | [**OSRSMinimap**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, and real-time resource tracking (ores, trees, essence, fishing). |
-| [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | `[G]` | One-key smart inventory depositing into nearby chests within 25m. Only deposits into existing item stacks and protects your active hotbar. |
+| [**QuickStack**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/QuickStack/README.md) | Quality of Life | `[G]`, `[Ctrl+G]`, `[Shift+G]` | Smart base inventory sorting into dedicated category chests, 48-slot chest auto-upgrades, 40m wild resource gathering & ground vacuum, and 150m Base Relocation Crate. |
 | [**EnhancedReticle**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
 | [**TelekineticWoodcraft**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`F6`). |
 | [**ModMenu**](file:///C:/Users/admin/Documents/antigravity/RSDragonwilds-Tools/ModMenu/README.md) | Dashboard & UI | `[F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[F8]`. |
@@ -31,7 +31,10 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[ESC]`** | **Pause Menu** | Pausing automatically displays the active Toolkit Mod Dashboard |
 | **`[F8]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay anytime |
 | **`[Num Lock]`** | **AutoRun** | Toggle continuous camera-forward autorun on / off |
-| **`[G]`** | **Quick Stack** | Quick-stack matching inventory items to all nearby chests (25m) |
+| **`[G]` (Tap)** | **Quick Stack** | **At Base:** Auto-sort items into dedicated category chests & upgrade to 48 slots<br>**In Wild:** Instant harvest & ground magnetism for nearby plants/loot |
+| **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
+| **`[Ctrl + G]`** | **Quick Stack** | **Pack Base:** Vacuum all ground items within 150m into virtual Relocation Crate |
+| **`[Shift + G]`** | **Quick Stack** | **Unpack Base:** Deposit all Relocation Crate items categorized into nearby chests |
 | **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |
 | **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons on / off |
 | **`[F4]`** | **Enhanced Reticle** | Toggle high-visibility crosshair on / off |
@@ -111,9 +114,12 @@ If you cloned or downloaded this repository:
 - **Zero Performance Impact**: Widget remains collapsed and uses 0 CPU cycles during normal gameplay.
 
 ### 2. QuickStack (`QuickStack`)
-- **Smart Deposit**: Scans all nearby chests (25m radius) and deposits items from your backpack that already exist in those chests.
-- **Hotbar Protection**: Your active weapons, tools, and potions on the hotbar are never deposited.
-- **Audio Feedback**: Triggers authentic in-game chest sound effects upon successful stack.
+- **In-Memory Category Consolidation**: Pulls items from nearby chests into an in-memory buffer, merges duplicate/split stacks, and redistributes them strictly into dedicated category chests (**FOOD**, **WOOD**, **MINING**, **FARMING**, **EQUIPMENT**, **MAGIC**, **MISC**).
+- **48-Slot Highest Tier Upgrade**: Dynamically upgrades all detected chests and crates to 48 slots (`MaxSlotCount = 48`) with high-tier static meshes in-place.
+- **Wild Gathering & Ground Magnetism (`Hold G`)**: Sweeps a 40m radius while sprinting, auto-harvesting wild crops (dwellberries, onions, flax, herbs, fallen wood, stones) directly into your backpack.
+- **Base Relocation Virtual Crate (`Ctrl+G` / `Shift+G`)**: Pack all ground items within 150m into a persistent virtual crate, then unpack them organized into nearby chests with one keypress.
+- **Targeted QuickPull**: Hover any item in your inventory or chest and hold `G` to pull all matching stacks from all nearby chests directly into your inventory.
+- **Strict Safe Guards**: Zero-tolerance blacklist prevents any crafting stations, blast furnaces, smelters, kilns, or campfires from being touched. Hotbar, combat ammunition, and runes are 100% protected.
 
 ### 3. OSRS Minimap (`OSRSMinimap`)
 - **Compass Rotation**: Player icon remains locked pointing UP while the world map rotates and pans under you, matching traditional OSRS navigation.
@@ -130,7 +136,10 @@ If you cloned or downloaded this repository:
 - **Single Log Drag (`E` or `V`)**: Aim at any felled tree or cut log to telekinetically carry it in front of you. Press again to settle it flat on the ground.
 - **Log Magnet Mass Gathering (`Z`)**: Pulls all logs within 150 meters into a compact, flat pyramid woodpile directly in front of you.
 - **Splinter Spell Multiplier (`F6`)**: Boosts the Splinter spell explosion radius (1.0x, 2.5x, 5.0x) to harvest an entire woodpile in a single cast.
->>>>>>> Stashed changes
+
+### 6. AutoRun (`AutoRun`)
+- **Hands-Free Traversal (`Num Lock`)**: Continuous camera-aligned movement without needing to hold W or Shift.
+- **Natural Cancellation**: Seamlessly cancels on backward input (S), manual pause, or UI interaction.
 
 ---
 
