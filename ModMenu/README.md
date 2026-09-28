@@ -19,7 +19,7 @@ An in-game HUD status dashboard and hotkey reference overlay for **RuneScape: Dr
 | Keybind | Action | Description |
 | :--- | :--- | :--- |
 | **`[ESC]`** | **Pause Game** | Pausing the game automatically presents the Toolkit Mod Dashboard on the right side of the screen. |
-| **`[F8]`** | **Toggle Mod Menu** | Opens or closes the in-game toolkit dashboard overlay anytime during active gameplay. |
+| **`[Ctrl+F8]`** | **Toggle Mod Menu** | Opens or closes the in-game toolkit dashboard overlay anytime during active gameplay. |
 
 ---
 
@@ -37,9 +37,9 @@ An in-game HUD status dashboard and hotkey reference overlay for **RuneScape: Dr
 4. **Telekinetic Woodcraft** (`TelekineticWoodcraft`)
    - `[E]` / `[V]` Grab & Carry Logs
    - `[Z]` Mass-gather logs into a tight woodpile
-   - `[F6]` Cycle Splinter Spell AoE Radius
+   - `[Shift+F6]` Cycle Splinter Spell AoE Radius
 5. **Toolkit Mod Menu** (`ModMenu`)
-   - `[F7]` Toggle Menu Overlay
+   - `[Ctrl+F8]` Toggle Menu Overlay
    - In-game Pause Menu "TOOLKIT MODS" button
 
 ---
