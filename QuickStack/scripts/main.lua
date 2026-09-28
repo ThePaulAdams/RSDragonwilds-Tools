@@ -304,13 +304,19 @@ local function GetItemCategory(itemOrData)
             return ItemCategories.MAGIC
         end
 
-        -- Equipment keywords
+        -- Equipment & Armour keywords
         if name:find("sword") or name:find("axe") or name:find("pickaxe") or name:find("shield") or
-           name:find("bow") or name:find("arrow") or name:find("helmet") or name:find("helm") or
+           name:find("bow") or name:find("helmet") or name:find("helm") or name:find("coif") or
            name:find("armour") or name:find("armor") or name:find("boots") or name:find("gloves") or
            name:find("legs") or name:find("cuirass") or name:find("ring") or name:find("amulet") or
            name:find("necklace") or name:find("cape") or name:find("staff") or name:find("wand") or
-           name:find("dagger") or name:find("spear") or name:find("hammer") or name:find("knife") then
+           name:find("dagger") or name:find("spear") or name:find("hammer") or name:find("knife") or
+           name:find("greaves") or name:find("gauntlet") or name:find("bracer") or name:find("vambrace") or
+           name:find("robe") or name:find("tunic") or name:find("chainmail") or name:find("plate") or
+           name:find("platebody") or name:find("plateleg") or name:find("mail") or name:find("hood") or
+           name:find("hauberk") or name:find("sabaton") or name:find("pauldron") or name:find("gorget") or
+           name:find("visor") or name:find("chap") or name:find("cowl") or name:find("chestplate") or
+           name:find("torso") or name:find("buckler") or name:find("quiver") then
             return ItemCategories.EQUIPMENT
         end
     end
@@ -473,10 +479,21 @@ local function FindNearbyChests(playerLoc)
 
         if distSq <= maxRadiusSq then
             seenAddresses[addr] = true
+            local actorName = ""
+            pcall(function() actorName = chestActor:GetClass():GetName():lower() end)
+            local preferredCat = nil
+            if actorName:find("armour") or actorName:find("armor") or actorName:find("rack") or actorName:find("mannequin") or actorName:find("stand") then
+                preferredCat = ItemCategories.EQUIPMENT
+            elseif actorName:find("lumber") or actorName:find("wood") then
+                preferredCat = ItemCategories.WOOD
+            end
+
             table.insert(nearbyChests, {
                 Actor = chestActor,
                 Inventory = chestInv,
-                Distance = math.sqrt(distSq)
+                Distance = math.sqrt(distSq),
+                PreferredCategory = preferredCat,
+                ActorName = actorName
             })
         end
     end
@@ -506,6 +523,24 @@ local function FindNearbyChests(playerLoc)
                 local owner = nil
                 pcall(function() owner = comp:GetOwner() end)
                 if owner and IsValidWorldActor(owner) then
+                    RegisterCandidate(owner, comp)
+                end
+            end
+        end
+    end
+
+    -- Scan method C: Find any world InventoryComponent (e.g. Armour Racks, Mannequins, Lumber Storage, Crates)
+    local okInvComps, invComps = pcall(function()
+        return FindAllOf("InventoryComponent")
+    end)
+    if okInvComps and invComps then
+        local PC = UEHelpers.GetPlayerController()
+        local pawn = PC and PC.Pawn
+        for _, comp in ipairs(invComps) do
+            if comp and comp:IsValid() then
+                local owner = nil
+                pcall(function() owner = comp:GetOwner() end)
+                if owner and IsValidWorldActor(owner) and owner ~= pawn and owner ~= PC then
                     RegisterCandidate(owner, comp)
                 end
             end
@@ -544,7 +579,9 @@ local function AnalyzeChest(chestEntry)
         CategoryCounts = {},  -- [category] = count of items
         TargetSlotsByData = {}, -- [dataAddr] = list of slotInfo with free space
         TotalItemCount = 0,
-        DominantCategory = nil
+        DominantCategory = nil,
+        PreferredCategory = chestEntry.PreferredCategory,
+        ActorName = chestEntry.ActorName
     }
 
     for _, cat in pairs(ItemCategories) do
@@ -607,28 +644,54 @@ local function AnalyzeChest(chestEntry)
 end
 
 -- Robust item transfer between chests with 3 fallback mechanisms:
+-- Helper: Get Player's InventoryController
+local function GetInventoryController(PC)
+    local invCtrl = nil
+    pcall(function()
+        if PC and PC:IsValid() then
+            invCtrl = PC.InventoryController
+            if (not invCtrl or not invCtrl:IsValid()) and PC.GetInventoryController then
+                invCtrl = PC:GetInventoryController()
+            end
+        end
+    end)
+    return invCtrl
+end
+
+-- Robust item transfer between chests with 3 fallback mechanisms:
 -- 1) PC.InventoryController:MoveItemBetweenInventories
 -- 2) Direct srcChest.Inventory:MoveItem
 -- 3) Bounce through an empty player backpack slot (guaranteed engine authority)
 local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZero, amount, PC, playerInv)
+    if not srcChest or not destChest or srcSlotZero == nil or destSlotZero == nil or amount <= 0 then
+        return false
+    end
     local movedOk = false
+    local err1, err2, err3 = nil, nil, nil
 
     -- Method 1: Try PC.InventoryController
-    if PC and PC.InventoryController and PC.InventoryController:IsValid() then
-        pcall(function()
-            if destSlotZero then
-                movedOk = PC.InventoryController:MoveItemBetweenInventories(srcChest.Inventory, srcSlotZero, destChest.Inventory, destSlotZero)
-            else
-                movedOk = PC.InventoryController:MoveItemBetweenInventoriesAnySlot(srcChest.Inventory, srcSlotZero, destChest.Inventory)
-            end
+    local invCtrl = GetInventoryController(PC)
+    if invCtrl and invCtrl:IsValid() then
+        local ok, res = pcall(function()
+            return invCtrl:MoveItemBetweenInventories(srcChest.Inventory, srcSlotZero, destChest.Inventory, destSlotZero)
         end)
+        if ok and res then
+            movedOk = true
+        else
+            err1 = tostring(res)
+        end
     end
 
     -- Method 2: Try direct chest-to-chest MoveItem
-    if not movedOk then
-        pcall(function()
-            movedOk = srcChest.Inventory:MoveItem(srcSlotZero, destChest.Inventory, destSlotZero, PC, amount)
+    if not movedOk and srcChest.Inventory and srcChest.Inventory:IsValid() and destChest.Inventory and destChest.Inventory:IsValid() then
+        local ok, res = pcall(function()
+            return srcChest.Inventory:MoveItem(srcSlotZero, destChest.Inventory, destSlotZero, PC, amount)
         end)
+        if ok and res then
+            movedOk = true
+        else
+            err2 = tostring(res)
+        end
     end
 
     -- Method 3: Bounce through an empty player backpack slot
@@ -664,8 +727,17 @@ local function MoveItemBetweenChests(srcChest, srcSlotZero, destChest, destSlotZ
                         playerInv:MoveItem(emptyPlayerSlot, srcChest.Inventory, srcSlotZero, PC, amount)
                     end)
                 end
+            else
+                err3 = "toPlayerOk failed"
             end
+        else
+            err3 = "No empty player backpack slot available for bounce"
         end
+    end
+
+    if not movedOk and Config.DebugLog then
+        Log(string.format(">>> MoveItemBetweenChests FAILED: amount=%d, srcSlot=%s, destSlot=%s, err1=%s, err2=%s, err3=%s",
+            amount, tostring(srcSlotZero), tostring(destSlotZero), tostring(err1), tostring(err2), tostring(err3)))
     end
 
     return movedOk
@@ -675,62 +747,239 @@ end
 local function ReorganizeNearbyChests(chestStates, PC, playerInv)
     if not chestStates or #chestStates < 2 then return 0 end
 
-    -- 1. Determine the primary chest for each category
-    local categoryPrimaryChest = {}
+    Log(string.format(">>> Starting Chest Reorganization across %d chest(s)...", #chestStates))
+
+    -- 1. Tally global category totals across all chests
+    local globalCategoryTotals = {}
+    for _, cat in pairs(ItemCategories) do globalCategoryTotals[cat] = 0 end
     for _, state in ipairs(chestStates) do
-        if state.DominantCategory then
-            local currentBest = categoryPrimaryChest[state.DominantCategory]
-            local count = state.CategoryCounts[state.DominantCategory] or 0
-            if not currentBest or count > (currentBest.CategoryCounts[state.DominantCategory] or 0) then
-                categoryPrimaryChest[state.DominantCategory] = state
+        for cat, cnt in pairs(state.CategoryCounts) do
+            globalCategoryTotals[cat] = (globalCategoryTotals[cat] or 0) + cnt
+        end
+    end
+
+    -- 2. Sort categories by total item count descending
+    local sortedCats = {}
+    for cat, total in pairs(globalCategoryTotals) do
+        if total > 0 then table.insert(sortedCats, { Category = cat, Total = total }) end
+    end
+    table.sort(sortedCats, function(a, b) return a.Total > b.Total end)
+
+    -- 3. Assign containers with an explicit PreferredCategory FIRST (e.g. Armour Racks -> EQUIPMENT, Lumber -> WOOD)
+    local primaryChestByCategory = {}
+    local claimedChestAddrs = {}
+    local categoryChests = {}
+    for _, cat in pairs(ItemCategories) do categoryChests[cat] = {} end
+
+    for _, state in ipairs(chestStates) do
+        if state.PreferredCategory and not claimedChestAddrs[state.Address] then
+            local cat = state.PreferredCategory
+            primaryChestByCategory[cat] = state
+            claimedChestAddrs[state.Address] = cat
+            state.AssignedCategory = cat
+            state.IsPrimary = true
+            table.insert(categoryChests[cat], state)
+            Log(string.format("    Specialized container %s (%s) assigned to [%s]",
+                state.Address, tostring(state.ActorName), cat))
+        end
+    end
+
+    -- 4. Assign Primary Chests for remaining categories (chest holding the most of that category)
+    for _, cInfo in ipairs(sortedCats) do
+        local cat = cInfo.Category
+        if not primaryChestByCategory[cat] then
+            local bestChest = nil
+            local bestCount = -1
+
+            for _, state in ipairs(chestStates) do
+                if not claimedChestAddrs[state.Address] then
+                    local cnt = state.CategoryCounts[cat] or 0
+                    if cnt > bestCount then
+                        bestCount = cnt
+                        bestChest = state
+                    end
+                end
+            end
+
+            if bestChest then
+                primaryChestByCategory[cat] = bestChest
+                claimedChestAddrs[bestChest.Address] = cat
+                bestChest.AssignedCategory = cat
+                bestChest.IsPrimary = true
+                table.insert(categoryChests[cat], bestChest)
             end
         end
+    end
+
+
+    -- If a category has more items than 1 chest can hold, assign a secondary chest from remaining unassigned
+    for _, cInfo in ipairs(sortedCats) do
+        local cat = cInfo.Category
+        local prim = primaryChestByCategory[cat]
+        local primSlots = prim and prim.SlotCount or 20
+        if cInfo.Total > primSlots then
+            for _, state in ipairs(chestStates) do
+                if not claimedChestAddrs[state.Address] then
+                    claimedChestAddrs[state.Address] = cat
+                    state.AssignedCategory = cat
+                    state.IsPrimary = false
+                    table.insert(categoryChests[cat], state)
+                    break
+                end
+            end
+        end
+    end
+
+    -- Any remaining chests are marked unassigned / overflow
+    for _, state in ipairs(chestStates) do
+        if not claimedChestAddrs[state.Address] then
+            state.AssignedCategory = nil
+            state.IsPrimary = false
+        end
+    end
+
+    for i, state in ipairs(chestStates) do
+        local roleStr = state.AssignedCategory and string.format("%s%s", state.AssignedCategory, state.IsPrimary and " (PRIMARY)" or " (SECONDARY)") or "UNASSIGNED"
+        Log(string.format("    Chest #%d (Addr %s): %s, TotalItems=%d, EmptySlots=%d",
+            i, state.Address, roleStr, state.TotalItemCount, #state.EmptySlots))
     end
 
     local totalReorganized = 0
 
-    -- 2. Move misplaced items into their matching primary chest
+    -- PASS 0: Stack Consolidation (Merge duplicate partial stacks across chests into the Primary Chest)
     for _, srcChest in ipairs(chestStates) do
-        for slotZero, slotInfo in pairs(srcChest.Slots) do
-            local itemCat = slotInfo.Category
-            local destChest = categoryPrimaryChest[itemCat]
-
-            -- If this item does not match the source chest's dominant category, and another chest specializes in it:
-            if destChest and destChest.Address ~= srcChest.Address and slotInfo.Count > 0 and srcChest.DominantCategory ~= itemCat then
-                -- Step A: Top off any matching partial stack in destChest
-                local targets = destChest.TargetSlotsByData[slotInfo.DataAddr]
-                if targets then
-                    for _, target in ipairs(targets) do
-                        if slotInfo.Count <= 0 then break end
-                        if target.FreeSpace > 0 then
-                            local moveAmount = math.min(slotInfo.Count, target.FreeSpace)
-                            local movedOk = MoveItemBetweenChests(srcChest, slotZero, destChest, target.SlotZero, moveAmount, PC, playerInv)
-                            if movedOk then
-                                slotInfo.Count = slotInfo.Count - moveAmount
-                                target.FreeSpace = target.FreeSpace - moveAmount
-                                totalReorganized = totalReorganized + moveAmount
+        for srcSlot, slotInfo in pairs(srcChest.Slots) do
+            if slotInfo.Count > 0 and slotInfo.DataAddr then
+                local itemCat = slotInfo.Category
+                local primChest = primaryChestByCategory[itemCat]
+                if primChest and primChest.Address ~= srcChest.Address and slotInfo.Count > 0 then
+                    local targets = primChest.TargetSlotsByData[slotInfo.DataAddr]
+                    if targets then
+                        for _, target in ipairs(targets) do
+                            if slotInfo.Count <= 0 then break end
+                            if target.FreeSpace > 0 and target.SlotZero ~= srcSlot then
+                                local moveAmount = math.min(slotInfo.Count, target.FreeSpace)
+                                local movedOk = MoveItemBetweenChests(srcChest, srcSlot, primChest, target.SlotZero, moveAmount, PC, playerInv)
+                                if movedOk then
+                                    slotInfo.Count = slotInfo.Count - moveAmount
+                                    target.FreeSpace = target.FreeSpace - moveAmount
+                                    totalReorganized = totalReorganized + moveAmount
+                                    if slotInfo.Count <= 0 then
+                                        table.insert(srcChest.EmptySlots, srcSlot)
+                                    end
+                                    Log(string.format("    Consolidated %dx '%s' from Chest %s -> Primary [%s] Chest %s (slot %d)",
+                                        moveAmount, slotInfo.Name, srcChest.Address, itemCat, primChest.Address, target.SlotZero))
+                                end
                             end
                         end
-                    end
-                end
-
-                -- Step B: Move whole/remaining stack to an empty slot in destChest
-                if slotInfo.Count > 0 and #destChest.EmptySlots > 0 then
-                    local destSlot = table.remove(destChest.EmptySlots, 1)
-                    local moveAmount = slotInfo.Count
-                    local movedOk = MoveItemBetweenChests(srcChest, slotZero, destChest, destSlot, moveAmount, PC, playerInv)
-                    if movedOk then
-                        slotInfo.Count = 0
-                        table.insert(srcChest.EmptySlots, slotZero)
-                        totalReorganized = totalReorganized + moveAmount
-                    else
-                        table.insert(destChest.EmptySlots, 1, destSlot)
                     end
                 end
             end
         end
     end
 
+    -- PASS 1: Evict Foreign Items from Primary Chests to make room for dedicated category items
+    for _, cat in pairs(ItemCategories) do
+        local primChest = primaryChestByCategory[cat]
+        if primChest then
+            for slotZero, slotInfo in pairs(primChest.Slots) do
+                if slotInfo.Count > 0 and slotInfo.Category ~= cat then
+                    -- Foreign item in primary chest! Evict it to its matching primary chest, or any chest with empty slots
+                    local foreignCat = slotInfo.Category
+                    local foreignPrim = primaryChestByCategory[foreignCat]
+                    local moved = false
+
+                    -- Try foreign primary chest first
+                    if foreignPrim and foreignPrim.Address ~= primChest.Address and #foreignPrim.EmptySlots > 0 then
+                        local destSlot = table.remove(foreignPrim.EmptySlots, 1)
+                        local moveAmount = slotInfo.Count
+                        local movedOk = MoveItemBetweenChests(primChest, slotZero, foreignPrim, destSlot, moveAmount, PC, playerInv)
+                        if movedOk then
+                            slotInfo.Count = 0
+                            table.insert(primChest.EmptySlots, slotZero)
+                            totalReorganized = totalReorganized + moveAmount
+                            moved = true
+                            Log(string.format("    Evicted foreign '%s' ([%s]) from [%s] Chest -> Matching [%s] Chest %s",
+                                slotInfo.Name, foreignCat, cat, foreignCat, foreignPrim.Address))
+                        else
+                            table.insert(foreignPrim.EmptySlots, 1, destSlot)
+                        end
+                    end
+
+                    -- If foreign primary had no empty slots, evict to ANY chest with empty slots
+                    if not moved then
+                        for _, overflowChest in ipairs(chestStates) do
+                            if overflowChest.Address ~= primChest.Address and #overflowChest.EmptySlots > 0 then
+                                local destSlot = table.remove(overflowChest.EmptySlots, 1)
+                                local moveAmount = slotInfo.Count
+                                local movedOk = MoveItemBetweenChests(primChest, slotZero, overflowChest, destSlot, moveAmount, PC, playerInv)
+                                if movedOk then
+                                    slotInfo.Count = 0
+                                    table.insert(primChest.EmptySlots, slotZero)
+                                    totalReorganized = totalReorganized + moveAmount
+                                    Log(string.format("    Evicted foreign '%s' ([%s]) from [%s] Chest -> Overflow Chest %s to free space",
+                                        slotInfo.Name, foreignCat, cat, overflowChest.Address))
+                                    break
+                                else
+                                    table.insert(overflowChest.EmptySlots, 1, destSlot)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- PASS 2: Move ALL items into their Primary Dedicated Chest
+    -- If an item is in ANY chest other than its primary dedicated chest, MOVE IT TO THE PRIMARY CHEST!
+    for _, srcChest in ipairs(chestStates) do
+        for srcSlot, slotInfo in pairs(srcChest.Slots) do
+            local itemCat = slotInfo.Category
+            local primChest = primaryChestByCategory[itemCat]
+
+            -- If this item is NOT in its primary chest, move it!
+            if primChest and primChest.Address ~= srcChest.Address and slotInfo.Count > 0 then
+                -- First check if primChest has an empty slot
+                if #primChest.EmptySlots > 0 then
+                    local destSlot = table.remove(primChest.EmptySlots, 1)
+                    local moveAmount = slotInfo.Count
+                    local movedOk = MoveItemBetweenChests(srcChest, srcSlot, primChest, destSlot, moveAmount, PC, playerInv)
+                    if movedOk then
+                        slotInfo.Count = 0
+                        table.insert(srcChest.EmptySlots, srcSlot)
+                        totalReorganized = totalReorganized + moveAmount
+                        Log(string.format("    Sorted %dx '%s' ([%s]) from Chest %s -> PRIMARY [%s] Chest %s (slot %d)",
+                            moveAmount, slotInfo.Name, itemCat, srcChest.Address, itemCat, primChest.Address, destSlot))
+                    else
+                        table.insert(primChest.EmptySlots, 1, destSlot)
+                    end
+                else
+                    -- Primary chest is full, try secondary chest for this category if one exists
+                    local targets = categoryChests[itemCat] or {}
+                    for _, secChest in ipairs(targets) do
+                        if secChest.Address ~= srcChest.Address and secChest.Address ~= primChest.Address and slotInfo.Count > 0 and #secChest.EmptySlots > 0 then
+                            local destSlot = table.remove(secChest.EmptySlots, 1)
+                            local moveAmount = slotInfo.Count
+                            local movedOk = MoveItemBetweenChests(srcChest, srcSlot, secChest, destSlot, moveAmount, PC, playerInv)
+                            if movedOk then
+                                slotInfo.Count = 0
+                                table.insert(srcChest.EmptySlots, srcSlot)
+                                totalReorganized = totalReorganized + moveAmount
+                                Log(string.format("    Sorted %dx '%s' ([%s]) from Chest %s -> SECONDARY [%s] Chest %s (slot %d)",
+                                    moveAmount, slotInfo.Name, itemCat, srcChest.Address, itemCat, secChest.Address, destSlot))
+                                break
+                            else
+                                table.insert(secChest.EmptySlots, 1, destSlot)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    Log(string.format(">>> Chest Reorganization completed: %d total item(s) moved/organized.", totalReorganized))
     return totalReorganized
 end
 
@@ -1970,6 +2219,7 @@ pcall(function()
     end)
     Log("Keybind registered: [Shift + G] -> Unpack Relocation Crate into nearby chests.")
 end)
+
 
 return {
     ExecuteQuickStack = ExecuteQuickStack,
