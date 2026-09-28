@@ -187,7 +187,8 @@ local ItemCategories = {
     MINING = "MINING",       -- Ores, ingots/bars, stone, clay, gems, minerals
     FARMING = "FARMING",     -- Plants, flax, seeds, herbs, fibers, textiles, leather, cloth
     MAGIC = "MAGIC",         -- Runes, essence, shards, anima, scrolls
-    EQUIPMENT = "EQUIPMENT", -- Weapons, armor, tools, accessories, capes
+    ARMOUR = "ARMOUR",       -- Wearable armour pieces (helms, bodies, legs, boots, gloves, capes) -> armour stands
+    EQUIPMENT = "EQUIPMENT", -- Weapons, shields, tools, jewellery, trinkets
     MISC = "MISC"            -- Quest items, currency, general items
 }
 
@@ -237,6 +238,23 @@ local function GetItemCategory(itemOrData)
         end)
     end
 
+    -- Wearable armour is split out of EQUIPMENT so it can go onto armour stands
+    local function EquipmentOrArmour()
+        if path:find("/armour/") or path:find("/armor/") or tagName:find("armour") or tagName:find("armor") then
+            return ItemCategories.ARMOUR
+        end
+        local armourKeywords = {
+            "helm", "coif", "hood", "cowl", "armour", "armor", "boots", "gloves", "legs",
+            "cuirass", "greaves", "gauntlet", "bracer", "vambrace", "robe", "tunic", "chainmail",
+            "platebody", "plateleg", "chestplate", "hauberk", "sabaton", "pauldron", "gorget",
+            "visor", "chaps", "torso", "cape", "cloak", "body", "trousers", "skirt"
+        }
+        for _, kw in ipairs(armourKeywords) do
+            if name:find(kw) then return ItemCategories.ARMOUR end
+        end
+        return ItemCategories.EQUIPMENT
+    end
+
     -- 1. Check Class Type
     if className:find("food") or className:find("drink") or className:find("potion") or className:find("consumable") then
         return ItemCategories.FOOD
@@ -263,7 +281,7 @@ local function GetItemCategory(itemOrData)
             return ItemCategories.MAGIC
         end
         if path:find("/equipment/") or path:find("/armour/") or path:find("/armor/") or path:find("/weapon/") then
-            return ItemCategories.EQUIPMENT
+            return EquipmentOrArmour()
         end
     end
 
@@ -285,7 +303,7 @@ local function GetItemCategory(itemOrData)
             return ItemCategories.MAGIC
         end
         if tagName:find("equipment") or tagName:find("weapon") or tagName:find("armour") or tagName:find("armor") or tagName:find("tool") then
-            return ItemCategories.EQUIPMENT
+            return EquipmentOrArmour()
         end
     end
 
@@ -301,6 +319,24 @@ local function GetItemCategory(itemOrData)
            name:find("beer") or name:find("wine") or name:find("water") or name:find("tea") or
            name:find("food") or name:find("egg") or name:find("cheese") then
             return ItemCategories.FOOD
+        end
+
+        -- Equipment & Armour keywords (before the material words, so "Iron Helm" or "Leather Gloves"
+        -- counts as armour rather than MINING or FARMING)
+        if name:find("sword") or name:find("axe") or name:find("pickaxe") or name:find("shield") or
+           name:find("bow") or name:find("helmet") or name:find("helm") or name:find("coif") or
+           name:find("armour") or name:find("armor") or name:find("boots") or name:find("gloves") or
+           name:find("legs") or name:find("cuirass") or name:find("ring") or name:find("amulet") or
+           name:find("necklace") or name:find("cape") or name:find("staff") or name:find("wand") or
+           name:find("dagger") or name:find("spear") or name:find("hammer") or name:find("knife") or
+           name:find("greaves") or name:find("gauntlet") or name:find("bracer") or name:find("vambrace") or
+           name:find("robe") or name:find("tunic") or name:find("chainmail") or name:find("plate") or
+           name:find("platebody") or name:find("plateleg") or name:find("mail") or name:find("hood") or
+           name:find("hauberk") or name:find("sabaton") or name:find("pauldron") or name:find("gorget") or
+           name:find("visor") or name:find("chap") or name:find("cowl") or name:find("chestplate") or
+           name:find("torso") or name:find("buckler") or name:find("quiver") or name:find("hatchet") or
+           name:find("mace") then
+            return EquipmentOrArmour()
         end
 
         -- Wood keywords
@@ -335,21 +371,6 @@ local function GetItemCategory(itemOrData)
             return ItemCategories.MAGIC
         end
 
-        -- Equipment & Armour keywords
-        if name:find("sword") or name:find("axe") or name:find("pickaxe") or name:find("shield") or
-           name:find("bow") or name:find("helmet") or name:find("helm") or name:find("coif") or
-           name:find("armour") or name:find("armor") or name:find("boots") or name:find("gloves") or
-           name:find("legs") or name:find("cuirass") or name:find("ring") or name:find("amulet") or
-           name:find("necklace") or name:find("cape") or name:find("staff") or name:find("wand") or
-           name:find("dagger") or name:find("spear") or name:find("hammer") or name:find("knife") or
-           name:find("greaves") or name:find("gauntlet") or name:find("bracer") or name:find("vambrace") or
-           name:find("robe") or name:find("tunic") or name:find("chainmail") or name:find("plate") or
-           name:find("platebody") or name:find("plateleg") or name:find("mail") or name:find("hood") or
-           name:find("hauberk") or name:find("sabaton") or name:find("pauldron") or name:find("gorget") or
-           name:find("visor") or name:find("chap") or name:find("cowl") or name:find("chestplate") or
-           name:find("torso") or name:find("buckler") or name:find("quiver") then
-            return ItemCategories.EQUIPMENT
-        end
     end
 
     return ItemCategories.MISC
@@ -553,8 +574,10 @@ local function FindNearbyChests(playerLoc)
             seenAddresses[addr] = true
             local actorClass = GetSafeClassName(chestActor):lower()
             local preferredCat = nil
-            if actorClass:find("armour") or actorClass:find("armor") or actorClass:find("rack") or actorClass:find("mannequin") or actorClass:find("stand") then
+            if actorClass:find("weapon") then
                 preferredCat = ItemCategories.EQUIPMENT
+            elseif actorClass:find("armour") or actorClass:find("armor") or actorClass:find("rack") or actorClass:find("mannequin") or actorClass:find("stand") then
+                preferredCat = ItemCategories.ARMOUR
             elseif actorClass:find("lumber") or actorClass:find("wood") then
                 preferredCat = ItemCategories.WOOD
             end
@@ -1013,15 +1036,102 @@ end
 -- =========================================================================
 -- IN-MEMORY CHEST UPGRADE & CATEGORY REORGANIZATION ENGINE
 -- =========================================================================
+-- Helper: Total stack count of one ItemData (by address) across an inventory's slots
+local function CountItemInInventory(inv, dataAddr)
+    if not inv or not dataAddr then return 0 end
+    local total = 0
+    local slotCount = 0
+    pcall(function() slotCount = inv.ItemSlots:GetArrayNum() end)
+    for i = 1, slotCount do
+        local item = nil
+        pcall(function() item = inv.ItemSlots[i] end)
+        if IsValidItem(item) and GetItemDataAddress(item) == dataAddr then
+            local c = 0
+            pcall(function() c = item:GetStackSize() end)
+            total = total + (c or 0)
+        end
+    end
+    return total
+end
+
+-- Helper: Count occupied slots in an inventory
+local function CountOccupiedSlots(inv)
+    local used = 0
+    local slotCount = 0
+    pcall(function() slotCount = inv.ItemSlots:GetArrayNum() end)
+    for i = 1, slotCount do
+        local item = nil
+        pcall(function() item = inv.ItemSlots[i] end)
+        if IsValidItem(item) then used = used + 1 end
+    end
+    return used
+end
+
+-- Helper: Add items and return how many actually landed.
+-- The container is recounted before and after, so a refused or partial add is never
+-- mistaken for success (AddItemByData's return value alone is not trusted).
+local function AddItemVerified(inv, itemData, count, durability)
+    if not inv or count <= 0 or not itemData then return 0 end
+    local ok = false
+    pcall(function() ok = inv:IsValid() end)
+    if not ok then return 0 end
+
+    local dataAddr = nil
+    pcall(function() dataAddr = itemData:GetAddress() end)
+    if not dataAddr then return 0 end
+
+    local before = CountItemInInventory(inv, dataAddr)
+    local okCall, res = pcall(function()
+        return inv:AddItemByData(itemData, count, durability, {})
+    end)
+    local added = CountItemInInventory(inv, dataAddr) - before
+    if added < 0 then added = 0 end
+    if added > count then added = count end
+
+    -- If the slots did not change but the engine reported success, trust the engine:
+    -- a duplicate is recoverable, a lost item is not.
+    if added == 0 and okCall then
+        if res == true then
+            added = count
+        elseif type(res) == "number" and res > 0 then
+            added = math.min(res, count)
+        end
+    end
+    return added
+end
+
+-- Helper: Only real chests/crates get the 48-slot upgrade and chest mesh (never armour stands, racks or lumber storage)
+local function IsUpgradeableChest(state)
+    local n = (state.ActorName or ""):lower()
+    if n:find("rack") or n:find("stand") or n:find("mannequin") or n:find("lumber") or n:find("armour") or n:find("armor") then
+        return false
+    end
+    return n:find("chest") ~= nil or n:find("crate") ~= nil
+end
+
+-- Helper: Stacks needed to hold an entry
+local function GetEntryMaxStack(entry)
+    local maxStack = 0
+    pcall(function()
+        if entry.ItemData.GetMaxStackSize then
+            maxStack = entry.ItemData:GetMaxStackSize()
+        elseif entry.ItemData.MaxStackSize then
+            maxStack = entry.ItemData.MaxStackSize
+        end
+    end)
+    if not maxStack or maxStack <= 0 then maxStack = 100 end
+    return maxStack
+end
+
 local function ReorganizeNearbyChests(chestStates, PC, playerInv)
     if not chestStates or #chestStates < 1 then return 0 end
 
-    Log(string.format(">>> Starting In-Memory Chest Consolidation & Upgrade across %d chest(s)...", #chestStates))
+    Log(string.format(">>> Starting In-Memory Chest Consolidation & Upgrade across %d container(s)...", #chestStates))
 
-    -- 1. UPGRADE ALL CHESTS TO HIGHEST TIER (48 SLOTS)
+    -- 1. UPGRADE REAL CHESTS TO HIGHEST TIER (48 SLOTS)
     local largeMesh = nil
     for _, state in ipairs(chestStates) do
-        if state.SlotCount >= 48 and state.Actor and state.Actor.Mesh then
+        if IsUpgradeableChest(state) and state.SlotCount >= 48 and state.Actor and state.Actor.Mesh then
             pcall(function() largeMesh = state.Actor.Mesh.StaticMesh end)
             if largeMesh then break end
         end
@@ -1034,34 +1144,39 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
 
     local upgradedCount = 0
     for _, state in ipairs(chestStates) do
-        pcall(function()
-            if state.Inventory and state.Inventory:IsValid() then
-                if (state.Inventory.MaxSlotCount or 0) < 48 then
-                    state.Inventory.MaxSlotCount = 48
-                    state.SlotCount = 48
-                    upgradedCount = upgradedCount + 1
+        if IsUpgradeableChest(state) then
+            pcall(function()
+                if state.Inventory and state.Inventory:IsValid() then
+                    if (state.Inventory.MaxSlotCount or 0) < 48 then
+                        state.Inventory.MaxSlotCount = 48
+                        state.SlotCount = 48
+                        upgradedCount = upgradedCount + 1
+                    end
                 end
-            end
-            if largeMesh and state.Actor and state.Actor.Mesh and state.Actor.Mesh:IsValid() then
-                state.Actor.Mesh:SetStaticMesh(largeMesh)
-            end
-        end)
+                if largeMesh and state.Actor and state.Actor.Mesh and state.Actor.Mesh:IsValid() then
+                    state.Actor.Mesh:SetStaticMesh(largeMesh)
+                end
+            end)
+        end
     end
     if upgradedCount > 0 then
         Log(string.format("    Upgraded %d chest(s) to Highest Tier (48 Slots each)!", upgradedCount))
     end
 
-    -- 2. PULL ALL ITEMS FROM CHESTS INTO IN-MEMORY POOL
-    -- Merge identical items by ItemData + Durability so split stacks combine into full stacks!
-    local memoryPool = {} -- [key] = { ItemData, Name, TotalCount, Durability, Category }
-    local categoryTotals = {}
-    for _, cat in pairs(ItemCategories) do categoryTotals[cat] = 0 end
+    -- 2. PULL ITEMS INTO THE IN-MEMORY POOL, ONE CONTAINER AT A TIME
+    -- A container's items only join the pool once ClearInventory() is confirmed to have emptied it.
+    -- If clearing fails, that container is left untouched and sits out of the sort (no duplicates, no loss).
+    local memoryPool = {} -- [key] = { ItemData, Name, TotalCount, Durability, Category, AssetPath }
+    local categoryStacks = {}
+    for _, cat in pairs(ItemCategories) do categoryStacks[cat] = 0 end
 
+    local participating = {}
     local totalItemsInPool = 0
     local totalStacksRead = 0
 
     for _, state in ipairs(chestStates) do
         local inv = state.Inventory
+        local found = {}
         local slotCount = 0
         pcall(function() slotCount = inv.ItemSlots:GetArrayNum() end)
         for cIdx = 1, slotCount do
@@ -1076,30 +1191,50 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
                     if count > 0 then
                         local durability = 1.0
                         pcall(function() durability = cItem:GetDurability() or 1.0 end)
-                        local name = GetItemName(cItem)
-                        local category = GetItemCategory(cItem)
-                        local dataAddr = GetItemDataAddress(cItem)
-
-                        local key = string.format("%s_%.2f", tostring(dataAddr), durability)
-                        if memoryPool[key] then
-                            memoryPool[key].TotalCount = memoryPool[key].TotalCount + count
-                        else
-                            memoryPool[key] = {
-                                ItemData = itemData,
-                                Name = name,
-                                TotalCount = count,
-                                Durability = durability,
-                                Category = category,
-                                Key = key
-                            }
-                        end
-
-                        categoryTotals[category] = (categoryTotals[category] or 0) + count
-                        totalItemsInPool = totalItemsInPool + count
-                        totalStacksRead = totalStacksRead + 1
+                        local path = nil
+                        pcall(function() path = itemData:GetPathName() end)
+                        table.insert(found, {
+                            ItemData = itemData,
+                            AssetPath = path,
+                            Name = GetItemName(cItem),
+                            Count = count,
+                            Durability = durability,
+                            Category = GetItemCategory(cItem),
+                            DataAddr = GetItemDataAddress(cItem)
+                        })
                     end
                 end
             end
+        end
+
+        local cleared = true
+        if #found > 0 then
+            pcall(function() inv:ClearInventory() end)
+            cleared = CountOccupiedSlots(inv) == 0
+        end
+
+        if cleared then
+            table.insert(participating, state)
+            for _, f in ipairs(found) do
+                local key = string.format("%s_%.2f", tostring(f.DataAddr), f.Durability)
+                if memoryPool[key] then
+                    memoryPool[key].TotalCount = memoryPool[key].TotalCount + f.Count
+                else
+                    memoryPool[key] = {
+                        ItemData = f.ItemData,
+                        AssetPath = f.AssetPath,
+                        Name = f.Name,
+                        TotalCount = f.Count,
+                        Durability = f.Durability,
+                        Category = f.Category,
+                        Key = key
+                    }
+                end
+                totalItemsInPool = totalItemsInPool + f.Count
+                totalStacksRead = totalStacksRead + 1
+            end
+        else
+            Log(string.format("    WARNING: Could not empty container '%s'; leaving its items where they are.", tostring(state.ActorName)))
         end
     end
 
@@ -1108,85 +1243,109 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
         return 0
     end
 
-    Log(string.format("    Pulled %d total items (%d original stacks) into In-Memory Buffer.",
-        totalItemsInPool, totalStacksRead))
-
-    -- 3. CLEAR ALL CHESTS VIA NATIVE ClearInventory()
-    for _, state in ipairs(chestStates) do
-        pcall(function()
-            state.Inventory:ClearInventory()
-        end)
-        state.EmptySlots = {}
-        for s = 0, 47 do table.insert(state.EmptySlots, s) end
-        state.Slots = {}
-        state.TotalItemCount = 0
+    for _, entry in pairs(memoryPool) do
+        entry.MaxStack = GetEntryMaxStack(entry)
+        local cat = entry.Category or ItemCategories.MISC
+        categoryStacks[cat] = (categoryStacks[cat] or 0) + math.ceil(entry.TotalCount / entry.MaxStack)
     end
 
-    -- 4. ASSIGN DEDICATED CHESTS TO CATEGORIES
+    Log(string.format("    Pulled %d total items (%d original stacks) from %d container(s) into In-Memory Buffer.",
+        totalItemsInPool, totalStacksRead, #participating))
+
+    -- 3. ASSIGN DEDICATED CONTAINERS TO CATEGORIES
     local assignedChestsByCategory = {}
     for _, cat in pairs(ItemCategories) do assignedChestsByCategory[cat] = {} end
-    local claimedAddrs = {}
 
-    -- Priority A: Containers with explicit preferred category (Armour racks -> EQUIPMENT, Lumber -> WOOD)
-    for _, state in ipairs(chestStates) do
-        if state.PreferredCategory and not claimedAddrs[state.Address] then
-            local cat = state.PreferredCategory
-            claimedAddrs[state.Address] = cat
-            state.AssignedCategory = cat
-            table.insert(assignedChestsByCategory[cat], state)
+    local function Claim(state, cat)
+        state.AssignedCategory = cat
+        table.insert(assignedChestsByCategory[cat], state)
+    end
+
+    -- Priority A: Containers built for one category (armour stands -> ARMOUR, weapon racks -> EQUIPMENT, lumber -> WOOD)
+    for _, state in ipairs(participating) do
+        if state.PreferredCategory then
+            Claim(state, state.PreferredCategory)
         end
     end
 
-    -- Priority B: Sort categories by total item count descending
+    -- Priority B: Sticky assignment. A chest keeps the category it already held most of,
+    -- so the food chest stays the food chest every time G is pressed.
+    local pairsByCount = {}
+    for idx, state in ipairs(participating) do
+        if not state.AssignedCategory then
+            for cat, cnt in pairs(state.CategoryCounts or {}) do
+                if cnt > 0 and (categoryStacks[cat] or 0) > 0 then
+                    table.insert(pairsByCount, { State = state, Category = cat, Count = cnt, Index = idx })
+                end
+            end
+        end
+    end
+    table.sort(pairsByCount, function(a, b)
+        if a.Count ~= b.Count then return a.Count > b.Count end
+        if a.Index ~= b.Index then return a.Index < b.Index end
+        return a.Category < b.Category
+    end)
+    for _, p in ipairs(pairsByCount) do
+        if not p.State.AssignedCategory and #assignedChestsByCategory[p.Category] == 0 then
+            Claim(p.State, p.Category)
+        end
+    end
+
+    -- Priority C: Categories still without a home get the nearest free container, largest category first
     local sortedCats = {}
-    for cat, total in pairs(categoryTotals) do
-        if total > 0 then table.insert(sortedCats, { Category = cat, Total = total }) end
+    for cat, stacks in pairs(categoryStacks) do
+        if stacks > 0 then table.insert(sortedCats, { Category = cat, Stacks = stacks }) end
     end
-    table.sort(sortedCats, function(a, b) return a.Total > b.Total end)
+    table.sort(sortedCats, function(a, b)
+        if a.Stacks ~= b.Stacks then return a.Stacks > b.Stacks end
+        return a.Category < b.Category
+    end)
 
-    -- Assign Primary Chest to each active category
+    local function NextFreeContainer()
+        -- Regular chests before special containers (stands, racks, lumber storage)
+        for _, state in ipairs(participating) do
+            if not state.AssignedCategory and not state.PreferredCategory then return state end
+        end
+        return nil
+    end
+
+    for _, cInfo in ipairs(sortedCats) do
+        if #assignedChestsByCategory[cInfo.Category] == 0 then
+            local free = NextFreeContainer()
+            if free then Claim(free, cInfo.Category) end
+        end
+    end
+
+    -- Categories that need more room than their containers have get extra containers
     for _, cInfo in ipairs(sortedCats) do
         local cat = cInfo.Category
-        if #assignedChestsByCategory[cat] == 0 then
-            for _, state in ipairs(chestStates) do
-                if not claimedAddrs[state.Address] then
-                    claimedAddrs[state.Address] = cat
-                    state.AssignedCategory = cat
-                    table.insert(assignedChestsByCategory[cat], state)
-                    break
-                end
-            end
+        local capacity = 0
+        for _, st in ipairs(assignedChestsByCategory[cat]) do capacity = capacity + math.max(st.SlotCount or 0, 1) end
+        while capacity < cInfo.Stacks do
+            local free = NextFreeContainer()
+            if not free then break end
+            Claim(free, cat)
+            capacity = capacity + math.max(free.SlotCount or 0, 1)
         end
     end
 
-    -- If a category has more than 48 items, assign additional secondary chest(s)
+    local homeless = {}
     for _, cInfo in ipairs(sortedCats) do
-        local cat = cInfo.Category
-        local neededChests = math.ceil(cInfo.Total / 48)
-        while #assignedChestsByCategory[cat] < neededChests do
-            local found = false
-            for _, state in ipairs(chestStates) do
-                if not claimedAddrs[state.Address] then
-                    claimedAddrs[state.Address] = cat
-                    state.AssignedCategory = cat
-                    table.insert(assignedChestsByCategory[cat], state)
-                    found = true
-                    break
-                end
-            end
-            if not found then break end
+        if #assignedChestsByCategory[cInfo.Category] == 0 then table.insert(homeless, cInfo.Category) end
+    end
+    if #homeless > 0 then
+        Log(string.format("    Not enough containers for one per category. Build %d more chest(s) to separate: %s (they share leftover space for now).",
+            #homeless, table.concat(homeless, ", ")))
+    end
+
+    if Config.DebugLog then
+        for idx, state in ipairs(participating) do
+            Log(string.format("    Container #%d (%.1fm, %s) -> %s", idx, (state.Entry and state.Entry.Distance or 0) / 100.0,
+                tostring(state.ActorName), tostring(state.AssignedCategory or "spare")))
         end
     end
 
-    -- Any remaining chests are overflow
-    local overflowChests = {}
-    for _, state in ipairs(chestStates) do
-        if not claimedAddrs[state.Address] then
-            table.insert(overflowChests, state)
-        end
-    end
-
-    -- 5. SORT MEMORY ITEMS: GROUP BY CATEGORY, ALPHABETICAL BY NAME
+    -- 4. SORT MEMORY ITEMS: GROUP BY CATEGORY, ALPHABETICAL BY NAME
     local categoryItemLists = {}
     for _, cat in pairs(ItemCategories) do categoryItemLists[cat] = {} end
     for _, entry in pairs(memoryPool) do
@@ -1194,79 +1353,94 @@ local function ReorganizeNearbyChests(chestStates, PC, playerInv)
         if not categoryItemLists[cat] then categoryItemLists[cat] = {} end
         table.insert(categoryItemLists[cat], entry)
     end
-
-    for _, cat in pairs(ItemCategories) do
-        table.sort(categoryItemLists[cat], function(a, b) return a.Name < b.Name end)
+    for _, list in pairs(categoryItemLists) do
+        table.sort(list, function(a, b) return a.Name < b.Name end)
     end
 
-    -- 6. REDISTRIBUTE ITEMS FROM MEMORY BUFFER INTO MATCHING DEDICATED CHESTS
+    -- 5. REDISTRIBUTE. Every added amount is verified, and anything that cannot be placed
+    -- falls through: category containers -> spare containers -> any container with room ->
+    -- player backpack -> Relocation Crate (recover with Shift + G). Nothing is dropped.
     local totalRestored = 0
+    local sentToBackpack = 0
+    local sentToCrate = 0
 
-    for _, cat in pairs(ItemCategories) do
-        local items = categoryItemLists[cat]
-        local chests = assignedChestsByCategory[cat] or {}
-        local chestIdx = 1
+    local function PlaceInto(inv, entry, remaining)
+        local placed = 0
+        while remaining > 0 do
+            local toAdd = math.min(remaining, entry.MaxStack)
+            local added = AddItemVerified(inv, entry.ItemData, toAdd, entry.Durability)
+            placed = placed + added
+            remaining = remaining - added
+            if added < toAdd then break end
+        end
+        return placed
+    end
 
-        for _, entry in ipairs(items) do
+    local function CandidateContainers(cat)
+        local list = {}
+        local seen = {}
+        local function push(st)
+            if st and not seen[st] then seen[st] = true; table.insert(list, st) end
+        end
+        for _, st in ipairs(assignedChestsByCategory[cat] or {}) do push(st) end
+        -- Spare chests, then other categories' regular chests, then special containers last
+        for _, st in ipairs(participating) do if not st.AssignedCategory then push(st) end end
+        for _, st in ipairs(participating) do if not st.PreferredCategory then push(st) end end
+        for _, st in ipairs(participating) do push(st) end
+        return list
+    end
+
+    -- Categories with a home first, so shared leftover space goes to homeless categories last
+    local catOrder = {}
+    for _, cInfo in ipairs(sortedCats) do
+        if #assignedChestsByCategory[cInfo.Category] > 0 then table.insert(catOrder, cInfo.Category) end
+    end
+    for _, cat in ipairs(homeless) do table.insert(catOrder, cat) end
+
+    for _, cat in ipairs(catOrder) do
+        local candidates = CandidateContainers(cat)
+        for _, entry in ipairs(categoryItemLists[cat] or {}) do
             local remaining = entry.TotalCount
-            local maxStack = 1
-            pcall(function()
-                if entry.ItemData.GetMaxStackSize then
-                    maxStack = entry.ItemData:GetMaxStackSize()
-                elseif entry.ItemData.MaxStackSize then
-                    maxStack = entry.ItemData.MaxStackSize
-                end
-            end)
-            if not maxStack or maxStack <= 0 then maxStack = 100 end
 
-            while remaining > 0 do
-                local targetChest = chests[chestIdx]
-                if not targetChest and #overflowChests > 0 then
-                    targetChest = table.remove(overflowChests, 1)
-                    table.insert(chests, targetChest)
-                end
-
-                local toAdd = math.min(remaining, maxStack)
-
-                if not targetChest then
-                    -- All base chests completely full! Safe fallback: deposit into player backpack
-                    if playerInv and playerInv:IsValid() then
-                        local addedP = false
-                        pcall(function()
-                            addedP = playerInv:AddItemByData(entry.ItemData, toAdd, entry.Durability, {})
-                        end)
-                        if addedP then
-                            totalRestored = totalRestored + toAdd
-                            remaining = remaining - toAdd
-                            Log(string.format("    Chests full: Stored %dx '%s' into player inventory.", toAdd, entry.Name))
-                        else
-                            Log(string.format("    CRITICAL: No room anywhere for %dx '%s'!", remaining, entry.Name))
-                            break
-                        end
-                    else
-                        Log(string.format("    CRITICAL: No room anywhere for %dx '%s'!", remaining, entry.Name))
-                        break
-                    end
-                else
-                    local addedOk = false
-                    pcall(function()
-                        addedOk = targetChest.Inventory:AddItemByData(entry.ItemData, toAdd, entry.Durability, {})
-                    end)
-
-                    if addedOk then
-                        remaining = remaining - toAdd
-                        totalRestored = totalRestored + toAdd
-                        targetChest.TotalItemCount = (targetChest.TotalItemCount or 0) + 1
-                    else
-                        -- Target chest full, advance to next chest for this category
-                        chestIdx = chestIdx + 1
+            for _, st in ipairs(candidates) do
+                if remaining <= 0 then break end
+                local placed = PlaceInto(st.Inventory, entry, remaining)
+                if placed > 0 then
+                    remaining = remaining - placed
+                    totalRestored = totalRestored + placed
+                    if st.AssignedCategory ~= cat and Config.DebugLog then
+                        Log(string.format("    [%s] overflow: put %dx '%s' into a %s container.", cat, placed, entry.Name, tostring(st.AssignedCategory or "spare")))
                     end
                 end
+            end
+
+            if remaining > 0 and playerInv and playerInv:IsValid() then
+                local placed = PlaceInto(playerInv, entry, remaining)
+                if placed > 0 then
+                    remaining = remaining - placed
+                    totalRestored = totalRestored + placed
+                    sentToBackpack = sentToBackpack + placed
+                    Log(string.format("    Containers full: put %dx '%s' into your backpack.", placed, entry.Name))
+                end
+            end
+
+            if remaining > 0 then
+                table.insert(RelocationCrate, {
+                    ItemData = entry.ItemData,
+                    AssetPath = entry.AssetPath,
+                    Count = remaining,
+                    Name = entry.Name
+                })
+                sentToCrate = sentToCrate + remaining
+                Log(string.format("    WARNING: No room anywhere for %dx '%s'. Saved it in the Relocation Crate; press Shift + G near free space to get it back (it is lost if you quit the game first).",
+                    remaining, entry.Name))
             end
         end
     end
 
-    Log(string.format(">>> Memory-Buffered Reorganization COMPLETE: %d item(s) restored into perfectly sorted 48-slot chests.", totalRestored))
+    Log(string.format(">>> Chest Reorganization COMPLETE: %d item(s) sorted.%s%s", totalRestored,
+        sentToBackpack > 0 and string.format(" %d went to your backpack.", sentToBackpack) or "",
+        sentToCrate > 0 and string.format(" %d are waiting in the Relocation Crate (Shift + G).", sentToCrate) or ""))
     return totalRestored
 end
 

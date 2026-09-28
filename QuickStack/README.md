@@ -20,10 +20,14 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
   - 🪵 **WOOD**: Regular logs, oak, willow, maple, yew, planks, bark, timber, splinters, charcoal.
   - ⛏️ **MINING**: Ores (copper, tin, iron, blurite, silver, coal, gold, mithril, adamant, runite), ingots/bars, stone, clay, gems.
   - 🌾 **FARMING**: Wild crops, onions, flax, seeds, herbs, fibers, textiles, leather, cloth, crafting parts.
-  - ⚔️ **EQUIPMENT**: Weapons, bows, staves, armour, shields, helms, boots, gauntlets, cloaks, jewellery.
+  - 🛡️ **ARMOUR**: Helms, bodies, legs, boots, gloves, capes and other worn pieces. Placed on armour stands/racks when you have them, otherwise in their own chest.
+  - ⚔️ **EQUIPMENT**: Weapons, bows, staves, shields, tools, jewellery.
   - ✨ **MAGIC**: Runes, essences, staves, wands, talismans, enchanted materials.
   - 📦 **MISC**: Gold coins, quest items, utility components, keys, unclassified valuables.
 - **Safe Stack-Chunking**: Splits aggregated quantities cleanly according to each item's native `GetMaxStackSize()`.
+- **Sticky Chests**: Each chest keeps the category it already holds most of, so your food chest stays your food chest every time you press `[G]`.
+- **Lossless Placement**: Every deposit is verified by recounting the chest. Items a chest refuses go to another chest with room, then your backpack, then the Relocation Crate (`[Shift + G]` to recover). A chest that can't be emptied is left untouched.
+- **Not Enough Chests?** Categories without their own chest share leftover space, and the UE4SS log says how many more chests to build.
 
 ### 2. Automatic 48-Slot Highest Tier Chest Upgrade
 - Automatically inspects every detected chest or crate.
