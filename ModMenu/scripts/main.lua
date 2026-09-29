@@ -157,7 +157,7 @@ end
 local Mods = {
     {"AutoRun", "Auto Run", "Runs forward in the camera direction without holding a movement key.", "Num Lock toggle | WASD or Escape stop"},
     {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap, resource markers, your death spot and teammates.", "F6 map | F7 reload | F9 icons | Ctrl+F6 clear death marker | PgUp/PgDn zoom | [ / ] size"},
-    {"QuickStack", "Quick Stack", "Sorts items into category chests, labels chests, and fetches station ingredients from a clickable list.", "G stack | Alt+G fetch list / pull | Shift+F12 labels | Ctrl+G pack | Shift+G unpack"},
+    {"QuickStack", "Quick Stack", "Sorts items into category chests, labels chests, and fetches station ingredients from a clickable list.", "G stack | Alt+G station fetch or nearby storage | Shift+F12 labels | Ctrl+G pack | Shift+G unpack"},
     {"EnhancedReticle", "Enhanced Reticle", "Adds configurable reticle colour and size controls.", "F4 toggle | F1 colour | F2 size"},
     {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance.", "E/V grab/place | Z log magnet | Shift+F6 radius"},
     {

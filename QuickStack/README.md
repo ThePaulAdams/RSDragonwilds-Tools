@@ -58,6 +58,12 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 - **You choose what is fetched, at every station:** processing stations (smelters, loom, spinning wheel, tanner, sawmill, charcoal kiln, grindstone, stonecutter, campfire, grill, cauldron, fermentation barrel) only top up what is already in the station. Put one iron ore in and `[Alt + G]` fetches iron ore; put a log in the fuel slot and it fetches logs; put both in for both. An empty station fetches nothing (set `StationFetchAllWhenEmpty = true` to fetch everything it accepts, or `StationFetchLoadedOnly = false` for the old behaviour). Hovering an item in your backpack and pressing `[Alt + G]` still pulls just that item. Crafting benches fetch only the ingredients of the recipe you have selected, and nothing if none is selected. With no station menu open, the nearest processing station within 6m is used. Each press logs a `[DISCOVERY]` line naming the station it found.
 - Only if a station has no readable list does it fall back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
 
+### 7b. Nearby Storage dialog (`[Alt + G]` with no station open)
+- Press `[Alt + G]` near your chests (in normal play, or with a chest or your inventory open) and a full-screen **NEARBY STORAGE** page opens, built from the game's own menu frame and buttons.
+- It lists every item type across all nearby chests as one grid, with the total count and how many chests hold it, plus category tabs (All, Food, Wood, Mining, Farming, Magic, Armour, Equipment, Recipes, Misc).
+- Click an item to take a stack of it into your backpack (the counts update). `< PREV` / `NEXT >` page through long lists, `DEPOSIT ALL (G)` runs the normal quick stack and sort, and `CLOSE`, `Esc` or `[Alt + G]` closes it.
+- Hovering an item when you press `[Alt + G]` still pulls just that item instead. Set `StorageDialog = false` to turn the dialog off.
+
 ### 8. Chest Category Labels (`[Shift + F12]` toggle)
 - Floating labels ("Food", "Wood", "Mining", "Empty"...) above every chest within 30m, turned to face the camera.
 - Labels follow each chest's dominant category, so they update as you sort.
@@ -110,6 +116,8 @@ local Config = {
     StationFetchStacksPerItem = 1,-- Stacks of each ingredient Station Fetch pulls
     StationFetchMaxItemTypes = 12,-- Above this, a station counts as unfiltered and name hints are used
     StationFetchPicker = true,    -- Alt+G at a station opens a clickable list of what to fetch
+    StorageDialog = true,         -- Alt+G away from stations opens the Nearby Storage dialog
+    StorageStacksPerClick = 1,    -- Stacks taken per click in the dialog
     StationFetchLoadedOnly = true,-- Furnaces: only fetch what is already in the ingredient/fuel slots
     StationFetchAllWhenEmpty = false,-- Empty furnace: fetch everything it accepts (true) or nothing (false)
     ChestLabels = true,           -- Floating category labels above chests (Shift+F12 toggles)

@@ -43,7 +43,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
 | **`[Ctrl + G]`** | **Quick Stack** | **Pack Base:** Vacuum all ground items within 150m into virtual Relocation Crate |
 | **`[Shift + G]`** | **Quick Stack** | **Unpack Base:** Deposit all Relocation Crate items categorized into nearby chests |
-| **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open station, pick what to pull from nearby chests from a clickable list. Hovering an item pulls that item instead |
+| **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open station, pick what to pull from nearby chests from a clickable list. Anywhere else near your chests it opens the **Nearby Storage** dialog: every chest as one list with category tabs. Hovering an item pulls that item instead |
 | **`[Shift + F12]`** | **Quick Stack** | Toggle floating category labels above nearby chests |
 | **`[Ctrl + F6]`** | **OSRS Minimap** | Clear the death marker |
 | **`[Ctrl + F9]`** | **Bulk Open** | Open every bag/pack in your backpack |

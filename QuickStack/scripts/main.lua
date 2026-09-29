@@ -59,6 +59,10 @@ local Config = {
     -- Alt+G at a station opens a clickable list of what it can use (items in nearby
     -- chests, with counts); click one to fetch a stack. False = fetch straight away.
     StationFetchPicker = true,
+    -- Alt+G with no station open shows the Nearby Storage dialog: every nearby chest
+    -- as one list with category tabs; click an item to take stacks of it.
+    StorageDialog = true,
+    StorageStacksPerClick = 1,
     -- With StationFetchLoadedOnly, an empty station fetches everything it accepts (true) or nothing (false).
     StationFetchAllWhenEmpty = false,
 
@@ -1987,7 +1991,9 @@ local function FindOpenStation(PC, playerLoc)
             end
         end
     end
-    -- 3. Fallback: the nearest processing station within reach.
+    -- 3. Fallback: the nearest processing station within reach (only without the
+    -- picker/dialog: with them, no open station menu means the Nearby Storage dialog).
+    if Config.StationFetchPicker then return nil end
     local best, bestD = nil, math.huge
     for _, comp in ipairs(FindAllOf("ProcessingStationComponent") or {}) do
         local owner, dsq = ComponentNear(comp, playerLoc, StationFallbackRadius)
@@ -2250,9 +2256,372 @@ pcall(function()
     end)
 end)
 
+-- =========================================================================
+-- NEARBY STORAGE DIALOG (every nearby chest as one list; Alt+G away from stations)
+-- =========================================================================
+-- A full-screen page built from the game's own Settings frame, tab buttons and
+-- menu buttons (the same parts as the Toolkit dashboard): category tabs, a grid
+-- of every item type across nearby chests with totals, paging, DEPOSIT ALL and
+-- CLOSE. Clicking an item pulls a stack of it into the backpack.
+local STORAGE_PAGE = "/Game/UI/Settings/WBP_SettingsWidget.WBP_SettingsWidget_C"
+local STORAGE_ROW = "/Game/UI/Common/WBP_MainMenuTabButton.WBP_MainMenuTabButton_C"
+local STORAGE_BACK = "/Game/UI/Common/WBP_DomMainMenuBottomNavButton.WBP_DomMainMenuBottomNavButton_C"
+local STORAGE_VISIBLE, STORAGE_COLLAPSED = 0, 1
+local StorageTabs = {
+    { "ALL", nil }, { "FOOD", "FOOD" }, { "WOOD", "WOOD" }, { "MINING", "MINING" },
+    { "FARMING", "FARMING" }, { "MAGIC", "MAGIC" }, { "ARMOUR", "ARMOUR" },
+    { "EQUIPMENT", "EQUIPMENT" }, { "RECIPES", "RECIPES" }, { "MISC", "MISC" },
+}
+local Storage = {
+    Visible = false, OwnCursor = false, Page = nil, Info = nil, Tabs = {}, Rows = {}, Hits = {},
+    Prev = nil, Next = nil, Deposit = nil, Close = nil,
+    Entries = {}, Shown = {}, Tab = 1, PageIndex = 1, ChestCount = 0,
+}
+
+local function StorageWidgets()
+    local list = {}
+    for _, w in ipairs({ "Page", "Info", "Prev", "Next", "Deposit", "Close" }) do
+        if Storage[w] then list[#list + 1] = Storage[w] end
+    end
+    for _, group in ipairs({ Storage.Tabs, Storage.Rows, Storage.Hits }) do
+        for _, w in pairs(group) do list[#list + 1] = w end
+    end
+    return list
+end
+
+-- Widgets left behind by a previous load of this script (Ctrl+R hot reload).
+do
+    local recorded = nil
+    if ModRef then pcall(function() recorded = ModRef:GetSharedVariable("QuickStack.StorageWidgets") end) end
+    if type(recorded) == "string" and recorded ~= "" then
+        ExecuteInGameThread(function()
+            local names = {}
+            for n in recorded:gmatch("[^\n]+") do names[n] = true end
+            for _, cls in ipairs({ "WBP_SettingsWidget_C", "WBP_MainMenuTabButton_C",
+                                   "WBP_DomAllCapsButton_C", "WBP_DomMainMenuBottomNavButton_C" }) do
+                for _, w in ipairs(FindAllOf(cls) or {}) do
+                    if PickerValid(w) and names[w:GetFullName()] then pcall(function() w:RemoveFromParent() end) end
+                end
+            end
+        end)
+    end
+end
+
+local function StorageRemember()
+    if not ModRef then return end
+    local names = {}
+    for _, w in pairs(StorageWidgets()) do
+        if PickerValid(w) then names[#names + 1] = w:GetFullName() end
+    end
+    pcall(function() ModRef:SetSharedVariable("QuickStack.StorageWidgets", table.concat(names, "\n")) end)
+end
+
+local function StorageCreate(pc, path, z)
+    local cls = StaticFindObject(path)
+    if not PickerValid(cls) and LoadAsset then
+        pcall(function() LoadAsset(path) end)
+        cls = StaticFindObject(path)
+    end
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not PickerValid(cls) or not PickerValid(lib) then error("game UI asset unavailable: " .. path) end
+    local w = lib:Create(pc, cls, pc)
+    if not PickerValid(w) then error("game UI construction failed: " .. path) end
+    pcall(function() w:SetIsFocusable(false) end)
+    w:SetVisibility(STORAGE_COLLAPSED)
+    w:AddToViewport(z)
+    return w
+end
+
+-- Text on a tab-button row (its native LabelText) or on a menu button.
+local function StorageLabel(w, text)
+    if not PickerValid(w) then return end
+    local ok = pcall(function() w.LabelText:SetText(PickerText(text)) end)
+    if not ok then pcall(function() w:SetLabelText(PickerText(text)) end) end
+end
+
+local function StorageBuild(pc)
+    Storage.Page = StorageCreate(pc, STORAGE_PAGE, 10070)
+    -- Our own Settings instance: collapse its categories and content so none of
+    -- its handlers can change game settings; keep the frame and title styling.
+    for _, name in ipairs({
+        "Button_Video", "Button_Legal", "Button_Gameplay", "Button_Controls",
+        "Button_Audio", "Button_Accessibility", "AudioSubWidget", "AccessibilitySubWidget",
+        "GameplaySubWidget", "DeveloperSubWidget", "ControlsSubWidget", "VideoSubWidget",
+        "LegalSubWidget", "WBP_SettingTooltipContainer", "SubCategoryScroller",
+        "SubCategoryButtonGroup", "SubTabLeftInputActionWidget", "SubTabRightInputActionWidget",
+    }) do
+        pcall(function()
+            local child = Storage.Page[name]
+            if PickerValid(child) then child:SetVisibility(STORAGE_COLLAPSED) end
+        end)
+    end
+    pcall(function()
+        Storage.Page.WBP_MainMenu_ScreenTitle.HeaderTextBlock:SetText(PickerText("NEARBY STORAGE"))
+    end)
+    Storage.Info = StorageCreate(pc, STORAGE_ROW, 10071)
+    for i, tab in ipairs(StorageTabs) do
+        Storage.Tabs[i] = StorageCreate(pc, PICKER_BUTTON, 10072)
+        StorageLabel(Storage.Tabs[i], tab[1])
+    end
+    Storage.Prev = StorageCreate(pc, PICKER_BUTTON, 10072)
+    Storage.Next = StorageCreate(pc, PICKER_BUTTON, 10072)
+    Storage.Deposit = StorageCreate(pc, PICKER_BUTTON, 10072)
+    Storage.Close = StorageCreate(pc, STORAGE_BACK, 10072)
+    StorageLabel(Storage.Prev, "< PREV")
+    StorageLabel(Storage.Next, "NEXT >")
+    StorageLabel(Storage.Deposit, "DEPOSIT ALL (G)")
+    StorageLabel(Storage.Close, "CLOSE")
+    StorageRemember()
+end
+
+-- Every item type across nearby chests: { DataAddr, ItemData, Name, Count, Chests, Category }.
+local function StorageCollect(playerLoc)
+    local entries, byAddr = {}, {}
+    local chests = FindNearbyChests(playerLoc)
+    for _, entry in ipairs(chests) do
+        local seenHere = {}
+        local n = 0
+        pcall(function() n = entry.Inventory.ItemSlots:GetArrayNum() end)
+        for i = 1, n do
+            local item = nil
+            pcall(function() item = entry.Inventory.ItemSlots[i] end)
+            if IsValidItem(item) then
+                local addr = GetItemDataAddress(item)
+                if addr then
+                    local e = byAddr[addr]
+                    if not e then
+                        e = { DataAddr = addr, ItemData = item.ItemData, Name = GetItemName(item),
+                              Count = 0, Chests = 0, Category = GetItemCategory(item) }
+                        byAddr[addr] = e
+                        entries[#entries + 1] = e
+                    end
+                    local count = 0
+                    pcall(function() count = item:GetStackSize() end)
+                    e.Count = e.Count + (count or 0)
+                    if not seenHere[addr] then seenHere[addr] = true; e.Chests = e.Chests + 1 end
+                end
+            end
+        end
+    end
+    table.sort(entries, function(a, b) return a.Name < b.Name end)
+    return entries, #chests
+end
+
+local function StoragePlace(w, x, y, width, height)
+    if not PickerValid(w) then return end
+    PickerPlace(w, x, y, width, height)
+    w:SetVisibility(STORAGE_VISIBLE)
+end
+
+local function StorageRender(pc)
+    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = layout:GetViewportSize(pc), layout:GetViewportScale(pc)
+    local width, height = size.X / dpi, size.Y / dpi
+    local x0 = math.max(90, width * 0.05)
+    local innerW = width - 2 * x0
+
+    -- Filtered list for the selected tab.
+    local category = StorageTabs[Storage.Tab][2]
+    local list = {}
+    for _, e in ipairs(Storage.Entries) do
+        if not category or e.Category == category then list[#list + 1] = e end
+    end
+
+    -- Summary line.
+    local totalItems = 0
+    for _, e in ipairs(Storage.Entries) do totalItems = totalItems + e.Count end
+    StorageLabel(Storage.Info, string.format("%d CHESTS NEARBY  |  %d ITEM TYPES  |  %d ITEMS  |  CLICK AN ITEM TO TAKE A STACK",
+        Storage.ChestCount, #Storage.Entries, totalItems))
+    StoragePlace(Storage.Info, x0, 168, innerW, 46)
+
+    -- Category tabs (the selected one reads [LIKE THIS]).
+    local tabW = (innerW - (#StorageTabs - 1) * 8) / #StorageTabs
+    for i, tab in ipairs(StorageTabs) do
+        StorageLabel(Storage.Tabs[i], i == Storage.Tab and ("[" .. tab[1] .. "]") or tab[1])
+        StoragePlace(Storage.Tabs[i], x0 + (i - 1) * (tabW + 8), 224, tabW, 50)
+    end
+
+    -- Item grid.
+    local cols, rowH, gap = 3, 60, 14
+    local colW = (innerW - (cols - 1) * gap) / cols
+    local gridTop = 292
+    local rows = math.max(3, math.min(10, math.floor((height - gridTop - 150) / rowH)))
+    local perPage = rows * cols
+    local pages = math.max(1, math.ceil(#list / perPage))
+    if Storage.PageIndex > pages then Storage.PageIndex = pages end
+    local first = (Storage.PageIndex - 1) * perPage
+    Storage.Shown = {}
+    for slot = 1, perPage do
+        local e = list[first + slot]
+        if e then
+            if not PickerValid(Storage.Rows[slot]) then
+                Storage.Rows[slot] = StorageCreate(pc, STORAGE_ROW, 10071)
+                -- An invisible menu button on top of each row takes the click (as in the Toolkit dashboard).
+                Storage.Hits[slot] = StorageCreate(pc, PICKER_BUTTON, 10073)
+                StorageLabel(Storage.Hits[slot], "")
+                pcall(function() Storage.Hits[slot]:SetRenderOpacity(0.0) end)
+                StorageRemember()
+            end
+            local col = (slot - 1) % cols
+            local row = math.floor((slot - 1) / cols)
+            local x, y = x0 + col * (colW + gap), gridTop + row * rowH
+            local label = string.format("%s   x%d", e.Name, e.Count)
+            if e.Chests > 1 then label = label .. string.format("   (%d chests)", e.Chests) end
+            StorageLabel(Storage.Rows[slot], label)
+            StoragePlace(Storage.Rows[slot], x, y, colW, rowH - 8)
+            StoragePlace(Storage.Hits[slot], x, y, colW, rowH - 8)
+            Storage.Shown[slot] = e
+        else
+            if PickerValid(Storage.Rows[slot]) then Storage.Rows[slot]:SetVisibility(STORAGE_COLLAPSED) end
+            if PickerValid(Storage.Hits[slot]) then Storage.Hits[slot]:SetVisibility(STORAGE_COLLAPSED) end
+        end
+    end
+    for slot = perPage + 1, #Storage.Rows do
+        if PickerValid(Storage.Rows[slot]) then Storage.Rows[slot]:SetVisibility(STORAGE_COLLAPSED) end
+        if PickerValid(Storage.Hits[slot]) then Storage.Hits[slot]:SetVisibility(STORAGE_COLLAPSED) end
+    end
+    if #list == 0 then
+        StorageLabel(Storage.Info, Storage.ChestCount == 0 and "NO CHESTS NEARBY"
+            or "NOTHING IN THIS CATEGORY  |  PICK ANOTHER TAB")
+    end
+
+    -- Bottom bar.
+    local by = height - 112
+    StoragePlace(Storage.Close, x0, by, 240, 56)
+    StorageLabel(Storage.Prev, pages > 1 and string.format("< PREV   %d / %d", Storage.PageIndex, pages) or "< PREV")
+    StoragePlace(Storage.Prev, x0 + 260, by, 240, 56)
+    StoragePlace(Storage.Next, x0 + 520, by, 200, 56)
+    StoragePlace(Storage.Deposit, width - x0 - 340, by, 340, 56)
+    StoragePlace(Storage.Page, 0, 0, width, height)
+    Storage.Visible = true
+end
+
+local function StorageSetCursor(pc, on)
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    pcall(function() pc.bShowMouseCursor = on end)
+    if on then
+        pcall(function() lib:SetInputMode_UIOnlyEx(pc, Storage.Page, 0, false) end)
+    else
+        pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+    end
+end
+
+local function CloseStorage()
+    if not Storage.Visible then return end
+    Storage.Visible = false
+    for _, w in pairs(StorageWidgets()) do
+        if PickerValid(w) then pcall(function() w:SetVisibility(STORAGE_COLLAPSED) end) end
+    end
+    if Storage.OwnCursor then
+        Storage.OwnCursor = false
+        local pc = UEHelpers.GetPlayerController()
+        if PickerValid(pc) then StorageSetCursor(pc, false) end
+    end
+end
+
+local function StorageRefresh()
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    Storage.Entries, Storage.ChestCount = StorageCollect(playerLoc)
+    StorageRender(PC)
+end
+
+local function OpenStorage(PC, playerLoc)
+    if not PickerValid(Storage.Page) then StorageBuild(PC) end
+    Storage.Tab, Storage.PageIndex = 1, 1
+    Storage.Entries, Storage.ChestCount = StorageCollect(playerLoc)
+    StorageRender(PC)
+    -- Opened from normal play: show the cursor and send input to the dialog.
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then
+        Storage.OwnCursor = true
+        StorageSetCursor(PC, true)
+    end
+    Log(string.format("Nearby Storage: %d item type(s) across %d chest(s).", #Storage.Entries, Storage.ChestCount))
+end
+
+-- Close with the menu it was opened over (the cursor goes away), or on Escape.
+local function StorageWatch()
+    if not Storage.Visible or Storage.OwnCursor then return end
+    local PC = UEHelpers.GetPlayerController()
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then CloseStorage() end
+end
+
+pcall(function()
+    RegisterKeyBind(Key.ESCAPE, function()
+        ExecuteInGameThread(function() if Storage.Visible then pcall(CloseStorage) end end)
+    end)
+end)
+
+local function StorageGuard(fn)
+    local ok, err = pcall(fn)
+    if not ok then
+        Log("Nearby Storage error: " .. tostring(err))
+        pcall(CloseStorage)
+    end
+end
+
+pcall(function()
+    RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
+        if not Storage.Visible then return end
+        local ok, button = pcall(function() return context:get() end)
+        if not ok then return end
+        if PickerSame(button, Storage.Close) then
+            ExecuteInGameThread(function() StorageGuard(CloseStorage) end)
+        elseif PickerSame(button, Storage.Prev) then
+            ExecuteInGameThread(function() StorageGuard(function()
+                Storage.PageIndex = math.max(1, Storage.PageIndex - 1)
+                StorageRender(UEHelpers.GetPlayerController())
+            end) end)
+        elseif PickerSame(button, Storage.Next) then
+            ExecuteInGameThread(function() StorageGuard(function()
+                Storage.PageIndex = Storage.PageIndex + 1
+                StorageRender(UEHelpers.GetPlayerController())
+            end) end)
+        elseif PickerSame(button, Storage.Deposit) then
+            ExecuteInGameThread(function() StorageGuard(function()
+                local found = ExecuteQuickStack(true)
+                if found then ExecuteQuickStack() end
+                StorageRefresh()
+            end) end)
+        else
+            for i, tab in ipairs(Storage.Tabs) do
+                if PickerSame(button, tab) then
+                    ExecuteInGameThread(function() StorageGuard(function()
+                        Storage.Tab, Storage.PageIndex = i, 1
+                        StorageRender(UEHelpers.GetPlayerController())
+                    end) end)
+                    return
+                end
+            end
+            for slot, hit in pairs(Storage.Hits) do
+                if PickerSame(button, hit) then
+                    ExecuteInGameThread(function() StorageGuard(function()
+                        local e = Storage.Shown[slot]
+                        if not e then return end
+                        ExecuteQuickPull({ Item = nil, DataAddr = e.DataAddr, Name = e.Name },
+                            MaxStackOf(e.ItemData) * Config.StorageStacksPerClick)
+                        StorageRefresh()
+                    end) end)
+                    return
+                end
+            end
+        end
+    end)
+end)
+
 local function ExecuteStationFetch()
     local PC, pawn, playerLoc = PlayerContext()
     if not PC then return end
+
+    -- Alt+G while Nearby Storage is open closes it.
+    if Storage.Visible then
+        CloseStorage()
+        return
+    end
 
     -- Alt+G while the picker is open closes it.
     if Picker.Visible then
@@ -2268,6 +2637,10 @@ local function ExecuteStationFetch()
     end
 
     local station, how = FindOpenStation(PC, playerLoc)
+    if not station and Config.StorageDialog then
+        OpenStorage(PC, playerLoc)
+        return
+    end
     if not station then
         Log("[DISCOVERY] Station Fetch: no open station menu and no processing station within 6m.")
         Log("Station Fetch: open a crafting station (or hover an item) and press [Alt + G].")
@@ -2635,6 +3008,7 @@ do
             if tick % 5 == 0 then pcall(AutoStoreStationOutput) end
             pcall(FaceChestLabels)
             pcall(PickerWatch)
+            pcall(StorageWatch)
             busy = false
         end)
         return false
