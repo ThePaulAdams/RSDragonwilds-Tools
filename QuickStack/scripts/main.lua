@@ -1,3 +1,25 @@
+-- Hot-reload-safe timers: UE4SS 3.0 runs these on the game thread and cancels them
+-- when the mod unloads (LoopAsync's own thread can hang or crash a reload).
+-- Inside a GameLoop body we are already on the game thread, so ExecuteInGameThread
+-- runs its callback straight away; everywhere else (key binds) it still queues.
+local QueueInGameThread = ExecuteInGameThread
+local InGameLoop = false
+local function ExecuteInGameThread(fn, ...)
+    if InGameLoop then return fn() end
+    return QueueInGameThread(fn, ...)
+end
+local function GameLoop(ms, fn)
+    if not LoopInGameThreadWithDelay then return LoopAsync(ms, fn) end
+    local handle
+    handle = LoopInGameThreadWithDelay(ms, function()
+        InGameLoop = true
+        local ok, stop = pcall(fn)
+        InGameLoop = false
+        if not ok then print("[GameLoop] " .. tostring(stop) .. "\n") end
+        if ok and stop == true and handle then CancelDelayedAction(handle) end
+    end)
+    return handle
+end
 local UEHelpers = require("UEHelpers")
 
 local ModName = "QuickStack"
@@ -2999,7 +3021,7 @@ end
 -- Background loop: labels every 10 s (each refresh scans every chest), label facing every 0.2 s, station output every 1 s.
 do
     local tick, busy = 0, false
-    LoopAsync(200, function()
+    GameLoop(200, function()
         tick = tick + 1
         if busy then return false end
         busy = true
@@ -3612,7 +3634,7 @@ local function ExecuteGroundMagnetism()
     MagnetizeWorldItems(pawn, playerLoc, radius)
 
     -- 3. Follow-up micro-pulse after 150ms to sweep up any items that took a frame to drop
-    LoopAsync(150, function()
+    GameLoop(150, function()
         ExecuteInGameThread(function()
             local PC2 = UEHelpers.GetPlayerController()
             if PC2 and PC2:IsValid() and PC2.Pawn and PC2.Pawn:IsValid() then
@@ -3950,7 +3972,7 @@ local function StoreGroundItems()
     if pulled > 0 then
         Log(string.format(">>> Picking up %d ground item(s) to store them (%d free backpack slot(s))...", pulled, freeSlots))
         -- Give the pickups time to land in the backpack, then deposit them into chests
-        LoopAsync(1500, function()
+        GameLoop(1500, function()
             ExecuteInGameThread(function() ExecuteQuickStack(true) end)
             return true -- one-shot timer
         end)
@@ -3998,7 +4020,7 @@ local function OnKeyG()
     -- Poll the real key state every 100ms. Holds are detected by polling, never by timing alone,
     -- so a quick tap never harvests or vacuums at base.
     local lastPulse = 0
-    LoopAsync(100, function()
+    GameLoop(100, function()
         if HoldState.PressId ~= pressId or not HoldState.Active then return true end
         ExecuteInGameThread(function()
             if HoldState.PressId ~= pressId or not HoldState.Active then return end

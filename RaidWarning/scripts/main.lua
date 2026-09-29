@@ -1,3 +1,25 @@
+-- Hot-reload-safe timers: UE4SS 3.0 runs these on the game thread and cancels them
+-- when the mod unloads (LoopAsync's own thread can hang or crash a reload).
+-- Inside a GameLoop body we are already on the game thread, so ExecuteInGameThread
+-- runs its callback straight away; everywhere else (key binds) it still queues.
+local QueueInGameThread = ExecuteInGameThread
+local InGameLoop = false
+local function ExecuteInGameThread(fn, ...)
+    if InGameLoop then return fn() end
+    return QueueInGameThread(fn, ...)
+end
+local function GameLoop(ms, fn)
+    if not LoopInGameThreadWithDelay then return LoopAsync(ms, fn) end
+    local handle
+    handle = LoopInGameThreadWithDelay(ms, function()
+        InGameLoop = true
+        local ok, stop = pcall(fn)
+        InGameLoop = false
+        if not ok then print("[GameLoop] " .. tostring(stop) .. "\n") end
+        if ok and stop == true and handle then CancelDelayedAction(handle) end
+    end)
+    return handle
+end
 local UEHelpers = require("UEHelpers")
 
 local ModName = "RaidWarning"
@@ -85,7 +107,7 @@ function Toast.Show(text, seconds)
     end)
     if not ok then Log("Toast failed: " .. tostring(err)) end
 end
-LoopAsync(100, function()
+GameLoop(100, function()
     Toast.Tick = Toast.Tick + 1
     if Toast.HideTick > 0 and Toast.Tick >= Toast.HideTick then
         Toast.HideTick = 0
@@ -201,7 +223,7 @@ local function Scan()
 end
 
 local Busy = false
-LoopAsync(Config.ScanIntervalMs, function()
+GameLoop(Config.ScanIntervalMs, function()
     if Busy then return false end
     Busy = true
     ExecuteInGameThread(function()
