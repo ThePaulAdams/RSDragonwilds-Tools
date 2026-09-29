@@ -59,18 +59,31 @@ if (-not $usmap) {
     $running = Get-Process -Name "RSDragonwilds-Win64-Shipping" -ErrorAction SilentlyContinue
     $launched = $false
     if ($running) {
-        Write-Host "The game is already running without the helper. Close it and run this script again." -ForegroundColor Red
-        exit 1
+        # UE4SS's built-in Keybinds mod dumps the mappings on Ctrl+Numpad6; press it in the running game.
+        Write-Host "The game is already running; asking UE4SS to dump the mappings (Ctrl+Numpad6)..." -ForegroundColor Yellow
+        Add-Type -Namespace ModelViewer -Name Keys -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);'
+        (New-Object -ComObject WScript.Shell).AppActivate($running[0].Id) | Out-Null
+        Start-Sleep -Milliseconds 500
+        foreach ($k in @(@(0x11, 0), @(0x66, 0), @(0x66, 2), @(0x11, 2))) {
+            [ModelViewer.Keys]::keybd_event([byte]$k[0], 0, [uint32]$k[1], [UIntPtr]::Zero); Start-Sleep -Milliseconds 60
+        }
+    } else {
+        Write-Host "Starting the game once to write the mappings file (it closes again by itself)..." -ForegroundColor Yellow
+        Start-Process "steam://rungameid/1374490"
+        $launched = $true
     }
-    Write-Host "Starting the game once to write the mappings file (it closes again by itself)..." -ForegroundColor Yellow
-    Start-Process "steam://rungameid/1374490"
-    $launched = $true
     $deadline = (Get-Date).AddMinutes(10)
     while (-not ($usmap = Find-Usmap) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
     if (-not $usmap) { Write-Error "Mappings.usmap did not appear within 10 minutes. Check ue4ss\UE4SS.log for [MappingsDumper]." }
     Start-Sleep -Seconds 5   # let the write finish
     if ($launched) { Get-Process -Name "RSDragonwilds-Win64-Shipping" -ErrorAction SilentlyContinue | Stop-Process -Force }
 }
+# The dump is named after the game version, which the helper mod can't see, so switch it off once one exists.
+$modsTxt = Join-Path $win64 "ue4ss\Mods\mods.txt"
+if ((Test-Path $modsTxt) -and (Select-String -Path $modsTxt -Pattern '^\s*MappingsDumper\s*:\s*1' -Quiet)) {
+    (Get-Content $modsTxt) -replace '^\s*MappingsDumper\s*:\s*1', 'MappingsDumper : 0' | Set-Content $modsTxt
+}
+Remove-Item (Join-Path $win64 "ue4ss\Mods\MappingsDumper\enabled.txt") -ErrorAction SilentlyContinue
 Write-Host "Mappings: $($usmap.FullName)" -ForegroundColor Cyan
 
 # ---- 2. .NET 10 SDK (installed locally next to the exporter if missing; no admin needed) ----

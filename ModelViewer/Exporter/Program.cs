@@ -79,7 +79,8 @@ var started = DateTime.Now;
 foreach (var batch in candidates.Chunk(100))
 {
     var session = new ExportSession((_, _) => { });
-    int queued = 0;
+    // Keys look like "Engine/Content/.../SM_X.SM_X", the same form the export results report.
+    var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach (var file in batch)
     {
         try
@@ -87,9 +88,10 @@ foreach (var batch in candidates.Chunk(100))
             var pkg = provider.LoadPackage(file.Path);
             foreach (var mesh in pkg.GetExports().OfType<UStaticMesh>())
             {
-                if (entries.ContainsKey(mesh.GetPathName())) { skipped++; continue; }
+                var key = Path.ChangeExtension(file.Path, null) + "." + mesh.Name;
+                if (entries.ContainsKey(key)) { skipped++; continue; }
                 session.Add(mesh);
-                queued++;
+                queued.Add(key);
             }
         }
         catch (Exception e)
@@ -98,10 +100,11 @@ foreach (var batch in candidates.Chunk(100))
             if (opt.Verbose || failed <= 5) Console.WriteLine($"  load failed: {file.Path}: {e.Message}");
         }
     }
-    if (queued == 0) continue;
+    if (queued.Count == 0) continue;
 
     var results = await session.RunAsync(opt.Out, exportOptions, null, CancellationToken.None);
-    foreach (var r in results)
+    // The session also reports the materials and textures it pulled in; only the meshes count.
+    foreach (var r in results.Where(r => queued.Contains(r.ObjectPath)))
     {
         var glb = r.DiskFilePaths?.FirstOrDefault(p => p.EndsWith(".glb", StringComparison.OrdinalIgnoreCase)
                                                     || p.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase));
