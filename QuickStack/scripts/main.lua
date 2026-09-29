@@ -81,6 +81,8 @@ local Config = {
     -- Alt+G at a station opens a clickable list of what it can use (items in nearby
     -- chests, with counts); click one to fetch a stack. False = fetch straight away.
     StationFetchPicker = true,
+    -- Top edge of the picker column; 380 keeps it clear of the OSRS minimap.
+    StationPickerTop = 380,
     -- Alt+G with no station open shows the Nearby Storage dialog: every nearby chest
     -- as one list with category tabs; click an item to take stacks of it.
     StorageDialog = true,
@@ -2167,7 +2169,8 @@ local function PickerRender(pc)
     local size, dpi = layout:GetViewportSize(pc), layout:GetViewportScale(pc)
     local width, height = size.X / dpi, size.Y / dpi
     local rowH, colW = 58, 380
-    local x, y = width - colW - 40, 120
+    -- Right-hand column, starting below the OSRS minimap (320px square, 24px from the top-right).
+    local x, y = width - colW - 40, Config.StationPickerTop
     local perPage = math.max(3, math.min(12, math.floor((height - y - 2 * rowH - 40) / rowH)))
     local pages = math.max(1, math.ceil(#Picker.Entries / perPage))
     if Picker.Page > pages then Picker.Page = 1 end
