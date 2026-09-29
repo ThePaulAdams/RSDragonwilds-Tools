@@ -60,7 +60,9 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[E]`** or **`[V]`** | **Telekinetic Woodcraft** | Telekinetically grab, carry, or drop targeted log / trunk |
 | **`[Z]`** | **Telekinetic Woodcraft** | [Log Magnet] Mass-gather all logs within 150m into a neat pile |
 | **`[Shift + F6]`** | **Telekinetic Woodcraft** | Cycle Splinter spell AoE radius multiplier (1x, 2.5x, 5.0x) |
-| **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game |
+| **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game (can close the game while mods with background loops unload; restarting is safer) |
+
+The new mods use F11/F12 chords because the game ignores Ctrl/Alt, so a Ctrl+letter chord also fires the game's own binding for that letter, and UE4SS already owns Ctrl+O (debug console), Ctrl+J (object dump), Ctrl+H (header dump) and Ctrl+Num5–9 (other dumpers). Numpad keys were ruled out because AutoRun's Num Lock toggle turns them into End/arrow keys. F12 on its own is Steam's default screenshot key, so these chords may also save a Steam screenshot unless that key is changed in Steam.
 
 ---
 

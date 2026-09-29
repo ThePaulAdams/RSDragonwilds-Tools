@@ -15,4 +15,4 @@ Teleports you home after a short channel, like a home teleport spell.
 - Uses the engine's `K2_TeleportTo`. In co-op this works for the host; a client teleport may be corrected by the server.
 
 ## Status
-Untested in game. The bed class names are guesses, so saving a home with `Alt+F11` is the reliable path.
+Untested in game. The bed fallback uses the game's bedroll class (`BP_BaseBuilding_BedRoll_C` in the object dump); saving a home with `Alt+F11` is still the most reliable path.

@@ -2215,15 +2215,33 @@ local function IsStationActor(actor)
 end
 
 local function StationThatMade(item)
+    -- Processing stations (furnace, smelter...) drop their product as this class
+    -- (ProcessingStationComponent.SpawnItemClass in the object dump).
+    local cls = GetSafeClassName(item)
+    if cls:find("ProcessingStation", 1, true) then return item, cls end
     for _, getter in ipairs({
         function() return item:GetOwner() end,
         function() return item.Owner end,
         function() return item:GetInstigator() end,
     }) do
         local ok, owner = pcall(getter)
-        if ok and owner and IsStationActor(owner) then return owner end
+        if ok and owner and IsStationActor(owner) then return owner, GetSafeClassName(owner) end
     end
     return nil
+end
+
+-- Room for itemData across the chests StoreIntoCategoryChest would use.
+local function CategoryChestSpace(itemData, category, nearbyChests)
+    local space = 0
+    for _, ch in ipairs(nearbyChests) do
+        local st = AnalyzeChest(ch)
+        if st.DominantCategory == category or st.TotalItemCount == 0 or Config.OverflowWhenCategoryFull then
+            local s = 0
+            pcall(function() s = ch.Inventory:GetSpaceAvailableForItemByData(itemData) end)
+            space = space + (s or 0)
+        end
+    end
+    return space
 end
 
 local function AutoStoreStationOutput()
@@ -2256,30 +2274,34 @@ local function AutoStoreStationOutput()
 
     local nearbyChests = nil
     for _, actor in ipairs(fresh) do
-        local station = StationThatMade(actor)
+        local station, stationCls = StationThatMade(actor)
         if not station and Config.DebugLog then
-            local ownerCls = "none"
-            pcall(function() ownerCls = GetSafeClassName(actor:GetOwner()) end)
-            if not LoggedOwnerClasses[ownerCls] then
-                LoggedOwnerClasses[ownerCls] = true
-                Log("[DISCOVERY] New ground item near you with owner class: " .. ownerCls)
+            local itemCls = GetSafeClassName(actor)
+            if not LoggedOwnerClasses[itemCls] then
+                LoggedOwnerClasses[itemCls] = true
+                Log("[DISCOVERY] New ground item near you (not station output): " .. itemCls)
             end
         end
         if station then
             nearbyChests = nearbyChests or FindNearbyChests(playerLoc)
-            local itemData, count, durability = nil, 1, 1.0
+            local itemData, count = nil, 0
             pcall(function() itemData = actor.ItemData end)
             pcall(function() count = actor:GetStackSize() end)
-            pcall(function() durability = actor:GetDurability() or 1.0 end)
             if itemData and itemData:IsValid() and count and count > 0 and #nearbyChests > 0 then
                 local name = GetItemName(actor)
-                local stored = StoreIntoCategoryChest(itemData, count, durability, name,
-                    GetItemCategory(actor), nearbyChests)
-                if stored >= count then
-                    pcall(function() actor:K2_DestroyActor() end)
-                    Log(string.format(">>> Auto-stored %dx '%s' from %s.", stored, name, GetSafeClassName(station)))
-                elseif stored > 0 then
-                    pcall(function() actor:SetStackSize(count - stored) end)
+                local category = GetItemCategory(actor)
+                -- Only move whole stacks: a ground item's stack size can't be reduced,
+                -- so a partial store would duplicate the rest.
+                if CategoryChestSpace(itemData, category, nearbyChests) >= count then
+                    local stored = StoreIntoCategoryChest(itemData, count, 1.0, name, category, nearbyChests)
+                    if stored >= count then
+                        pcall(function() actor:K2_DestroyActor() end)
+                        Log(string.format(">>> Auto-stored %dx '%s' from %s.", stored, name, stationCls))
+                    elseif stored > 0 then
+                        Log(string.format("Auto-store: only %d of %dx '%s' fit; left the stack on the ground.", stored, count, name))
+                    end
+                elseif Config.DebugLog then
+                    Log(string.format("Auto-store: no room for %dx '%s' in [%s] chests; left it on the ground.", count, name, category))
                 end
             end
         end

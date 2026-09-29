@@ -319,12 +319,14 @@ local function Show()
     RenderPage()
 end
 
-RegisterKeyBind(Config.Key, Config.Modifiers, function()
-    ExecuteInGameThread(function()
-        local ok, err = pcall(Show)
-        if not ok then Log("Error: " .. tostring(err)) end
+do
+    RegisterKeyBind(Config.Key, Config.Modifiers, function()
+        ExecuteInGameThread(function()
+            local ok, err = pcall(Show)
+            if not ok then Log("Error: " .. tostring(err)) end
+        end)
     end)
-end)
+end
 if Key.ESCAPE then
     RegisterKeyBind(Key.ESCAPE, function() ExecuteInGameThread(HidePanel) end)
 end

@@ -16,10 +16,8 @@ local Config = {
     ChannelMoveTolerance = 100.0,
     CooldownSeconds = 60,
     -- Bed actor classes tried when no home has been saved.
-    BedClasses = {
-        "BP_BaseBuilding_Bed_C", "BP_BaseBuilding_Bedroll_C", "BP_BaseBuilding_Bed_Simple_C",
-        "BP_Bedroll_C", "BP_Bed_C", "BP_Bed_Base_C",
-    },
+    -- (the only bed class in the object dump is the base-building bedroll)
+    BedClasses = { "BP_BaseBuilding_BedRoll_C" },
 }
 
 local function Valid(o)
@@ -225,18 +223,22 @@ LoopAsync(100, function()
     return false
 end)
 
-RegisterKeyBind(Config.RecallKey, Config.RecallModifiers, function()
-    ExecuteInGameThread(function()
-        local ok, err = pcall(StartRecall)
-        if not ok then Log("Error: " .. tostring(err)) end
+do
+    RegisterKeyBind(Config.RecallKey, Config.RecallModifiers, function()
+        ExecuteInGameThread(function()
+            local ok, err = pcall(StartRecall)
+            if not ok then Log("Error: " .. tostring(err)) end
+        end)
     end)
-end)
-RegisterKeyBind(Config.SetHomeKey, Config.SetHomeModifiers, function()
-    ExecuteInGameThread(function()
-        local ok, err = pcall(SetHome)
-        if not ok then Log("Error: " .. tostring(err)) end
+end
+do
+    RegisterKeyBind(Config.SetHomeKey, Config.SetHomeModifiers, function()
+        ExecuteInGameThread(function()
+            local ok, err = pcall(SetHome)
+            if not ok then Log("Error: " .. tostring(err)) end
+        end)
     end)
-end)
+end
 
 LoadHome()
 Log(Home and string.format("Ready. Home at (%.0f, %.0f, %.0f).", Home.X, Home.Y, Home.Z)

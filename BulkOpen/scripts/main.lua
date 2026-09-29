@@ -14,8 +14,11 @@ local Config = {
     OpenIntervalMs = 250,
     -- Give up after this many attempts that did not shrink any pack.
     MaxFailedAttempts = 6,
-    -- An item counts as a bag when its asset path contains one of these...
-    PathPatterns = { "item_pack", "item_bag", "lootbag", "loot_bag" },
+    -- An item counts as a bag when its data class is one of these (the object dump
+    -- shows every pack, e.g. ITEM_Consumable_GoblinPack, as BP_Consumables_ItemEmitter_C)...
+    DataClasses = { "BP_Consumables_ItemEmitter_C" },
+    -- ...or its asset path contains one of these...
+    PathPatterns = { "consumable_goblinpack", "lootbag", "loot_bag" },
     -- ...or its display name ends with one of these words.
     NameSuffixes = { " pack", " bag", " sack", " pouch" },
     -- Never open these, even when a pattern above matches.
@@ -103,16 +106,27 @@ local function ItemName(item)
     return name or ""
 end
 
+-- "ClassName /Game/Path/Asset.Asset" of the item's data asset.
 local function ItemPath(item)
     local path = ""
-    pcall(function() path = item.ItemData:GetPathName() end)
+    pcall(function() path = item.ItemData:GetFullName() end)
     return path or ""
+end
+
+local function DataClass(item)
+    local cls = ""
+    pcall(function() cls = item.ItemData:GetClass():GetFName():ToString() end)
+    return cls or ""
 end
 
 local function IsBag(item)
     local name, path = ItemName(item):lower(), ItemPath(item):lower()
     for _, word in ipairs(Config.Exclude) do
-        if name:find(word, 1, true) or path:find(word:gsub(" ", "_"), 1, true) then return false end
+        if name:find(word, 1, true) or path:find((word:gsub(" ", "_")), 1, true) then return false end
+    end
+    local cls = DataClass(item)
+    for _, c in ipairs(Config.DataClasses) do
+        if cls == c then return true end
     end
     for _, pat in ipairs(Config.PathPatterns) do
         if path:find(pat, 1, true) then return true end
@@ -288,11 +302,13 @@ LoopAsync(Config.OpenIntervalMs, function()
     return false
 end)
 
-RegisterKeyBind(Config.Key, Config.Modifiers, function()
-    ExecuteInGameThread(function()
-        local ok, err = pcall(Start)
-        if not ok then Log("Error: " .. tostring(err)) end
+do
+    RegisterKeyBind(Config.Key, Config.Modifiers, function()
+        ExecuteInGameThread(function()
+            local ok, err = pcall(Start)
+            if not ok then Log("Error: " .. tostring(err)) end
+        end)
     end)
-end)
+end
 
 Log("Ready: Shift+F11 opens every bag/pack in your backpack (press again to stop).")

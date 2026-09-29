@@ -160,12 +160,19 @@ local function Scroll(direction)
     Log("No hotbar select function worked; wheel scrolling is off until reload. Send the DISCOVERY lines above to the toolkit author.")
 end
 
-local Busy, LastError, LastScroll = false, nil, 0
-LoopAsync(10, function()
+local Busy, LastError, LastFrame, LastScroll = false, nil, -1, 0
+local SystemLib = nil
+-- Wheel "just pressed" lasts one frame; poll faster than any frame rate and
+-- check each engine frame once, so a notch is never missed or counted twice.
+LoopAsync(4, function()
     if Disabled or Busy then return false end
     Busy = true
     ExecuteInGameThread(function()
         local ok, err = pcall(function()
+            if not Valid(SystemLib) then SystemLib = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary") end
+            local frame = SystemLib:GetFrameCount()
+            if frame == LastFrame then return end
+            LastFrame = frame
             local pc = UEHelpers.GetPlayerController()
             if not Valid(pc) then return end
             WheelUp = WheelUp or { KeyName = FName("MouseScrollUp") }

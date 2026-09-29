@@ -1454,17 +1454,12 @@ local function SpawnMarkerActor(loc)
         Scale3D = { X = 1, Y = 1, Z = 1 }
     }
     local actor = nil
-    -- UE5 signature takes a TransformScaleMethod; older builds do not.
-    local ok = pcall(function()
+    -- Signature from the object dump: (WorldContext, Class, Transform, CollisionHandling, Owner, TransformScaleMethod).
+    local ok, err = pcall(function()
         actor = statics:BeginDeferredActorSpawnFromClass(PC, actorClass, transform, 1, nil, 1)
-        statics:FinishSpawningActor(actor, transform, 1)
+        if MarkerValid(actor) then statics:FinishSpawningActor(actor, transform, 1) end
     end)
-    if not ok or not MarkerValid(actor) then
-        pcall(function()
-            actor = statics:BeginDeferredActorSpawnFromClass(PC, actorClass, transform, 1, nil)
-            statics:FinishSpawningActor(actor, transform)
-        end)
-    end
+    if not ok then Log("[DEATH] Marker spawn failed: " .. tostring(err)) end
     return MarkerValid(actor) and actor or nil
 end
 
@@ -1495,6 +1490,9 @@ end
 
 -- Health fraction (0..1) for any pawn, trying several common layouts and caching the one that works.
 local HealthReaders = {
+    -- Real layout (object dump): DominionPlayerCharacter.HealthComponent is a
+    -- PlayerHealthComponent -> HealthFromAttributeComponent -> HealthComponent.
+    function(p) return p.HealthComponent:GetNormalizedHealth() end,
     function(p) return p:GetHealthPercent() end,
     function(p) return p:GetHealth() / p:GetMaxHealth() end,
     function(p) return p:GetCurrentHealth() / p:GetMaxHealth() end,
@@ -1549,7 +1547,8 @@ end
 
 local function IsPawnDead(pawn)
     local dead = false
-    pcall(function() if pawn.IsDead and pawn:IsDead() then dead = true end end)
+    pcall(function() if pawn.HealthComponent:IsDead() then dead = true end end)
+    if not dead then pcall(function() if pawn.IsDead and pawn:IsDead() then dead = true end end) end
     if not dead then pcall(function() if pawn.bIsDead == true then dead = true end end) end
     if not dead then
         local h = ReadHealthFraction(pawn)
