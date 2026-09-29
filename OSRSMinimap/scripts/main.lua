@@ -1346,7 +1346,7 @@ local DeathMarker = nil        -- { Actor, Comp, Location }
 local CoopMarkers = {}         -- [pawnAddress] = { Pawn, Comp }
 local LastPawnState = nil      -- { Address, World, Location, Dead }
 local HealthAccessor = nil     -- cached function(pawn) -> fraction or nil
-local HealthDiscoveryLogged = false
+local HealthDiscoveryLogged = {} -- pawn class name -> true (the menu pawn differs from the in-world pawn)
 
 local function MarkerValid(o)
     if not o then return false end
@@ -1517,24 +1517,31 @@ local function ReadHealthFraction(pawn)
             return math.max(0, math.min(1, v))
         end
     end
-    if not HealthDiscoveryLogged then
-        HealthDiscoveryLogged = true
+    local className = "?"
+    pcall(function() className = pawn:GetClass():GetFName():ToString() end)
+    if not HealthDiscoveryLogged[className] then
+        HealthDiscoveryLogged[className] = true
         local names = {}
+        local function interesting(n)
+            n = n:lower()
+            return n:find("health") or n:find("dead") or n:find("vital")
+                or n:find("attribute") or n:find("abilitysystem")
+        end
         pcall(function()
             local cls = pawn:GetClass()
             while cls and cls:IsValid() do
                 cls:ForEachFunction(function(fn)
                     local n = fn:GetFName():ToString()
-                    if n:lower():find("health") or n:lower():find("dead") then names[#names + 1] = n end
+                    if interesting(n) then names[#names + 1] = n end
                 end)
                 cls:ForEachProperty(function(prop)
                     local n = prop:GetFName():ToString()
-                    if n:lower():find("health") or n:lower():find("dead") then names[#names + 1] = n end
+                    if interesting(n) then names[#names + 1] = n end
                 end)
                 cls = cls:GetSuperStruct()
             end
         end)
-        Log("[DISCOVERY] No health reader matched. Health-related members on pawn: "
+        Log("[DISCOVERY] No health reader matched on " .. className .. ". Health-related members: "
             .. (#names > 0 and table.concat(names, ", ") or "(none)"))
     end
     return nil
