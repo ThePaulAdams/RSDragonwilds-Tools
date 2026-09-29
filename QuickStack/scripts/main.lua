@@ -56,6 +56,9 @@ local Config = {
     -- Furnaces/smelters: only fetch item types already in the station's ingredient or
     -- fuel slots (put one iron ore in -> Alt+G fetches iron). Set false to fetch everything it accepts.
     StationFetchLoadedOnly = true,
+    -- Alt+G at a station opens a clickable list of what it can use (items in nearby
+    -- chests, with counts); click one to fetch a stack. False = fetch straight away.
+    StationFetchPicker = true,
     -- With StationFetchLoadedOnly, an empty station fetches everything it accepts (true) or nothing (false).
     StationFetchAllWhenEmpty = false,
 
@@ -1933,7 +1936,12 @@ local function InventoryDataSet(inv)
 end
 
 local function ProcessingStation(comp, owner)
-    local accepted, n = DataSet(comp.AcceptedResources)
+    local resources, n = DataSet(comp.AcceptedResources)
+    local fuels, nf = DataSet(comp.AcceptedFuelsIncludingRecipeOverrides)
+    local accepted = {}
+    for addr in pairs(resources) do accepted[addr] = true end
+    for addr in pairs(fuels) do accepted[addr] = true end
+    n = n + nf
     local inv, fuel = nil, nil
     pcall(function() inv = comp.Resources end)
     pcall(function() fuel = comp.Fuel end)
@@ -1950,6 +1958,7 @@ local function ProcessingStation(comp, owner)
     end
     return { Actor = owner, Inventory = inv, ClassName = GetSafeClassName(owner),
              Accepted = n > 0 and accepted or nil, Processing = true,
+             Resources = resources, Fuels = fuels,
              Loaded = loadedCount > 0 and loaded or nil }
 end
 
@@ -2000,9 +2009,256 @@ end
 
 local ExecuteQuickPull -- defined below (forward-declared by the station fetch)
 
+-- =========================================================================
+-- STATION FETCH PICKER (clickable list of what the open station can use)
+-- =========================================================================
+-- Alt+G at an open station shows one game-style button per item type in nearby
+-- chests that the station accepts (ingredients and fuel), with the count.
+-- Clicking one pulls a stack of it into the backpack. Alt+G again, or closing
+-- the station menu, hides the list. Same widget + click hook as ModMenu.
+local PICKER_BUTTON = "/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C"
+local Picker = { Buttons = {}, Rows = {}, Entries = {}, Page = 1, Visible = false,
+                 Station = nil, Close = nil, More = nil }
+
+local function PickerValid(w)
+    if not w then return false end
+    local ok, res = pcall(function() return w:IsValid() and w:GetAddress() ~= 0 end)
+    return ok and res
+end
+
+local function PickerSame(a, b)
+    return PickerValid(a) and PickerValid(b) and a:GetAddress() == b:GetAddress()
+end
+
+-- Buttons left behind by a previous load of this script (Ctrl+R hot reload).
+do
+    local recorded = nil
+    if ModRef then pcall(function() recorded = ModRef:GetSharedVariable("QuickStack.PickerWidgets") end) end
+    if type(recorded) == "string" and recorded ~= "" then
+        ExecuteInGameThread(function()
+            local names = {}
+            for n in recorded:gmatch("[^\n]+") do names[n] = true end
+            for _, w in ipairs(FindAllOf("WBP_DomAllCapsButton_C") or {}) do
+                if PickerValid(w) and names[w:GetFullName()] then pcall(function() w:RemoveFromParent() end) end
+            end
+        end)
+    end
+end
+
+-- Every picker widget that exists (a nil entry would stop ipairs early).
+local function PickerWidgets()
+    local list = {}
+    if Picker.Close then list[#list + 1] = Picker.Close end
+    if Picker.More then list[#list + 1] = Picker.More end
+    for _, w in pairs(Picker.Buttons) do list[#list + 1] = w end
+    return list
+end
+
+local function PickerRemember()
+    if not ModRef then return end
+    local names = {}
+    for _, w in pairs(PickerWidgets()) do
+        if PickerValid(w) then names[#names + 1] = w:GetFullName() end
+    end
+    pcall(function() ModRef:SetSharedVariable("QuickStack.PickerWidgets", table.concat(names, "\n")) end)
+end
+
+local function PickerText(str)
+    return StaticFindObject("/Script/Engine.Default__KismetTextLibrary"):Conv_StringToText(str)
+end
+
+local function PickerCreateButton(pc)
+    local cls = StaticFindObject(PICKER_BUTTON)
+    if not PickerValid(cls) and LoadAsset then
+        pcall(function() LoadAsset(PICKER_BUTTON) end)
+        cls = StaticFindObject(PICKER_BUTTON)
+    end
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not PickerValid(cls) or not PickerValid(lib) then return nil end
+    local w = lib:Create(pc, cls, pc)
+    if not PickerValid(w) then return nil end
+    pcall(function() w:SetIsFocusable(false) end)
+    w:AddToViewport(10060)
+    w:SetVisibility(1)
+    return w
+end
+
+local function PickerPlace(w, x, y, width, height)
+    w:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
+    w:SetAnchorsInViewport({ Minimum = { X = 0, Y = 0 }, Maximum = { X = 0, Y = 0 } })
+    w:SetPositionInViewport({ X = x, Y = y }, false)
+    w:SetDesiredSizeInViewport({ X = width, Y = height })
+end
+
+local function HidePicker()
+    Picker.Visible = false
+    for _, w in pairs(PickerWidgets()) do
+        if PickerValid(w) then pcall(function() w:SetVisibility(1) end) end
+    end
+end
+
+-- Item types in nearby chests that the station takes, with total counts.
+local function PickerBuildEntries(station, playerLoc)
+    local entries, byAddr = {}, {}
+    if not station.Accepted then return entries end
+    for _, entry in ipairs(FindNearbyChests(playerLoc)) do
+        local n = 0
+        pcall(function() n = entry.Inventory.ItemSlots:GetArrayNum() end)
+        for i = 1, n do
+            local item = nil
+            pcall(function() item = entry.Inventory.ItemSlots[i] end)
+            if IsValidItem(item) then
+                local addr = GetItemDataAddress(item)
+                if addr and station.Accepted[addr] then
+                    local count = 0
+                    pcall(function() count = item:GetStackSize() end)
+                    local e = byAddr[addr]
+                    if not e then
+                        e = { DataAddr = addr, ItemData = item.ItemData, Name = GetItemName(item), Count = 0,
+                              Fuel = station.Fuels and station.Fuels[addr] and not station.Resources[addr],
+                              Loaded = station.Loaded and station.Loaded[addr] and true or false }
+                        byAddr[addr] = e
+                        entries[#entries + 1] = e
+                    end
+                    e.Count = e.Count + (count or 0)
+                end
+            end
+        end
+    end
+    -- What is already in the station first, then ingredients before fuel, then by name.
+    table.sort(entries, function(a, b)
+        if a.Loaded ~= b.Loaded then return a.Loaded end
+        if (a.Fuel and 1 or 0) ~= (b.Fuel and 1 or 0) then return not a.Fuel end
+        return a.Name < b.Name
+    end)
+    return entries
+end
+
+local function PickerRender(pc)
+    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = layout:GetViewportSize(pc), layout:GetViewportScale(pc)
+    local width, height = size.X / dpi, size.Y / dpi
+    local rowH, colW = 58, 380
+    local x, y = width - colW - 40, 120
+    local perPage = math.max(3, math.min(12, math.floor((height - y - 2 * rowH - 40) / rowH)))
+    local pages = math.max(1, math.ceil(#Picker.Entries / perPage))
+    if Picker.Page > pages then Picker.Page = 1 end
+
+    if not PickerValid(Picker.Close) then Picker.Close = PickerCreateButton(pc) end
+    if not PickerValid(Picker.Close) then
+        Log("Station Fetch: could not create the picker buttons.")
+        return
+    end
+    local title = #Picker.Entries == 0
+        and (Picker.Station.Crafting and not Picker.Station.Accepted and "SELECT A RECIPE FIRST  /  CLOSE"
+             or "NOTHING IN NEARBY CHESTS  /  CLOSE")
+        or "FETCH FROM CHESTS  /  CLOSE"
+    Picker.Close:SetLabelText(PickerText(title))
+    PickerPlace(Picker.Close, x, y, colW, rowH - 6)
+    Picker.Close:SetVisibility(0)
+
+    Picker.Rows = {}
+    local first = (Picker.Page - 1) * perPage
+    for i = 1, perPage do
+        local e = Picker.Entries[first + i]
+        local b = Picker.Buttons[i]
+        if e then
+            if not PickerValid(b) then
+                b = PickerCreateButton(pc)
+                Picker.Buttons[i] = b
+            end
+            if PickerValid(b) then
+                local label = string.format("%s%s  x%d", e.Name, e.Fuel and " (fuel)" or "", e.Count)
+                b:SetLabelText(PickerText(label))
+                PickerPlace(b, x, y + i * rowH, colW, rowH - 6)
+                b:SetVisibility(0)
+                Picker.Rows[i] = e
+            end
+        elseif PickerValid(b) then
+            b:SetVisibility(1)
+        end
+    end
+    for i = perPage + 1, #Picker.Buttons do
+        if PickerValid(Picker.Buttons[i]) then Picker.Buttons[i]:SetVisibility(1) end
+    end
+
+    if pages > 1 then
+        if not PickerValid(Picker.More) then Picker.More = PickerCreateButton(pc) end
+        if PickerValid(Picker.More) then
+            Picker.More:SetLabelText(PickerText(string.format("MORE  (%d / %d)", Picker.Page, pages)))
+            PickerPlace(Picker.More, x, y + (perPage + 1) * rowH, colW, rowH - 6)
+            Picker.More:SetVisibility(0)
+        end
+    elseif PickerValid(Picker.More) then
+        Picker.More:SetVisibility(1)
+    end
+    PickerRemember()
+    Picker.Visible = true
+end
+
+local function OpenPicker(PC, station, playerLoc)
+    Picker.Station = station
+    Picker.Entries = PickerBuildEntries(station, playerLoc)
+    Picker.Page = 1
+    PickerRender(PC)
+    Log(string.format("Station Fetch picker: %d item type(s) for '%s'.", #Picker.Entries, station.ClassName))
+end
+
+local function PickerClicked(index)
+    local e = Picker.Rows[index]
+    local PC, pawn, playerLoc = PlayerContext()
+    if not e or not PC then return end
+    ExecuteQuickPull({ Item = nil, DataAddr = e.DataAddr, Name = e.Name },
+        MaxStackOf(e.ItemData) * Config.StationFetchStacksPerItem)
+    -- Refresh the counts left in the chests.
+    Picker.Entries = PickerBuildEntries(Picker.Station, playerLoc)
+    PickerRender(PC)
+end
+
+-- Hide the list once the station menu closes (the mouse cursor goes away).
+local function PickerWatch()
+    if not Picker.Visible then return end
+    local PC = UEHelpers.GetPlayerController()
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then HidePicker() end
+end
+
+pcall(function()
+    RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
+        if not Picker.Visible then return end
+        local ok, button = pcall(function() return context:get() end)
+        if not ok then return end
+        if PickerSame(button, Picker.Close) then
+            ExecuteInGameThread(function() pcall(HidePicker) end)
+        elseif PickerSame(button, Picker.More) then
+            ExecuteInGameThread(function()
+                Picker.Page = Picker.Page + 1
+                pcall(PickerRender, UEHelpers.GetPlayerController())
+            end)
+        else
+            for i, b in ipairs(Picker.Buttons) do
+                if PickerSame(button, b) then
+                    ExecuteInGameThread(function()
+                        local okClick, err = pcall(PickerClicked, i)
+                        if not okClick then Log("Station Fetch picker error: " .. tostring(err)) end
+                    end)
+                    break
+                end
+            end
+        end
+    end)
+end)
+
 local function ExecuteStationFetch()
     local PC, pawn, playerLoc = PlayerContext()
     if not PC then return end
+
+    -- Alt+G while the picker is open closes it.
+    if Picker.Visible then
+        HidePicker()
+        return
+    end
 
     -- Hovering an item always wins: pull every matching stack.
     local hover = GetCurrentHoverTarget()
@@ -2021,6 +2277,12 @@ local function ExecuteStationFetch()
     for _ in pairs(station.Accepted or {}) do acceptedCount = acceptedCount + 1 end
     Log(string.format("[DISCOVERY] Station Fetch: found '%s' via %s, %d accepted item type(s) listed.",
         station.ClassName, how, acceptedCount))
+
+    -- Show the clickable list so the player picks exactly what to fetch.
+    if Config.StationFetchPicker and (station.Processing or station.Crafting) then
+        OpenPicker(PC, station, playerLoc)
+        return
+    end
 
     -- Crafting benches: only the selected recipe's ingredients, never a guess.
     if station.Crafting and not station.Accepted then
@@ -2372,6 +2634,7 @@ do
             if tick % 50 == 1 then pcall(RefreshChestLabels) end
             if tick % 5 == 0 then pcall(AutoStoreStationOutput) end
             pcall(FaceChestLabels)
+            pcall(PickerWatch)
             busy = false
         end)
         return false

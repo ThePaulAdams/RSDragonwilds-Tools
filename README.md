@@ -43,7 +43,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
 | **`[Ctrl + G]`** | **Quick Stack** | **Pack Base:** Vacuum all ground items within 150m into virtual Relocation Crate |
 | **`[Shift + G]`** | **Quick Stack** | **Unpack Base:** Deposit all Relocation Crate items categorized into nearby chests |
-| **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open crafting station, pull its ingredients from nearby chests. Hovering an item pulls that item instead |
+| **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open station, pick what to pull from nearby chests from a clickable list. Hovering an item pulls that item instead |
 | **`[Shift + F12]`** | **Quick Stack** | Toggle floating category labels above nearby chests |
 | **`[Ctrl + F6]`** | **OSRS Minimap** | Clear the death marker |
 | **`[Ctrl + F9]`** | **Bulk Open** | Open every bag/pack in your backpack |
@@ -146,7 +146,7 @@ If you cloned or downloaded this repository:
 - **Wild Gathering & Ground Magnetism (`Hold G`)**: Sweeps a 40m radius while sprinting, auto-harvesting wild crops (dwellberries, onions, flax, herbs, fallen wood, stones) directly into your backpack.
 - **Base Relocation Virtual Crate (`Ctrl+G` / `Shift+G`)**: Pack all ground items within 150m into a persistent virtual crate, then unpack them organized into nearby chests with one keypress.
 - **Targeted QuickPull**: Hover any item in your inventory or chest and hold `G` (or press `Alt+G`) to pull all matching stacks from all nearby chests directly into your inventory.
-- **Station Fetch (`Alt+G`)**: With a furnace, anvil or other station open, pulls one stack of each ingredient it accepts from nearby chests into your backpack.
+- **Station Fetch (`Alt+G`)**: With any station open, shows a clickable list of the ingredients and fuel it can use from nearby chests; click one to pull a stack into your backpack.
 - **Chest Labels (`Shift+F12`)**: Floating category labels above chests within 30m.
 - **Station Output Auto-Store**: Products a crafting station drops on the ground go straight into the matching category chest.
 - **Strict Safe Guards**: Zero-tolerance blacklist prevents any crafting stations, blast furnaces, smelters, kilns, or campfires from being touched. Hotbar, combat ammunition, and runes are 100% protected.

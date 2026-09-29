@@ -53,7 +53,7 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 - **Unpack Base (`Shift + G`)**: Unpacks the virtual crate directly into nearby chests, auto-sorted by category.
 
 ### 7. Station Fetch (`[Alt + G]` at an open crafting station)
-- Open a furnace, anvil, cooking range or any other station and press `[Alt + G]`.
+- Open any station (smelter, loom, spinning wheel, tanner, sawmill, crafting bench...) and press `[Alt + G]`: a **picker** opens on the right with one button per item in your nearby chests that the station can use (ingredients and fuel, with how many you have). Click an item to pull a stack of it into your backpack; click again for another stack. `MORE` pages through long lists, the top button or `[Alt + G]` closes it, and it hides itself when you close the station. At a crafting bench it lists the selected recipe's ingredients. Set `StationFetchPicker = false` to skip the picker and use the rules below.
 - Items are pulled from nearby chests into your backpack, one stack of each chosen item by default (`StationFetchStacksPerItem`).
 - **You choose what is fetched, at every station:** processing stations (smelters, loom, spinning wheel, tanner, sawmill, charcoal kiln, grindstone, stonecutter, campfire, grill, cauldron, fermentation barrel) only top up what is already in the station. Put one iron ore in and `[Alt + G]` fetches iron ore; put a log in the fuel slot and it fetches logs; put both in for both. An empty station fetches nothing (set `StationFetchAllWhenEmpty = true` to fetch everything it accepts, or `StationFetchLoadedOnly = false` for the old behaviour). Hovering an item in your backpack and pressing `[Alt + G]` still pulls just that item. Crafting benches fetch only the ingredients of the recipe you have selected, and nothing if none is selected. With no station menu open, the nearest processing station within 6m is used. Each press logs a `[DISCOVERY]` line naming the station it found.
 - Only if a station has no readable list does it fall back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
@@ -109,6 +109,7 @@ local Config = {
     HoldDuration = 0.25,          -- Seconds to distinguish Hold from Tap
     StationFetchStacksPerItem = 1,-- Stacks of each ingredient Station Fetch pulls
     StationFetchMaxItemTypes = 12,-- Above this, a station counts as unfiltered and name hints are used
+    StationFetchPicker = true,    -- Alt+G at a station opens a clickable list of what to fetch
     StationFetchLoadedOnly = true,-- Furnaces: only fetch what is already in the ingredient/fuel slots
     StationFetchAllWhenEmpty = false,-- Empty furnace: fetch everything it accepts (true) or nothing (false)
     ChestLabels = true,           -- Floating category labels above chests (Shift+F12 toggles)
