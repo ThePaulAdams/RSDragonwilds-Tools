@@ -66,6 +66,7 @@
       <div class="row">
         <button class="primary" id="openBtn">Open export folder</button>
         <input type="file" id="dirInput" webkitdirectory directory multiple hidden>
+        <button id="buildThumbsBtn" hidden title="Draw and save every missing preview now, so browsing is instant afterwards">Build all previews</button>
         <button id="exportBtn" title="Download the starred models as a JSON list of in-game object paths">Export starred</button>
       </div>
       <div class="row">
@@ -450,12 +451,28 @@ function addLights(scene) {
 }
 
 // ---------- thumbnails ----------
+// Previews are drawn once. When served by view.ps1 they are saved to export/thumbs/<model path>.webp
+// and loaded from there on later visits; otherwise they are kept in memory for this visit.
 const thumbCache = new Map();
 const thumbQueue = [];
-let thumbBusy = false;
+const THUMB_WORKERS = 4;
+let thumbWorkers = 0;
+let savedThumbs = null;        // Set of saved preview paths, or null when previews can't be saved
 const thumbRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
 thumbRenderer.setSize(160, 160);
 thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+function thumbPath(m) { return m.url ? m.rel.replace(/\.(glb|gltf)$/i, '') + '.webp' : null; }
+function thumbUrl(m) { return 'export/thumbs/' + thumbPath(m).split('/').map(encodeURIComponent).join('/'); }
+
+async function loadSavedThumbs() {
+  try {
+    const r = await fetch('thumbs-list', { cache: 'no-store' });
+    if (r.ok) savedThumbs = new Set(await r.json());
+  } catch {}
+  document.getElementById('buildThumbsBtn').hidden = !savedThumbs;
+}
+
 const thumbObserver = new IntersectionObserver(es => {
   for (const e of es) {
     if (!e.isIntersecting) continue;
@@ -463,18 +480,44 @@ const thumbObserver = new IntersectionObserver(es => {
     const m = e.target._model;
     const img = e.target.querySelector('img');
     if (thumbCache.has(m.objectPath)) img.src = thumbCache.get(m.objectPath);
-    else { thumbQueue.push({ m, img }); pumpThumbs(); }
+    else if (savedThumbs && savedThumbs.has(thumbPath(m))) img.src = thumbUrl(m);
+    else { thumbQueue.unshift({ m, img }); pumpThumbs(); }   // what's on screen goes first
   }
 }, { root: grid, rootMargin: '200px' });
 
-async function pumpThumbs() {
-  if (thumbBusy) return;
-  thumbBusy = true;
+document.getElementById('buildThumbsBtn').onclick = () => {
+  const btn = document.getElementById('buildThumbsBtn');
+  const todo = models.filter(m => !savedThumbs.has(thumbPath(m)) && !thumbCache.has(m.objectPath));
+  for (const m of todo) thumbQueue.push({ m, img: null });
+  btn.disabled = true;
+  pumpThumbs();
+};
+
+function thumbProgress() {
+  const btn = document.getElementById('buildThumbsBtn');
+  if (!savedThumbs) return;
+  const left = thumbQueue.filter(t => !t.img).length;
+  btn.textContent = left ? `Building previews (${left.toLocaleString()} left)` : 'Build all previews';
+  if (!left) btn.disabled = false;
+}
+
+function pumpThumbs() {
+  while (thumbWorkers < THUMB_WORKERS && thumbQueue.length) {
+    thumbWorkers++;
+    thumbWorker().finally(() => { thumbWorkers--; thumbProgress(); });
+  }
+}
+
+async function thumbWorker() {
   while (thumbQueue.length) {
     const { m, img } = thumbQueue.shift();
-    if (!img.isConnected) continue;
+    if (img && !img.isConnected) continue;
+    if (thumbCache.has(m.objectPath) || (savedThumbs && savedThumbs.has(thumbPath(m)))) {
+      if (img) img.src = thumbCache.get(m.objectPath) || thumbUrl(m);
+      continue;
+    }
     try {
-      const obj = await loadModel(m);
+      const obj = await loadModel(m);   // loading runs in parallel; drawing below is synchronous
       const box = prepare(obj);
       const scene = new THREE.Scene();
       addLights(scene);
@@ -482,15 +525,24 @@ async function pumpThumbs() {
       const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 1000);
       frame(cam, null, box);
       thumbRenderer.render(scene, cam);
-      const url = thumbRenderer.domElement.toDataURL('image/png');
+      const url = thumbRenderer.domElement.toDataURL('image/webp', 0.85);
       thumbCache.set(m.objectPath, url);
-      img.src = url;
+      if (img) img.src = url;
       disposeTree(obj);
+      if (savedThumbs) saveThumb(m, url);
     } catch (err) {
       console.warn('thumbnail failed', m.rel, err);
     }
+    thumbProgress();
   }
-  thumbBusy = false;
+}
+
+async function saveThumb(m, dataUrl) {
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const r = await fetch(thumbUrl(m), { method: 'PUT', body: blob });
+    if (r.ok) { savedThumbs.add(thumbPath(m)); thumbCache.delete(m.objectPath); }
+  } catch {}
 }
 
 function disposeTree(obj) {
@@ -600,7 +652,10 @@ document.getElementById('exportBtn').onclick = () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
 
-loadManifest();
+// Previews that aren't saved yet are built in the background (what's on screen always goes first).
+loadSavedThumbs().then(loadManifest).then(() => {
+  if (savedThumbs && models.some(m => m.url && !savedThumbs.has(thumbPath(m)))) document.getElementById('buildThumbsBtn').click();
+});
 </script>
 </body>
 </html>

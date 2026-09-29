@@ -23,6 +23,8 @@ That one command:
 
 Options: `-Include Base_Building,Castle` exports only paths containing those words, `-Limit 50` does a quick test, `-NoTextures` is faster and smaller, `-Aes 0x...` is for encrypted paks, and `-GameRoot` sets the game folder if it isn't found. To reopen the viewer later without exporting, run `.\ModelViewer\view.ps1`.
 
+Previews are drawn once and saved as small images in `ModelViewer\export\thumbs`. The first time you open the viewer it builds the missing ones in the background (what's on screen goes first, and the button at the top shows how many are left). After that the grid loads instantly.
+
 ## Manual route: export with FModel
 
 Use this if the automatic export doesn't work for you.
