@@ -204,7 +204,9 @@ window.ingest = ingest;
 function objectPathOf(p) {
   if (!p) return '';
   if (p.startsWith('/')) return p.includes('.') ? p : p + '.' + p.split('/').pop();
-  return toObjectPath(p);
+  // Exporter form: RSDragonwilds/Content/Art/.../SM_X.SM_X
+  const i = p.lastIndexOf('/');
+  return toObjectPath(p.slice(0, i + 1) + p.slice(i + 1).split('.')[0] + '.glb');
 }
 async function loadManifest() {
   if (location.protocol === 'file:') return;
@@ -221,7 +223,11 @@ async function loadManifest() {
     const name = objectPath.split('/').pop().split('.')[0];
     const dir = objectPath.slice(0, objectPath.lastIndexOf('/'));
     const url = 'export/' + file.split('/').map(encodeURIComponent).join('/');
-    return { url, rel: file, name, dir, objectPath, size: e.Size || e.size || 0, search: objectPath.toLowerCase() };
+    const materials = (e.Materials || e.materials || []).map(x => ({
+      slot: x.Slot || x.slot || '',
+      diffuse: (x.Diffuse || x.diffuse) ? 'export/' + (x.Diffuse || x.diffuse).replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/') : null,
+    }));
+    return { url, rel: file, name, dir, objectPath, materials, size: e.Size || e.size || 0, search: objectPath.toLowerCase() };
   });
   models.sort((a, b) => a.objectPath.localeCompare(b.objectPath));
   buildFolderList();
@@ -345,7 +351,11 @@ function loaderFor(m) {
 }
 
 async function loadModel(m) {
-  if (m.url) return (await new GLTFLoader().loadAsync(m.url)).scene;
+  if (m.url) {
+    const scene = (await new GLTFLoader().loadAsync(m.url)).scene;
+    await applyTextures(scene, m);
+    return scene;
+  }
   const { manager, cleanup } = loaderFor(m);
   try {
     if (/\.obj$/i.test(m.file.name)) {
@@ -361,11 +371,48 @@ async function loadModel(m) {
   }
 }
 
+const textureLoader = new THREE.TextureLoader();
+
+// The exported .glb files carry white placeholder materials named after the mesh's material slots;
+// models.json says which PNG is each slot's base colour, so hook those up here.
+async function applyTextures(scene, m) {
+  const withTex = (m.materials || []).filter(x => x.diffuse);
+  if (!withTex.length) return;
+  const mats = [];
+  scene.traverse(o => {
+    if (!o.isMesh) return;
+    for (const mat of Array.isArray(o.material) ? o.material : [o.material]) if (mat && !mats.includes(mat)) mats.push(mat);
+  });
+  const bySlot = new Map(m.materials.map(x => [x.slot.toLowerCase(), x]));
+  await Promise.all(mats.map(async (mat, i) => {
+    const entry = bySlot.get((mat.name || '').toLowerCase())
+      || (mats.length === 1 && withTex.length === 1 ? withTex[0] : null)
+      || (mats.length === m.materials.length ? m.materials[i] : null);
+    if (!entry?.diffuse) return;
+    try {
+      const tex = await textureLoader.loadAsync(entry.diffuse);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.flipY = false;
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      mat.map = tex;
+      mat.color?.set(0xffffff);
+      mat.needsUpdate = true;
+    } catch (err) { console.warn('texture failed', entry.diffuse, err); }
+  }));
+}
+
 function prepare(obj) {
   obj.traverse(o => {
     if (o.isMesh) {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const mat of mats) if (mat) mat.side = THREE.DoubleSide;
+      for (const mat of mats) {
+        if (!mat) continue;
+        mat.side = THREE.DoubleSide;
+        // Unreal vertex colours are usually masks for the material, not colours; showing them paints models black.
+        mat.vertexColors = false;
+        if ('metalness' in mat) { mat.metalness = 0; mat.roughness = 0.85; }
+        mat.needsUpdate = true;
+      }
     }
   });
   const box = new THREE.Box3().setFromObject(obj);
