@@ -2,3 +2,9 @@
 *Staff*/
 *.log
 *.tmp
+
+# ModelViewer exporter output and build files
+ModelViewer/export/
+ModelViewer/Exporter/bin/
+ModelViewer/Exporter/obj/
+ModelViewer/Exporter/.dotnet/

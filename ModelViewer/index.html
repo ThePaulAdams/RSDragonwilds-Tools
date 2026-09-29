@@ -200,6 +200,38 @@ function ingest(list) {
 }
 window.ingest = ingest;
 
+// When served next to an export made by export-models.ps1, load its manifest without asking for a folder.
+function objectPathOf(p) {
+  if (!p) return '';
+  if (p.startsWith('/')) return p.includes('.') ? p : p + '.' + p.split('/').pop();
+  return toObjectPath(p);
+}
+async function loadManifest() {
+  if (location.protocol === 'file:') return;
+  let data;
+  try {
+    const r = await fetch('export/models.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    data = await r.json();
+  } catch { return; }
+  const list = data.Models || data.models || [];
+  models = list.map(e => {
+    const file = (e.File || e.file).replace(/\\/g, '/');
+    const objectPath = objectPathOf(e.ObjectPath || e.objectPath);
+    const name = objectPath.split('/').pop().split('.')[0];
+    const dir = objectPath.slice(0, objectPath.lastIndexOf('/'));
+    const url = 'export/' + file.split('/').map(encodeURIComponent).join('/');
+    return { url, rel: file, name, dir, objectPath, size: e.Size || e.size || 0, search: objectPath.toLowerCase() };
+  });
+  models.sort((a, b) => a.objectPath.localeCompare(b.objectPath));
+  buildFolderList();
+  thumbCache.clear();
+  applyFilter();
+  document.getElementById('empty').querySelector('div').innerHTML =
+    '<p><strong>Dragonwilds Model Viewer</strong></p><p>' + models.length.toLocaleString() +
+    ' models loaded from the export. Pick one on the left.</p>';
+}
+
 function buildFolderList() {
   // Offer every folder level (up to 5 deep) that contains models, with counts.
   const counts = new Map();
@@ -313,6 +345,7 @@ function loaderFor(m) {
 }
 
 async function loadModel(m) {
+  if (m.url) return (await new GLTFLoader().loadAsync(m.url)).scene;
   const { manager, cleanup } = loaderFor(m);
   try {
     if (/\.obj$/i.test(m.file.name)) {
@@ -469,7 +502,7 @@ function showInfo(m, stats) {
   document.getElementById('infoName').textContent = m.name;
   document.getElementById('infoPath').textContent = m.objectPath;
   document.getElementById('infoMeta').textContent = stats
-    ? `Size ${stats.size.x.toFixed(2)} x ${stats.size.y.toFixed(2)} x ${stats.size.z.toFixed(2)} (export units)  ·  ${stats.tris.toLocaleString()} triangles  ·  ${stats.meshes} mesh part(s)  ·  ${(m.file.size / 1024).toFixed(0)} KB`
+    ? `Size ${stats.size.x.toFixed(2)} x ${stats.size.y.toFixed(2)} x ${stats.size.z.toFixed(2)} (export units)  ·  ${stats.tris.toLocaleString()} triangles  ·  ${stats.meshes} mesh part(s)  ·  ${((m.file ? m.file.size : m.size) / 1024).toFixed(0)} KB`
     : m.rel;
   document.getElementById('starBtn').textContent = starred.has(m.objectPath) ? 'Unstar' : 'Star';
 }
@@ -508,6 +541,8 @@ document.getElementById('exportBtn').onclick = () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
+
+loadManifest();
 </script>
 </body>
 </html>

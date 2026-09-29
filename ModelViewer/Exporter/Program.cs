@@ -1,0 +1,175 @@
+// Exports every static mesh in RuneScape: Dragonwilds' pak files to glTF (.glb) for the Model Viewer,
+// and writes models.json, the manifest the viewer loads on its own.
+using System.Text.Json;
+using CUE4Parse.Compression;
+using CUE4Parse.Encryption.Aes;
+using CUE4Parse.FileProvider;
+using CUE4Parse.MappingsProvider.Usmap;
+using CUE4Parse.UE4.Assets.Exports.StaticMesh;
+using CUE4Parse.UE4.Assets.Exports.Texture;
+using CUE4Parse.UE4.Objects.Core.Misc;
+using CUE4Parse.UE4.Assets.Exports.Material;
+using CUE4Parse.UE4.Versions;
+using CUE4Parse_Conversion;
+using CUE4Parse_Conversion.Options;
+using CUE4Parse_Conversion.Writers.UEFormat.Enums;
+
+var opt = Options.Parse(args);
+if (opt == null) return 1;
+
+Console.WriteLine($"Paks:     {opt.Paks}");
+Console.WriteLine($"Mappings: {opt.Usmap ?? "(none)"}");
+Console.WriteLine($"Output:   {opt.Out}");
+
+try
+{
+    var oodle = Path.Combine(AppContext.BaseDirectory, OodleHelper.OodleFileName);
+    if (!File.Exists(oodle)) OodleHelper.DownloadOodleDll(ref oodle);
+    OodleHelper.Initialize(oodle);
+}
+catch (Exception e) { Console.WriteLine($"Warning: could not set up Oodle decompression ({e.Message})."); }
+
+var provider = new DefaultFileProvider(opt.Paks, SearchOption.TopDirectoryOnly,
+    new VersionContainer(EGame.GAME_UE5_6), StringComparer.OrdinalIgnoreCase);
+if (opt.Usmap != null) provider.MappingsContainer = new FileUsmapTypeMappingsProvider(opt.Usmap, StringComparer.OrdinalIgnoreCase);
+provider.Initialize();
+provider.SubmitKey(new FGuid(), new FAesKey(opt.Aes ?? "0x" + new string('0', 64)));
+if (provider.RequiredKeys.Count > 0)
+    Console.WriteLine($"{provider.RequiredKeys.Count} archive(s) are encrypted and did not open with the key given (or no key). Pass -Aes 0x...");
+provider.PostMount();
+Console.WriteLine($"Mounted {provider.MountedVfs.Count} archive(s), {provider.Files.Count} files.");
+if (provider.MountedVfs.Count == 0)
+{
+    Console.WriteLine("Nothing mounted. Check the pak folder, or the archives are encrypted and need -Aes.");
+    return 2;
+}
+
+// Candidates: packages named SM_* (the game's static mesh naming), optionally limited to path prefixes.
+var candidates = provider.Files.Values
+    .Where(f => f.Extension.Equals("uasset", StringComparison.OrdinalIgnoreCase))
+    .Where(f => opt.AllPackages || f.Name.StartsWith("SM_", StringComparison.OrdinalIgnoreCase))
+    .Where(f => opt.Include.Count == 0 || opt.Include.Any(p => f.Path.Contains(p, StringComparison.OrdinalIgnoreCase)))
+    .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+    .ToList();
+if (opt.Limit > 0) candidates = candidates.Take(opt.Limit).ToList();
+Console.WriteLine($"{candidates.Count} mesh package(s) to check.");
+
+Directory.CreateDirectory(opt.Out);
+var manifestPath = Path.Combine(opt.Out, "models.json");
+var entries = new Dictionary<string, ModelEntry>(StringComparer.OrdinalIgnoreCase);
+if (File.Exists(manifestPath))
+{
+    try
+    {
+        foreach (var e in JsonSerializer.Deserialize<Manifest>(File.ReadAllText(manifestPath))?.Models ?? [])
+            if (File.Exists(Path.Combine(opt.Out, e.File))) entries[e.ObjectPath] = e;
+        Console.WriteLine($"Resuming: {entries.Count} model(s) already exported.");
+    }
+    catch { }
+}
+
+var exportOptions = new ExportOptions(
+    EMeshFormat.Gltf2, ENaniteMeshFormat.NoNanite, EMeshQuality.Highest,
+    ETexturePlatform.DesktopMobile, ETextureFormat.Png, opt.TextureQuality,
+    false, false, EMaterialDepth.TopLayerOnly, !opt.NoTextures, false,
+    ESocketFormat.None, EFileCompressionFormat.None);
+
+int done = 0, failed = 0, skipped = 0;
+var started = DateTime.Now;
+foreach (var batch in candidates.Chunk(100))
+{
+    var session = new ExportSession((_, _) => { });
+    int queued = 0;
+    foreach (var file in batch)
+    {
+        try
+        {
+            var pkg = provider.LoadPackage(file.Path);
+            foreach (var mesh in pkg.GetExports().OfType<UStaticMesh>())
+            {
+                if (entries.ContainsKey(mesh.GetPathName())) { skipped++; continue; }
+                session.Add(mesh);
+                queued++;
+            }
+        }
+        catch (Exception e)
+        {
+            failed++;
+            if (opt.Verbose || failed <= 5) Console.WriteLine($"  load failed: {file.Path}: {e.Message}");
+        }
+    }
+    if (queued == 0) continue;
+
+    var results = await session.RunAsync(opt.Out, exportOptions, null, CancellationToken.None);
+    foreach (var r in results)
+    {
+        var glb = r.DiskFilePaths?.FirstOrDefault(p => p.EndsWith(".glb", StringComparison.OrdinalIgnoreCase)
+                                                    || p.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase));
+        if (!r.Success || glb == null)
+        {
+            failed++;
+            if (opt.Verbose || failed <= 5) Console.WriteLine($"  export failed: {r.ObjectPath}: {r.Error?.Message ?? "no glTF written"}");
+            continue;
+        }
+        var rel = Path.GetRelativePath(opt.Out, glb).Replace('\\', '/');
+        entries[r.ObjectPath] = new ModelEntry(r.ObjectPath, rel, new FileInfo(glb).Length);
+        done++;
+    }
+    WriteManifest();
+    var rate = (done + skipped) / Math.Max((DateTime.Now - started).TotalSeconds, 1);
+    Console.WriteLine($"  {done + skipped + failed}/{candidates.Count} checked, {entries.Count} exported, {failed} failed ({rate:F1}/s)");
+}
+WriteManifest();
+Console.WriteLine($"Done. {entries.Count} model(s) in {opt.Out}, {failed} failed.");
+return entries.Count > 0 ? 0 : 3;
+
+void WriteManifest()
+{
+    var m = new Manifest(DateTime.UtcNow.ToString("o"), entries.Values.OrderBy(e => e.ObjectPath).ToList());
+    File.WriteAllText(manifestPath, JsonSerializer.Serialize(m, new JsonSerializerOptions { WriteIndented = true }));
+}
+
+record ModelEntry(string ObjectPath, string File, long Size);
+record Manifest(string Exported, List<ModelEntry> Models);
+
+class Options
+{
+    public string Paks = "";
+    public string? Usmap;
+    public string Out = "";
+    public string? Aes;
+    public List<string> Include = [];
+    public int Limit;
+    public int TextureQuality = 100;
+    public bool NoTextures, AllPackages, Verbose;
+
+    public static Options? Parse(string[] args)
+    {
+        var o = new Options();
+        for (int i = 0; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
+            switch (args[i].ToLowerInvariant())
+            {
+                case "--paks": o.Paks = Next(); break;
+                case "--usmap": o.Usmap = Next(); break;
+                case "--out": o.Out = Next(); break;
+                case "--aes": o.Aes = Next(); break;
+                case "--include": o.Include.Add(Next()); break;
+                case "--limit": o.Limit = int.Parse(Next()); break;
+                case "--texture-quality": o.TextureQuality = int.Parse(Next()); break;
+                case "--no-textures": o.NoTextures = true; break;
+                case "--all-packages": o.AllPackages = true; break;
+                case "--verbose": o.Verbose = true; break;
+                default: Console.WriteLine($"Unknown option {args[i]}"); return null;
+            }
+        }
+        if (o.Paks == "" || o.Out == "" || !Directory.Exists(o.Paks))
+        {
+            Console.WriteLine("Usage: ModelExporter --paks <Content\\Paks dir> --out <dir> [--usmap <file>] [--aes 0x...] [--include <path part>]... [--limit N] [--no-textures]");
+            return null;
+        }
+        if (o.Usmap != null && !File.Exists(o.Usmap)) { Console.WriteLine($"Mappings file not found: {o.Usmap}"); return null; }
+        return o;
+    }
+}

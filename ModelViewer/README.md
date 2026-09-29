@@ -6,6 +6,27 @@ It shows every exported model as a thumbnail grid you can search and filter by f
 
 Nothing is uploaded. The page reads the files straight from your disk.
 
+## Quick start (automatic)
+
+In PowerShell, from the repo folder:
+
+```powershell
+.\ModelViewer\export-models.ps1
+```
+
+That one command:
+1. Finds the game through Steam.
+2. Makes sure a `Mappings.usmap` exists. If not, it installs the small `MappingsDumper` UE4SS mod, starts the game, waits for the mod to write the file, then closes the game again.
+3. Installs the .NET 10 SDK into `ModelViewer\Exporter\.dotnet` if you don't have it (no admin needed).
+4. Builds `ModelViewer\Exporter` (a small CUE4Parse tool) and exports every `SM_*` static mesh, with textures, to `ModelViewer\export`. Running it again resumes where it stopped.
+5. Opens the viewer at `http://localhost:8765`, which loads the export by itself.
+
+Options: `-Include Base_Building,Castle` exports only paths containing those words, `-Limit 50` does a quick test, `-NoTextures` is faster and smaller, `-Aes 0x...` is for encrypted paks, and `-GameRoot` sets the game folder if it isn't found. To reopen the viewer later without exporting, run `.\ModelViewer\view.ps1`.
+
+## Manual route: export with FModel
+
+Use this if the automatic export doesn't work for you.
+
 ## 1. Export the models with FModel
 
 1. Download [FModel](https://fmodel.app) and open it.
