@@ -22,7 +22,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
 | [**AutoRun**](AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
 | [**BulkOpen**](BulkOpen/README.md) | Quality of Life | `[Ctrl+F9]` | Opens every bag and pack in your backpack with one key press. |
-| [**HomeRecall**](HomeRecall/README.md) | Travel | `[Ctrl+F11]`, `[Alt+F11]` | Teleports you home (saved spot or bed) after a 3-second channel, with a cooldown. |
+| [**HomeRecall**](HomeRecall/README.md) | Travel | `[Ctrl+F7]`, `[Alt+F7]` | Teleports you home (saved spot or bed) after a 3-second channel, with a cooldown. |
 | [**HotbarScroll**](HotbarScroll/README.md) | Controls | Mouse wheel | Mouse wheel cycles your hotbar slots. |
 | [**RaidWarning**](RaidWarning/README.md) | Base | Automatic | On-screen warning when enemies gather at your base. |
 | [**RecipeLookup**](RecipeLookup/README.md) | Crafting | `[Alt+F12]` | Lists recipes (for the open station) and which ones you can craft with what's in your bag and nearby chests. |
@@ -46,9 +46,9 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open crafting station, pull its ingredients from nearby chests. Hovering an item pulls that item instead |
 | **`[Shift + F12]`** | **Quick Stack** | Toggle floating category labels above nearby chests |
 | **`[Ctrl + F6]`** | **OSRS Minimap** | Clear the death marker |
-| **`[Shift + F11]`** | **Bulk Open** | Open every bag/pack in your backpack |
-| **`[Ctrl + F11]`** | **Home Recall** | Recall home (3s channel, moving cancels) |
-| **`[Alt + F11]`** | **Home Recall** | Save the current spot as home |
+| **`[Ctrl + F9]`** | **Bulk Open** | Open every bag/pack in your backpack |
+| **`[Ctrl + F7]`** | **Home Recall** | Recall home (3s channel, moving cancels) |
+| **`[Alt + F7]`** | **Home Recall** | Save the current spot as home |
 | **Mouse wheel** | **Hotbar Scroll** | Cycle hotbar slots |
 | **`[Alt + F12]`** | **Recipe Lookup** | Show recipes / next page (`Esc` closes) |
 | **`[Ctrl + F12]`** | **Toolkit Probe** | Write a probe file for the toolkit author |
@@ -62,7 +62,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[Shift + F6]`** | **Telekinetic Woodcraft** | Cycle Splinter spell AoE radius multiplier (1x, 2.5x, 5.0x) |
 | **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game (can close the game while mods with background loops unload; restarting is safer) |
 
-The new mods use F11/F12 chords because the game ignores Ctrl/Alt, so a Ctrl+letter chord also fires the game's own binding for that letter, and UE4SS already owns Ctrl+O (debug console), Ctrl+J (object dump), Ctrl+H (header dump) and Ctrl+Num5–9 (other dumpers). Numpad keys were ruled out because AutoRun's Num Lock toggle turns them into End/arrow keys. F12 on its own is Steam's default screenshot key, so these chords may also save a Steam screenshot unless that key is changed in Steam.
+The new mods use F7, F9 and F12 chords (F11 toggles fullscreen and Shift+F11 windowed mode, so avoid them) because the game ignores Ctrl/Alt, so a Ctrl+letter chord also fires the game's own binding for that letter, and UE4SS already owns Ctrl+O (debug console), Ctrl+J (object dump), Ctrl+H (header dump) and Ctrl+Num5–9 (other dumpers). Numpad keys were ruled out because AutoRun's Num Lock toggle turns them into End/arrow keys. F12 on its own is Steam's default screenshot key, so these chords may also save a Steam screenshot unless that key is changed in Steam.
 
 ---
 

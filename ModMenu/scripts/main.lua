@@ -167,7 +167,7 @@ local Mods = {
         "F5 power | F3 glow | F8 infusion | Shift+F8 summon"
     },
     {"BulkOpen", "Bulk Open", "Opens every bag and pack in your backpack.", "Ctrl+F9 open all (again to stop)"},
-    {"HomeRecall", "Home Recall", "Teleports you home after a short channel.", "Ctrl+F11 recall | Alt+F11 set home"},
+    {"HomeRecall", "Home Recall", "Teleports you home after a short channel.", "Ctrl+F7 recall | Alt+F7 set home"},
     {"HotbarScroll", "Hotbar Scroll", "Mouse wheel cycles your hotbar slots.", "Mouse wheel"},
     {"RaidWarning", "Raid Warning", "Warns you when enemies gather at your base.", "Automatic"},
     {"RecipeLookup", "Recipe Lookup", "Lists recipes and what you can craft with nearby materials.", "Alt+F12 show / next page | Esc close"},
