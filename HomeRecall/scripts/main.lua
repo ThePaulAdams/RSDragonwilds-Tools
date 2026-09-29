@@ -4,11 +4,11 @@ local ModName = "HomeRecall"
 local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))) end
 
 -- Teleports you home after a short channel. "Home" is the spot you saved with
--- Alt+H, or your bed if you never saved one.
+-- Alt+Num3, or your bed if you never saved one.
 local Config = {
-    RecallKey = Key.H,
+    RecallKey = Key.NUM_THREE,
     RecallModifiers = { ModifierKey.CONTROL },
-    SetHomeKey = Key.H,
+    SetHomeKey = Key.NUM_THREE,
     SetHomeModifiers = { ModifierKey.ALT },
     -- Stand still this long before the teleport happens (moving cancels it).
     ChannelSeconds = 3,
@@ -168,7 +168,7 @@ local function Teleport()
         source = bedClass and ("bed " .. bedClass) or nil
     end
     if not dest then
-        Toast.Show("No home set. Press Alt+H at home first", 4)
+        Toast.Show("No home set. Press Alt+Num3 at home first", 4)
         return
     end
     local ok, res = pcall(function()
@@ -240,4 +240,4 @@ end)
 
 LoadHome()
 Log(Home and string.format("Ready. Home at (%.0f, %.0f, %.0f).", Home.X, Home.Y, Home.Z)
-    or "Ready. No home saved yet: Alt+H saves one, Ctrl+H recalls (falls back to your bed).")
+    or "Ready. No home saved yet: Alt+Num3 saves one, Ctrl+Num3 recalls (falls back to your bed).")

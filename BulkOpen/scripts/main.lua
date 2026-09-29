@@ -7,7 +7,7 @@ local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))
 -- using whichever "use item" function the game accepts. The first function that
 -- actually shrinks a pack stack is remembered for the rest of the session.
 local Config = {
-    Key = Key.O,
+    Key = Key.NUM_ONE,
     Modifiers = { ModifierKey.CONTROL },
     -- Milliseconds between opens. The game may ignore uses that arrive faster
     -- than its own open animation/cooldown.
@@ -155,20 +155,12 @@ local function FindBags(inv)
 end
 
 -- Every candidate is a function that tries one way of using the item in a slot.
--- They are attempted in order until one shrinks the pack count.
+-- They are attempted in order until one shrinks the pack count. Names come from
+-- the game's object dump: InventoryController:UseItemFromInventory(Inventory, SlotIndex)
+-- and UsableItemInterface:UseItem(PlayerController, Inventory, SlotIndex).
 local Methods = {
-    { "InventoryController:UseItem(inv, slot)", function(pc, pawn, inv, ctrl, bag) return ctrl:UseItem(inv, bag.Slot) end },
-    { "InventoryController:UseItemInSlot(inv, slot)", function(pc, pawn, inv, ctrl, bag) return ctrl:UseItemInSlot(inv, bag.Slot) end },
-    { "InventoryController:ConsumeItem(inv, slot)", function(pc, pawn, inv, ctrl, bag) return ctrl:ConsumeItem(inv, bag.Slot) end },
-    { "InventoryController:ServerUseItem(inv, slot)", function(pc, pawn, inv, ctrl, bag) return ctrl:ServerUseItem(inv, bag.Slot) end },
-    { "Inventory:UseItemInSlot(slot, pc)", function(pc, pawn, inv, ctrl, bag) return inv:UseItemInSlot(bag.Slot, pc) end },
-    { "Inventory:UseItemInSlot(slot)", function(pc, pawn, inv, ctrl, bag) return inv:UseItemInSlot(bag.Slot) end },
-    { "Inventory:UseItem(slot, pc)", function(pc, pawn, inv, ctrl, bag) return inv:UseItem(bag.Slot, pc) end },
-    { "Inventory:ConsumeItemInSlot(slot, pc)", function(pc, pawn, inv, ctrl, bag) return inv:ConsumeItemInSlot(bag.Slot, pc) end },
-    { "Item:Use(pawn)", function(pc, pawn, inv, ctrl, bag) return bag.Item:Use(pawn) end },
-    { "Item:UseItem(pawn)", function(pc, pawn, inv, ctrl, bag) return bag.Item:UseItem(pawn) end },
-    { "Item:Consume(pawn)", function(pc, pawn, inv, ctrl, bag) return bag.Item:Consume(pawn) end },
-    { "Item:OpenPack(pawn)", function(pc, pawn, inv, ctrl, bag) return bag.Item:OpenPack(pawn) end },
+    { "InventoryController:UseItemFromInventory(inv, slot)", function(pc, pawn, inv, ctrl, bag) return ctrl:UseItemFromInventory(inv, bag.Slot) end },
+    { "Item:UseItem(pc, inv, slot)", function(pc, pawn, inv, ctrl, bag) return bag.Item:UseItem(pc, inv, bag.Slot) end },
 }
 
 -- Logs every function whose name looks like "use/consume/open" on the objects
@@ -303,4 +295,4 @@ RegisterKeyBind(Config.Key, Config.Modifiers, function()
     end)
 end)
 
-Log("Ready: Ctrl+O opens every bag/pack in your backpack (press again to stop).")
+Log("Ready: Ctrl+Num1 opens every bag/pack in your backpack (press again to stop).")

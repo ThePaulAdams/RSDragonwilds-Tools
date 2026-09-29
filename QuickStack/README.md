@@ -55,9 +55,10 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 ### 7. Station Fetch (`[Alt + G]` at an open crafting station)
 - Open a furnace, anvil, cooking range or any other station and press `[Alt + G]`.
 - Every item in nearby chests that the station's own inventory will accept is pulled into your backpack, one stack of each by default (`StationFetchStacksPerItem`).
-- If the station accepts almost anything (no filter the mod can read), it falls back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
+- Furnaces, smelters and other processing stations are read directly: their `AcceptedResources` list decides what is fetched. At a crafting bench it fetches the ingredients of the recipe you have selected. With no station menu open, the nearest processing station within 6m is used. Each press logs a `[DISCOVERY]` line naming the station it found.
+- Only if a station has no readable list does it fall back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
 
-### 8. Chest Category Labels (`[Ctrl + L]` toggle)
+### 8. Chest Category Labels (`[Ctrl + Num4]` toggle)
 - Floating labels ("Food", "Wood", "Mining", "Empty"...) above every chest within 30m, turned to face the camera.
 - Labels follow each chest's dominant category, so they update as you sort.
 
@@ -82,7 +83,7 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 | **`[G]` (Hold)** | Field / Roaming | **Continuous Ground Vacuum**: 40m continuous magnetism while sprinting. |
 | **`[G]` (Hold) or `[Alt + G]`** | Hovering Item | **Quick Pull**: Pulls all matching stacks from nearby chests into your backpack. |
 | **`[Alt + G]`** | Open Crafting Station | **Station Fetch**: Pulls one stack of each ingredient the station accepts from nearby chests. |
-| **`[Ctrl + L]`** | Anywhere | **Chest Labels**: Toggle floating category labels above nearby chests. |
+| **`[Ctrl + Num4]`** | Anywhere | **Chest Labels**: Toggle floating category labels above nearby chests. |
 | **`[Ctrl + G]`** | Base Relocation | **Pack Base**: Vacuums all ground items within 150m into virtual Relocation Crate. |
 | **`[Shift + G]`** | Base Relocation | **Unpack Base**: Unpacks Relocation Crate items categorized into nearby chests. |
 
@@ -108,7 +109,7 @@ local Config = {
     HoldDuration = 0.25,          -- Seconds to distinguish Hold from Tap
     StationFetchStacksPerItem = 1,-- Stacks of each ingredient Station Fetch pulls
     StationFetchMaxItemTypes = 12,-- Above this, a station counts as unfiltered and name hints are used
-    ChestLabels = true,           -- Floating category labels above chests (Ctrl+L toggles)
+    ChestLabels = true,           -- Floating category labels above chests (Ctrl+Num4 toggles)
     ChestLabelRadius = 3000.0,    -- Label chests within 30m
     AutoStoreStationOutput = true,-- Move station products from the ground into category chests
     StationOutputRadius = 3000.0, -- Only items that appear within 30m of you

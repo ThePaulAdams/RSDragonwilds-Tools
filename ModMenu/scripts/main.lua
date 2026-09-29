@@ -157,7 +157,7 @@ end
 local Mods = {
     {"AutoRun", "Auto Run", "Runs forward in the camera direction without holding a movement key.", "Num Lock toggle | WASD or Escape stop"},
     {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap, resource markers, your death spot and teammates.", "F6 map | F7 reload | F9 icons | Ctrl+F6 clear death marker | PgUp/PgDn zoom | [ / ] size"},
-    {"QuickStack", "Quick Stack", "Sorts items into category chests, labels chests, and fetches station ingredients.", "G stack | Alt+G fetch/pull | Ctrl+L labels | Ctrl+G pack | Shift+G unpack"},
+    {"QuickStack", "Quick Stack", "Sorts items into category chests, labels chests, and fetches station ingredients.", "G stack | Alt+G fetch/pull | Ctrl+Num4 labels | Ctrl+G pack | Shift+G unpack"},
     {"EnhancedReticle", "Enhanced Reticle", "Adds configurable reticle colour and size controls.", "F4 toggle | F1 colour | F2 size"},
     {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance.", "E/V grab/place | Z log magnet | Shift+F6 radius"},
     {
@@ -166,11 +166,11 @@ local Mods = {
         "Adds staff power tiers, emissive glow, and legendary infusion.",
         "F5 power | F3 glow | F8 infusion | Shift+F8 summon"
     },
-    {"BulkOpen", "Bulk Open", "Opens every bag and pack in your backpack.", "Ctrl+O open all (again to stop)"},
-    {"HomeRecall", "Home Recall", "Teleports you home after a short channel.", "Ctrl+H recall | Alt+H set home"},
+    {"BulkOpen", "Bulk Open", "Opens every bag and pack in your backpack.", "Ctrl+Num1 open all (again to stop)"},
+    {"HomeRecall", "Home Recall", "Teleports you home after a short channel.", "Ctrl+Num3 recall | Alt+Num3 set home"},
     {"HotbarScroll", "Hotbar Scroll", "Mouse wheel cycles your hotbar slots.", "Mouse wheel"},
     {"RaidWarning", "Raid Warning", "Warns you when enemies gather at your base.", "Automatic"},
-    {"RecipeLookup", "Recipe Lookup", "Lists recipes and what you can craft with nearby materials.", "Ctrl+J show / next page | Esc close"},
+    {"RecipeLookup", "Recipe Lookup", "Lists recipes and what you can craft with nearby materials.", "Ctrl+Num2 show / next page | Esc close"},
     {"ModMenu", "Toolkit Dashboard", "Shows installed Toolkit features and their bindings.", "Pause > Toolkit | Back to menu | Ctrl+F8 toggle"},
 }
 local function Statuses()

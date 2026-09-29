@@ -33,27 +33,43 @@ local function Context()
     return pc, pc.Pawn, Valid(inv) and inv or nil, Valid(ctrl) and ctrl or nil
 end
 
--- Reading the currently selected hotbar slot.
+-- The game has no "selected slot" index. The hotbar is the first
+-- NumberOfQuickActionSlots slots of the backpack, and the number keys *use*
+-- the item in a slot (which equips it). So the current slot is the one whose
+-- item is held in the right hand.
 local SlotReaders = {
-    { "Inventory.ActiveQuickActionSlot", function(pc, pawn, inv, ctrl) return inv.ActiveQuickActionSlot end },
-    { "Inventory.SelectedQuickActionSlot", function(pc, pawn, inv, ctrl) return inv.SelectedQuickActionSlot end },
-    { "Inventory:GetActiveQuickActionSlot()", function(pc, pawn, inv, ctrl) return inv:GetActiveQuickActionSlot() end },
-    { "Inventory:GetSelectedQuickActionSlotIndex()", function(pc, pawn, inv, ctrl) return inv:GetSelectedQuickActionSlotIndex() end },
-    { "InventoryController.ActiveQuickActionSlot", function(pc, pawn, inv, ctrl) return ctrl.ActiveQuickActionSlot end },
-    { "InventoryController:GetActiveQuickActionSlot()", function(pc, pawn, inv, ctrl) return ctrl:GetActiveQuickActionSlot() end },
-    { "Pawn.ActiveQuickActionSlot", function(pc, pawn, inv, ctrl) return pawn.ActiveQuickActionSlot end },
+    { "held item vs hotbar slots", function(pc, pawn, inv, ctrl)
+        local held = pawn.PlayerEquipmentComponent:GetHeldEquipmentDataRight()
+        if not Valid(held) then return nil end
+        local addr = held:GetAddress()
+        local count = inv.NumberOfQuickActionSlots
+        for i = 1, count do
+            local item = inv.ItemSlots[i]
+            if Valid(item) and Valid(item.ItemData) and item.ItemData:GetAddress() == addr then return i - 1 end
+        end
+        return nil
+    end },
 }
--- Selecting a hotbar slot (zero-based index).
+-- Selecting a hotbar slot (zero-based index), as the number keys do.
 local SlotSelectors = {
-    { "InventoryController:SelectQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return ctrl:SelectQuickActionSlot(i) end },
-    { "InventoryController:SetActiveQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return ctrl:SetActiveQuickActionSlot(i) end },
-    { "InventoryController:ActivateQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return ctrl:ActivateQuickActionSlot(i) end },
-    { "InventoryController:EquipQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return ctrl:EquipQuickActionSlot(i) end },
-    { "Inventory:SetActiveQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return inv:SetActiveQuickActionSlot(i) end },
-    { "Inventory:SelectQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return inv:SelectQuickActionSlot(i) end },
-    { "Pawn:SelectQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return pawn:SelectQuickActionSlot(i) end },
-    { "Pawn:EquipQuickActionSlot(i)", function(pc, pawn, inv, ctrl, i) return pawn:EquipQuickActionSlot(i) end },
+    { "QuickAccessBar:UseItemInSlot(i)", function(pc, pawn, inv, ctrl, i)
+        local bar = FindFirstOf("WBP_Inventory_QuickAccesBar_C")
+        if not Valid(bar) then error("quick access bar widget not found") end
+        return bar:UseItemInSlot(i)
+    end },
+    { "InventoryController:UseItemFromInventory(inv, i)", function(pc, pawn, inv, ctrl, i) return ctrl:UseItemFromInventory(inv, i) end },
 }
+
+-- Hotbar slots that hold something (zero-based); empty slots are skipped while scrolling.
+local function FilledSlots(inv, count)
+    local filled = {}
+    for i = 1, count do
+        local item = nil
+        pcall(function() item = inv.ItemSlots[i] end)
+        if Valid(item) then filled[#filled + 1] = i - 1 end
+    end
+    return filled
+end
 local Reader, Selector = nil, nil
 local OwnIndex = 0
 local Disabled = false
@@ -109,12 +125,21 @@ local function Scroll(direction)
     local count = 8
     pcall(function() count = inv.NumberOfQuickActionSlots or 8 end)
     if count <= 0 then return end
-    local nextIndex = CurrentIndex(pc, pawn, inv, ctrl) + direction
-    if Config.Wrap then
-        nextIndex = nextIndex % count
-    else
-        nextIndex = math.max(0, math.min(count - 1, nextIndex))
+    local filled = FilledSlots(inv, count)
+    if #filled == 0 then return end
+    -- Step to the next filled slot after (or before) the current one.
+    local current = CurrentIndex(pc, pawn, inv, ctrl)
+    local pos = nil
+    for k, s in ipairs(filled) do
+        if direction > 0 and s > current then pos = k; break end
+        if direction < 0 and s < current then pos = k end
     end
+    if not pos then
+        if not Config.Wrap then return end
+        pos = direction > 0 and 1 or #filled
+    end
+    local nextIndex = filled[pos]
+    if nextIndex == current then return end
 
     local candidates = Selector and { Selector } or SlotSelectors
     for _, s in ipairs(candidates) do

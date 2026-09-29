@@ -7,13 +7,16 @@ local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))
 -- objects the toolkit needs to learn about (the open crafting station and its
 -- inventory, your inventory, inventory controller, pawn, and whatever item you
 -- are hovering) to probe_<time>.txt next to this script, plus a count of loaded
--- classes whose names mention recipes, crafting, stations, raids or beds.
+-- classes whose names mention recipes, crafting, stations, raids or beds
+-- (only with Config.ClassHistogram = true).
 -- Send that file to the toolkit author to finish features that need game names,
 -- such as stopping stations from over-crafting leftovers.
 local Config = {
     Key = Key.F12,
     Modifiers = { ModifierKey.CONTROL },
     ClassKeywords = { "recipe", "craft", "station", "queue", "raid", "warband", "bed", "respawn", "quickaction", "health" },
+    -- Walks every loaded object; slow and crash-prone while the game streams, so off by default.
+    ClassHistogram = false,
 }
 
 local function Valid(o)
@@ -61,6 +64,16 @@ local function Describe(label, obj, out)
 end
 
 local function OpenStation(pc)
+    for _, ui in ipairs(FindAllOf("ProcessingStationUIAPI") or {}) do
+        local comp = nil
+        pcall(function() comp = ui.ProcessingStationComponent end)
+        if Valid(comp) then return comp:GetOwner(), comp end
+    end
+    for _, ui in ipairs(FindAllOf("CraftingUIAPI") or {}) do
+        local comp = nil
+        pcall(function() comp = ui.CurrentStation end)
+        if Valid(comp) then return comp:GetOwner(), comp end
+    end
     for _, ui in ipairs(FindAllOf("WorldActorInventoryUIAPI") or {}) do
         local comp, owner = nil, nil
         pcall(function() comp = ui:GetInventoryComponent() end)
@@ -111,7 +124,7 @@ local function Probe()
     local out = { "ToolkitProbe " .. os.date("%Y-%m-%d %H:%M:%S") }
     local station, stationInv = OpenStation(pc)
     Describe("Open station / container", station, out)
-    Describe("Open station inventory", stationInv, out)
+    Describe("Open station component / inventory", stationInv, out)
     Describe("Player inventory", pc.BP_Components_Inventory, out)
     local ctrl = nil
     pcall(function() ctrl = pc.InventoryController end)
@@ -120,7 +133,7 @@ local function Probe()
     local item = HoveredItem()
     Describe("Hovered item", item, out)
     if Valid(item) then pcall(function() Describe("Hovered item data", item.ItemData, out) end) end
-    ClassHistogram(out)
+    if Config.ClassHistogram then ClassHistogram(out) end
 
     local path = ScriptDir .. "probe_" .. os.date("%Y%m%d_%H%M%S") .. ".txt"
     local f = io.open(path, "w")

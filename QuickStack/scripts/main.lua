@@ -54,7 +54,7 @@ local Config = {
     -- If a station accepts more item types than this, treat it as unfiltered and use name hints
     StationFetchMaxItemTypes = 12,
 
-    -- Floating category labels above chests (Ctrl+L toggles)
+    -- Floating category labels above chests (Ctrl+Num4 toggles)
     ChestLabels = true,
     ChestLabelRadius = 3000.0,  -- 30 meters
     ChestLabelHeight = 110.0,   -- above the chest pivot
@@ -80,7 +80,7 @@ Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all w
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items organized into nearby chests!")
 Log("  [Alt + G]  : STATION FETCH -> At an open crafting station, pull its ingredients from nearby chests (or pull the hovered item)")
-Log("  [Ctrl + L] : Toggle floating category labels above nearby chests")
+Log("  [Ctrl + Num4] : Toggle floating category labels above nearby chests")
 Log("==========================================")
 
 -- Helper: Safely get the name of any UObject, UClass, or UActorComponent without TrivialObject crashes
@@ -1869,17 +1869,90 @@ local StationIngredientHints = {
     { Keys = { "brew", "cauldron", "alch", "herb" }, Items = { "herb", "vial", "potion" } },
 }
 
-local function FindOpenStation(PC)
-    local okUI, uis = pcall(function() return FindAllOf("WorldActorInventoryUIAPI") end)
-    if not okUI or not uis then return nil end
-    for _, ui in ipairs(uis) do
-        local comp, owner = nil, nil
-        pcall(function() comp = ui:GetInventoryComponent() end)
-        if comp and comp:IsValid() then pcall(function() owner = comp:GetOwner() end) end
-        if owner and IsValidWorldActor(owner) and owner ~= PC.Pawn and not IsChestActor(owner) then
-            return { Actor = owner, Inventory = comp, ClassName = GetSafeClassName(owner) }
+-- Station classes (from the object dump): processing stations (furnace, smelter,
+-- tanner, spinning wheel...) carry a ProcessingStationComponent whose open menu is
+-- a ProcessingStationUIAPI; crafting benches carry a CraftingStationComponent whose
+-- open menu is the CraftingUIAPI (CurrentStation / CurrentCraftRecipe).
+local StationOpenRadius = 800.0   -- an open station menu belongs to a station this close
+local StationFallbackRadius = 600.0
+
+local function DataSet(arr)
+    local set, n = {}, 0
+    pcall(function()
+        local count = arr:GetArrayNum()
+        for i = 1, count do
+            local d = arr[i]
+            if d and d:IsValid() then set[d:GetAddress()] = true; n = n + 1 end
+        end
+    end)
+    return set, n
+end
+
+local function RecipeIngredientSet(recipe)
+    local set, n = {}, 0
+    pcall(function()
+        local arr = recipe.ItemsConsumed
+        local count = arr:GetArrayNum()
+        for i = 1, count do
+            local d = arr[i].ItemData
+            if d and d:IsValid() then set[d:GetAddress()] = true; n = n + 1 end
+        end
+    end)
+    return set, n
+end
+
+local function ComponentNear(comp, playerLoc, radius)
+    local owner, dsq = nil, math.huge
+    pcall(function()
+        owner = comp:GetOwner()
+        local loc = owner:K2_GetActorLocation()
+        local dx, dy, dz = loc.X - playerLoc.X, loc.Y - playerLoc.Y, loc.Z - playerLoc.Z
+        dsq = dx * dx + dy * dy + dz * dz
+    end)
+    if owner and IsValidWorldActor(owner) and dsq <= radius * radius then return owner, dsq end
+    return nil
+end
+
+local function ProcessingStation(comp, owner)
+    local accepted, n = DataSet(comp.AcceptedResources)
+    local inv = nil
+    pcall(function() inv = comp.Resources end)
+    return { Actor = owner, Inventory = inv, ClassName = GetSafeClassName(owner),
+             Accepted = n > 0 and accepted or nil }
+end
+
+local function FindOpenStation(PC, playerLoc)
+    -- 1. An open processing-station menu.
+    for _, ui in ipairs(FindAllOf("ProcessingStationUIAPI") or {}) do
+        local comp = nil
+        pcall(function() comp = ui.ProcessingStationComponent end)
+        if comp and comp:IsValid() then
+            local owner = ComponentNear(comp, playerLoc, StationOpenRadius)
+            if owner then return ProcessingStation(comp, owner), "processing menu" end
         end
     end
+    -- 2. An open crafting-bench menu: fetch the selected recipe's ingredients.
+    for _, ui in ipairs(FindAllOf("CraftingUIAPI") or {}) do
+        local comp, recipe = nil, nil
+        pcall(function() comp = ui.CurrentStation end)
+        pcall(function() recipe = ui.CurrentCraftRecipe end)
+        if comp and comp:IsValid() then
+            local owner = ComponentNear(comp, playerLoc, StationOpenRadius)
+            if owner then
+                local accepted, n = nil, 0
+                if recipe and recipe:IsValid() then accepted, n = RecipeIngredientSet(recipe) end
+                return { Actor = owner, Inventory = nil, ClassName = GetSafeClassName(owner),
+                         Accepted = n > 0 and accepted or nil }, "crafting menu"
+            end
+        end
+    end
+    -- 3. Fallback: the nearest processing station within reach.
+    local best, bestD = nil, math.huge
+    for _, comp in ipairs(FindAllOf("ProcessingStationComponent") or {}) do
+        local owner, dsq = ComponentNear(comp, playerLoc, StationFallbackRadius)
+        if owner and dsq < bestD then best, bestD = { Comp = comp, Owner = owner }, dsq end
+    end
+    if best then return ProcessingStation(best.Comp, best.Owner), "nearest station" end
     return nil
 end
 
@@ -1906,11 +1979,16 @@ local function ExecuteStationFetch()
         return
     end
 
-    local station = FindOpenStation(PC)
+    local station, how = FindOpenStation(PC, playerLoc)
     if not station then
+        Log("[DISCOVERY] Station Fetch: no open station menu and no processing station within 6m.")
         Log("Station Fetch: open a crafting station (or hover an item) and press [Alt + G].")
         return
     end
+    local acceptedCount = 0
+    for _ in pairs(station.Accepted or {}) do acceptedCount = acceptedCount + 1 end
+    Log(string.format("[DISCOVERY] Station Fetch: found '%s' via %s, %d accepted item type(s) listed.",
+        station.ClassName, how, acceptedCount))
 
     local nearbyChests = FindNearbyChests(playerLoc)
     if #nearbyChests == 0 then
@@ -1936,16 +2014,23 @@ local function ExecuteStationFetch()
         end
     end
 
-    -- Which of those does the station's own inventory accept?
+    -- Which of those does the station take? Prefer the station's own list
+    -- (AcceptedResources, or the selected recipe's ingredients).
     local accepted = {}
-    for _, t in ipairs(order) do
-        local space = 0
-        pcall(function() space = station.Inventory:GetSpaceAvailableForItemByData(t.ItemData) end)
-        if space and space > 0 then accepted[#accepted + 1] = t end
+    if station.Accepted then
+        for _, t in ipairs(order) do
+            if station.Accepted[t.DataAddr] then accepted[#accepted + 1] = t end
+        end
+    elseif station.Inventory then
+        for _, t in ipairs(order) do
+            local space = 0
+            pcall(function() space = station.Inventory:GetSpaceAvailableForItemByData(t.ItemData) end)
+            if space and space > 0 then accepted[#accepted + 1] = t end
+        end
     end
 
     -- A station that accepts nearly everything has no filter we can read: use name hints instead.
-    if #accepted == 0 or #accepted > Config.StationFetchMaxItemTypes then
+    if not station.Accepted and (#accepted == 0 or #accepted > Config.StationFetchMaxItemTypes) then
         local cls = station.ClassName:lower()
         local wanted = nil
         for _, hint in ipairs(StationIngredientHints) do
@@ -3296,12 +3381,12 @@ pcall(function()
     Log("Keybind registered: [Alt + G] -> Fetch ingredients for the open station / pull hovered item from chests.")
 end)
 
--- Keybind Registration: Ctrl + L -> Toggle floating chest category labels
+-- Keybind Registration: Ctrl + Num4 -> Toggle floating chest category labels
 pcall(function()
-    RegisterKeyBind(Key.L, { ModifierKey.CONTROL }, function()
+    RegisterKeyBind(Key.NUM_FOUR, { ModifierKey.CONTROL }, function()
         ExecuteInGameThread(function() pcall(ToggleChestLabels) end)
     end)
-    Log("Keybind registered: [Ctrl + L] -> Toggle chest category labels.")
+    Log("Keybind registered: [Ctrl + Num4] -> Toggle chest category labels.")
 end)
 
 
