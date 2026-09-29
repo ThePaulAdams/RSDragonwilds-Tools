@@ -21,11 +21,11 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**TelekineticWoodcraft**](TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[Shift+F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`Shift+F6`). |
 | [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
 | [**AutoRun**](AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
-| [**BulkOpen**](BulkOpen/README.md) | Quality of Life | `[Ctrl+Num1]` | Opens every bag and pack in your backpack with one key press. |
-| [**HomeRecall**](HomeRecall/README.md) | Travel | `[Ctrl+Num3]`, `[Alt+Num3]` | Teleports you home (saved spot or bed) after a 3-second channel, with a cooldown. |
+| [**BulkOpen**](BulkOpen/README.md) | Quality of Life | `[Shift+F11]` | Opens every bag and pack in your backpack with one key press. |
+| [**HomeRecall**](HomeRecall/README.md) | Travel | `[Ctrl+F11]`, `[Alt+F11]` | Teleports you home (saved spot or bed) after a 3-second channel, with a cooldown. |
 | [**HotbarScroll**](HotbarScroll/README.md) | Controls | Mouse wheel | Mouse wheel cycles your hotbar slots. |
 | [**RaidWarning**](RaidWarning/README.md) | Base | Automatic | On-screen warning when enemies gather at your base. |
-| [**RecipeLookup**](RecipeLookup/README.md) | Crafting | `[Ctrl+Num2]` | Lists recipes (for the open station) and which ones you can craft with what's in your bag and nearby chests. |
+| [**RecipeLookup**](RecipeLookup/README.md) | Crafting | `[Alt+F12]` | Lists recipes (for the open station) and which ones you can craft with what's in your bag and nearby chests. |
 | [**ToolkitProbe**](ToolkitProbe/README.md) | Developer | `[Ctrl+F12]` | Dumps game object details to a file so features that need game-internal names can be finished. |
 
 > **New in this release (untested in game):** BulkOpen, HomeRecall, HotbarScroll, RaidWarning, RecipeLookup and ToolkitProbe, plus QuickStack Station Fetch, chest labels and station output auto-store, and minimap death and teammate markers. Each logs `[DISCOVERY]` lines to `UE4SS.log` when a guess about the game's internals doesn't match.
@@ -44,13 +44,13 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[Ctrl + G]`** | **Quick Stack** | **Pack Base:** Vacuum all ground items within 150m into virtual Relocation Crate |
 | **`[Shift + G]`** | **Quick Stack** | **Unpack Base:** Deposit all Relocation Crate items categorized into nearby chests |
 | **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open crafting station, pull its ingredients from nearby chests. Hovering an item pulls that item instead |
-| **`[Ctrl + Num4]`** | **Quick Stack** | Toggle floating category labels above nearby chests |
+| **`[Shift + F12]`** | **Quick Stack** | Toggle floating category labels above nearby chests |
 | **`[Ctrl + F6]`** | **OSRS Minimap** | Clear the death marker |
-| **`[Ctrl + Num1]`** | **Bulk Open** | Open every bag/pack in your backpack |
-| **`[Ctrl + Num3]`** | **Home Recall** | Recall home (3s channel, moving cancels) |
-| **`[Alt + Num3]`** | **Home Recall** | Save the current spot as home |
+| **`[Shift + F11]`** | **Bulk Open** | Open every bag/pack in your backpack |
+| **`[Ctrl + F11]`** | **Home Recall** | Recall home (3s channel, moving cancels) |
+| **`[Alt + F11]`** | **Home Recall** | Save the current spot as home |
 | **Mouse wheel** | **Hotbar Scroll** | Cycle hotbar slots |
-| **`[Ctrl + Num2]`** | **Recipe Lookup** | Show recipes / next page (`Esc` closes) |
+| **`[Alt + F12]`** | **Recipe Lookup** | Show recipes / next page (`Esc` closes) |
 | **`[Ctrl + F12]`** | **Toolkit Probe** | Write a probe file for the toolkit author |
 | **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |
 | **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons on / off |
@@ -145,7 +145,7 @@ If you cloned or downloaded this repository:
 - **Base Relocation Virtual Crate (`Ctrl+G` / `Shift+G`)**: Pack all ground items within 150m into a persistent virtual crate, then unpack them organized into nearby chests with one keypress.
 - **Targeted QuickPull**: Hover any item in your inventory or chest and hold `G` (or press `Alt+G`) to pull all matching stacks from all nearby chests directly into your inventory.
 - **Station Fetch (`Alt+G`)**: With a furnace, anvil or other station open, pulls one stack of each ingredient it accepts from nearby chests into your backpack.
-- **Chest Labels (`Ctrl+Num4`)**: Floating category labels above chests within 30m.
+- **Chest Labels (`Shift+F12`)**: Floating category labels above chests within 30m.
 - **Station Output Auto-Store**: Products a crafting station drops on the ground go straight into the matching category chest.
 - **Strict Safe Guards**: Zero-tolerance blacklist prevents any crafting stations, blast furnaces, smelters, kilns, or campfires from being touched. Hotbar, combat ammunition, and runes are 100% protected.
 

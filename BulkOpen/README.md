@@ -5,8 +5,8 @@ Opens every bag and pack in your backpack (Goblin Packs and similar) with one ke
 ## Controls
 | Action | Keybind |
 | :--- | :--- |
-| Open every bag, one after another | `[Ctrl + Num1]` |
-| Stop early | `[Ctrl + Num1]` again |
+| Open every bag, one after another | `[Shift + F11]` |
+| Stop early | `[Shift + F11]` again |
 
 ## How it works
 - Finds items whose asset path contains `item_pack` / `item_bag`, or whose name ends in "pack", "bag", "sack" or "pouch". Backpacks, rune pouches, seeds, tea bags and quivers are never opened.
@@ -14,4 +14,4 @@ Opens every bag and pack in your backpack (Goblin Packs and similar) with one ke
 - If neither shrinks the pack stack, it logs a `[DISCOVERY]` line listing the use/open functions on your inventory.
 
 ## Status
-Untested in game. The use-item call is taken from the game's object dump; confirm on first run (`UE4SS.log` shows `Using ...`). Numpad keys are used because the game ignores modifiers, so Ctrl+letter chords also trigger the game's own letter bindings (and Ctrl+O is the UE4SS debug console).
+Untested in game. The use-item call is taken from the game's object dump; confirm on first run (`UE4SS.log` shows `Using ...`). F11/F12 chords are used because the game ignores modifiers (a Ctrl+letter chord also triggers the game's own letter binding, and Ctrl+O is the UE4SS debug window). Numpad keys were tried and dropped: AutoRun toggles Num Lock, which turns numpad digits into End/arrow keys every other press.

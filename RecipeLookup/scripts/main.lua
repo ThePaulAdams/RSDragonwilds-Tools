@@ -3,17 +3,17 @@ local UEHelpers = require("UEHelpers")
 local ModName = "RecipeLookup"
 local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))) end
 
--- Ctrl+Num2 shows what you can make. At an open crafting station it lists that
+-- Alt+F12 shows what you can make. At an open crafting station it lists that
 -- station's recipes; elsewhere it lists every recipe. Ingredients are counted
 -- from your backpack plus chests within 12 m (the game's own craft-from-chest range).
--- Press Ctrl+Num2 again for the next page; Escape closes the list.
+-- Press Alt+F12 again for the next page; Escape closes the list.
 --
 -- Recipe data comes straight from the game's RecipeData assets
 -- (/Script/Dominion.RecipeData: ItemsConsumed / ItemsCreated arrays of
 -- ItemDataContainer { ItemData, Count }). No full object scan is done.
 local Config = {
-    Key = Key.NUM_TWO,
-    Modifiers = { ModifierKey.CONTROL },
+    Key = Key.F12,
+    Modifiers = { ModifierKey.ALT },
     ChestRadius = 1200.0,
     LinesPerPage = 10,
     HideAfterSeconds = 25,
@@ -256,7 +256,7 @@ local function RenderPage()
     local total = math.max(1, math.ceil(#Panel.Lines / Config.LinesPerPage))
     if Panel.Page > total then Panel.Page = 1 end
     local first = (Panel.Page - 1) * Config.LinesPerPage + 1
-    local out = { string.format("%s   (page %d/%d, Ctrl+Num2 next, Esc close)", Panel.Title, Panel.Page, total) }
+    local out = { string.format("%s   (page %d/%d, Alt+F12 next, Esc close)", Panel.Title, Panel.Page, total) }
     for i = first, math.min(#Panel.Lines, first + Config.LinesPerPage - 1) do out[#out + 1] = Panel.Lines[i] end
     PanelText(table.concat(out, "\n"))
 end
@@ -329,4 +329,4 @@ if Key.ESCAPE then
     RegisterKeyBind(Key.ESCAPE, function() ExecuteInGameThread(HidePanel) end)
 end
 
-Log("Ready: Ctrl+Num2 lists recipes and what you can craft (station recipes when a station is open).")
+Log("Ready: Alt+F12 lists recipes and what you can craft (station recipes when a station is open).")

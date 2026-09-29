@@ -5,8 +5,8 @@ Teleports you home after a short channel, like a home teleport spell.
 ## Controls
 | Action | Keybind |
 | :--- | :--- |
-| Recall home (3 second channel, moving cancels) | `[Ctrl + Num3]` |
-| Save the spot you're standing on as home | `[Alt + Num3]` |
+| Recall home (3 second channel, moving cancels) | `[Ctrl + F11]` |
+| Save the spot you're standing on as home | `[Alt + F11]` |
 
 ## Details
 - Home is saved to `HomeRecall/scripts/home.txt`, so it survives restarts. There is one home per install, not per save.
@@ -15,4 +15,4 @@ Teleports you home after a short channel, like a home teleport spell.
 - Uses the engine's `K2_TeleportTo`. In co-op this works for the host; a client teleport may be corrected by the server.
 
 ## Status
-Untested in game. The bed class names are guesses, so saving a home with `Alt+Num3` is the reliable path.
+Untested in game. The bed class names are guesses, so saving a home with `Alt+F11` is the reliable path.

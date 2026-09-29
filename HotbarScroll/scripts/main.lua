@@ -160,7 +160,7 @@ local function Scroll(direction)
     Log("No hotbar select function worked; wheel scrolling is off until reload. Send the DISCOVERY lines above to the toolkit author.")
 end
 
-local Busy, LastError = false, nil
+local Busy, LastError, LastScroll = false, nil, 0
 LoopAsync(10, function()
     if Disabled or Busy then return false end
     Busy = true
@@ -172,7 +172,9 @@ LoopAsync(10, function()
             WheelDown = WheelDown or { KeyName = FName("MouseScrollDown") }
             local up = pc:WasInputKeyJustPressed(WheelUp)
             local down = pc:WasInputKeyJustPressed(WheelDown)
-            if up ~= down then
+            -- WasInputKeyJustPressed is frame-latched; 50 ms debounce stops one notch counting twice.
+            if up ~= down and os.clock() - LastScroll > 0.05 then
+                LastScroll = os.clock()
                 local dir = up and -1 or 1
                 if Config.Invert then dir = -dir end
                 Scroll(dir)

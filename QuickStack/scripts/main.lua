@@ -54,7 +54,7 @@ local Config = {
     -- If a station accepts more item types than this, treat it as unfiltered and use name hints
     StationFetchMaxItemTypes = 12,
 
-    -- Floating category labels above chests (Ctrl+Num4 toggles)
+    -- Floating category labels above chests (Shift+F12 toggles)
     ChestLabels = true,
     ChestLabelRadius = 3000.0,  -- 30 meters
     ChestLabelHeight = 110.0,   -- above the chest pivot
@@ -80,7 +80,7 @@ Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all w
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items organized into nearby chests!")
 Log("  [Alt + G]  : STATION FETCH -> At an open crafting station, pull its ingredients from nearby chests (or pull the hovered item)")
-Log("  [Ctrl + Num4] : Toggle floating category labels above nearby chests")
+Log("  [Shift + F12] : Toggle floating category labels above nearby chests")
 Log("==========================================")
 
 -- Helper: Safely get the name of any UObject, UClass, or UActorComponent without TrivialObject crashes
@@ -2286,7 +2286,7 @@ local function AutoStoreStationOutput()
     end
 end
 
--- Background loop: labels every 3 s, label facing every 0.2 s, station output every 1 s.
+-- Background loop: labels every 10 s (each refresh scans every chest), label facing every 0.2 s, station output every 1 s.
 do
     local tick, busy = 0, false
     LoopAsync(200, function()
@@ -2294,7 +2294,7 @@ do
         if busy then return false end
         busy = true
         ExecuteInGameThread(function()
-            if tick % 15 == 1 then pcall(RefreshChestLabels) end
+            if tick % 50 == 1 then pcall(RefreshChestLabels) end
             if tick % 5 == 0 then pcall(AutoStoreStationOutput) end
             pcall(FaceChestLabels)
             busy = false
@@ -3381,12 +3381,12 @@ pcall(function()
     Log("Keybind registered: [Alt + G] -> Fetch ingredients for the open station / pull hovered item from chests.")
 end)
 
--- Keybind Registration: Ctrl + Num4 -> Toggle floating chest category labels
+-- Keybind Registration: Shift + F12 -> Toggle floating chest category labels
 pcall(function()
-    RegisterKeyBind(Key.NUM_FOUR, { ModifierKey.CONTROL }, function()
+    RegisterKeyBind(Key.F12, { ModifierKey.SHIFT }, function()
         ExecuteInGameThread(function() pcall(ToggleChestLabels) end)
     end)
-    Log("Keybind registered: [Ctrl + Num4] -> Toggle chest category labels.")
+    Log("Keybind registered: [Shift + F12] -> Toggle chest category labels.")
 end)
 
 

@@ -7,8 +7,8 @@ local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))
 -- using whichever "use item" function the game accepts. The first function that
 -- actually shrinks a pack stack is remembered for the rest of the session.
 local Config = {
-    Key = Key.NUM_ONE,
-    Modifiers = { ModifierKey.CONTROL },
+    Key = Key.F11,
+    Modifiers = { ModifierKey.SHIFT },
     -- Milliseconds between opens. The game may ignore uses that arrive faster
     -- than its own open animation/cooldown.
     OpenIntervalMs = 250,
@@ -295,4 +295,4 @@ RegisterKeyBind(Config.Key, Config.Modifiers, function()
     end)
 end)
 
-Log("Ready: Ctrl+Num1 opens every bag/pack in your backpack (press again to stop).")
+Log("Ready: Shift+F11 opens every bag/pack in your backpack (press again to stop).")
