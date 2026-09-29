@@ -83,6 +83,8 @@ local Config = {
     StationFetchPicker = true,
     -- Top edge of the picker column; 380 keeps it clear of the OSRS minimap.
     StationPickerTop = 380,
+    -- Open the picker automatically whenever a station menu opens (Alt+G still toggles it).
+    StationFetchAutoOpen = true,
     -- Alt+G with no station open shows the Nearby Storage dialog: every nearby chest
     -- as one list with category tabs; click an item to take stacks of it.
     StorageDialog = true,
@@ -2011,7 +2013,8 @@ local function FindOpenStation(PC, playerLoc)
                 local accepted, n = nil, 0
                 if recipe and recipe:IsValid() then accepted, n = RecipeIngredientSet(recipe) end
                 return { Actor = owner, Inventory = nil, ClassName = GetSafeClassName(owner),
-                         Accepted = n > 0 and accepted or nil, Crafting = true }, "crafting menu"
+                         Accepted = n > 0 and accepted or nil, Crafting = true,
+                         RecipeAddr = (recipe and recipe:IsValid()) and recipe:GetAddress() or 0 }, "crafting menu"
             end
         end
     end
@@ -2049,6 +2052,9 @@ local ExecuteQuickPull -- defined below (forward-declared by the station fetch)
 local PICKER_BUTTON = "/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C"
 local Picker = { Buttons = {}, Rows = {}, Entries = {}, Page = 1, Visible = false,
                  Station = nil, Close = nil, More = nil }
+-- Auto-open state: the station menu the picker was opened for, its selected recipe,
+-- and a station the player closed the picker at (stays closed until that menu closes).
+local AutoPicker = { Key = nil, Recipe = nil, Dismissed = nil }
 
 local function PickerValid(w)
     if not w then return false end
@@ -2261,7 +2267,10 @@ pcall(function()
         local ok, button = pcall(function() return context:get() end)
         if not ok then return end
         if PickerSame(button, Picker.Close) then
-            ExecuteInGameThread(function() pcall(HidePicker) end)
+            ExecuteInGameThread(function()
+                AutoPicker.Dismissed = AutoPicker.Key -- stay closed until this station menu closes
+                pcall(HidePicker)
+            end)
         elseif PickerSame(button, Picker.More) then
             ExecuteInGameThread(function()
                 Picker.Page = Picker.Page + 1
@@ -2638,6 +2647,32 @@ pcall(function()
     end)
 end)
 
+-- Opens the picker by itself when a station menu opens, refreshes it when the
+-- selected recipe changes at a crafting bench, and resets once all menus close.
+local function AutoPickerTick()
+    if not Config.StationFetchAutoOpen or not Config.StationFetchPicker or Storage.Visible then return end
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then
+        AutoPicker.Key, AutoPicker.Recipe, AutoPicker.Dismissed = nil, nil, nil
+        return
+    end
+    local station = FindOpenStation(PC, playerLoc)
+    if not station then
+        if Picker.Visible and AutoPicker.Key then HidePicker() end
+        AutoPicker.Key, AutoPicker.Recipe, AutoPicker.Dismissed = nil, nil, nil
+        return
+    end
+    local key = station.Actor:GetAddress()
+    local recipe = station.RecipeAddr or 0
+    if AutoPicker.Dismissed == key then return end
+    if Picker.Visible and AutoPicker.Key == key and AutoPicker.Recipe == recipe then return end
+    AutoPicker.Key, AutoPicker.Recipe, AutoPicker.Dismissed = key, recipe, nil
+    OpenPicker(PC, station, playerLoc)
+end
+
 local function ExecuteStationFetch()
     local PC, pawn, playerLoc = PlayerContext()
     if not PC then return end
@@ -2648,8 +2683,9 @@ local function ExecuteStationFetch()
         return
     end
 
-    -- Alt+G while the picker is open closes it.
+    -- Alt+G while the picker is open closes it (and keeps it closed for this station visit).
     if Picker.Visible then
+        AutoPicker.Dismissed = AutoPicker.Key
         HidePicker()
         return
     end
@@ -3034,6 +3070,7 @@ do
             pcall(FaceChestLabels)
             pcall(PickerWatch)
             pcall(StorageWatch)
+            pcall(AutoPickerTick)
             busy = false
         end)
         return false
