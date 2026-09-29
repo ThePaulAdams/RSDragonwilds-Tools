@@ -1974,7 +1974,7 @@ local function FindOpenStation(PC, playerLoc)
                 local accepted, n = nil, 0
                 if recipe and recipe:IsValid() then accepted, n = RecipeIngredientSet(recipe) end
                 return { Actor = owner, Inventory = nil, ClassName = GetSafeClassName(owner),
-                         Accepted = n > 0 and accepted or nil }, "crafting menu"
+                         Accepted = n > 0 and accepted or nil, Crafting = true }, "crafting menu"
             end
         end
     end
@@ -2022,8 +2022,17 @@ local function ExecuteStationFetch()
     Log(string.format("[DISCOVERY] Station Fetch: found '%s' via %s, %d accepted item type(s) listed.",
         station.ClassName, how, acceptedCount))
 
-    -- Furnaces, smelters etc.: only top up what is already in the station, so the
-    -- player chooses (one iron ore in = fetch iron; a log in the fuel slot = fetch logs).
+    -- Crafting benches: only the selected recipe's ingredients, never a guess.
+    if station.Crafting and not station.Accepted then
+        Log(string.format("Station Fetch: select a recipe at '%s' first, then press [Alt + G] to fetch its ingredients.",
+            station.ClassName))
+        return
+    end
+
+    -- Every processing station (smelter, loom, spinning wheel, tanner, sawmill, kiln,
+    -- grindstone, stonecutter, campfire, grill, cauldron, fermentation barrel...):
+    -- only top up what is already in it, so the player chooses
+    -- (one iron ore in = fetch iron; a log in the fuel slot = fetch logs).
     if station.Processing and Config.StationFetchLoadedOnly then
         if station.Loaded then
             station.Accepted = station.Loaded
