@@ -21,7 +21,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**TelekineticWoodcraft**](TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[Shift+F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`Shift+F6`). |
 | [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
 | [**AutoRun**](AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
-| [**BulkOpen**](BulkOpen/README.md) | Quality of Life | `[Shift+F11]` | Opens every bag and pack in your backpack with one key press. |
+| [**BulkOpen**](BulkOpen/README.md) | Quality of Life | `[Ctrl+F9]` | Opens every bag and pack in your backpack with one key press. |
 | [**HomeRecall**](HomeRecall/README.md) | Travel | `[Ctrl+F11]`, `[Alt+F11]` | Teleports you home (saved spot or bed) after a 3-second channel, with a cooldown. |
 | [**HotbarScroll**](HotbarScroll/README.md) | Controls | Mouse wheel | Mouse wheel cycles your hotbar slots. |
 | [**RaidWarning**](RaidWarning/README.md) | Base | Automatic | On-screen warning when enemies gather at your base. |

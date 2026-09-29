@@ -166,7 +166,7 @@ local Mods = {
         "Adds staff power tiers, emissive glow, and legendary infusion.",
         "F5 power | F3 glow | F8 infusion | Shift+F8 summon"
     },
-    {"BulkOpen", "Bulk Open", "Opens every bag and pack in your backpack.", "Shift+F11 open all (again to stop)"},
+    {"BulkOpen", "Bulk Open", "Opens every bag and pack in your backpack.", "Ctrl+F9 open all (again to stop)"},
     {"HomeRecall", "Home Recall", "Teleports you home after a short channel.", "Ctrl+F11 recall | Alt+F11 set home"},
     {"HotbarScroll", "Hotbar Scroll", "Mouse wheel cycles your hotbar slots.", "Mouse wheel"},
     {"RaidWarning", "Raid Warning", "Warns you when enemies gather at your base.", "Automatic"},
