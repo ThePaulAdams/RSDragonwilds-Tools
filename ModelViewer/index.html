@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dragonwilds Model Viewer</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f25; --panel2: #23272f; --line: #2f343d;
+    --text: #e6e6e6; --muted: #9aa3ae; --accent: #e0b64a; --accent2: #6cb4ff;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  button, select, input { font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #1a1a1a; border-color: var(--accent); font-weight: 600; }
+  #app { display: grid; grid-template-columns: minmax(320px, 44%) 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; }
+  #left { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-width: 0; min-height: 0; }
+  #toolbar { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  #toolbar .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  #toolbar input[type=search] { flex: 1; min-width: 160px; }
+  #toolbar select { flex: 1; min-width: 160px; max-width: 100%; }
+  #toolbar label { color: var(--muted); display: flex; gap: 4px; align-items: center; }
+  #summary { color: var(--muted); font-size: 12px; }
+  #grid { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; align-content: start; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+    overflow: hidden; position: relative; }
+  .card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .card .thumb { width: 100%; aspect-ratio: 1; background: #101216; display: block; }
+  .card .name { padding: 4px 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .star { position: absolute; top: 4px; right: 6px; color: var(--accent); font-size: 16px; text-shadow: 0 0 3px #000; }
+  #more { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 8px; }
+  #right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #view { flex: 1; position: relative; min-height: 0; }
+  #view canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; color: var(--muted); padding: 24px; }
+  #empty div { max-width: 460px; }
+  #status { position: absolute; left: 12px; bottom: 12px; color: var(--muted); font-size: 12px; }
+  #info { border-top: 1px solid var(--line); background: var(--panel); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  #info .title { font-weight: 600; font-size: 16px; word-break: break-all; }
+  #info code { color: var(--accent2); word-break: break-all; font-size: 12px; }
+  #info .meta { color: var(--muted); font-size: 12px; }
+  #info .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  @media (max-width: 800px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 55fr) minmax(0, 45fr); }
+    #left { border-right: 0; border-bottom: 1px solid var(--line); min-height: 0; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="left">
+    <div id="toolbar">
+      <div class="row">
+        <button class="primary" id="openBtn">Open export folder</button>
+        <input type="file" id="dirInput" webkitdirectory directory multiple hidden>
+        <button id="exportBtn" title="Download the starred models as a JSON list of in-game object paths">Export starred</button>
+      </div>
+      <div class="row">
+        <input type="search" id="search" placeholder="Search names and paths (e.g. castle wall)">
+      </div>
+      <div class="row">
+        <select id="folder"><option value="">All folders</option></select>
+        <select id="kind">
+          <option value="">All types</option>
+          <option value="SM_">Static meshes (SM_)</option>
+          <option value="SK_">Skeletal meshes (SK_)</option>
+        </select>
+        <label><input type="checkbox" id="starOnly"> Starred only</label>
+      </div>
+      <div id="summary">No folder loaded.</div>
+    </div>
+    <div id="grid"></div>
+  </div>
+  <div id="right">
+    <div id="view">
+      <div id="empty"><div>
+        <p><strong>Dragonwilds Model Viewer</strong></p>
+        <p>Export the game's meshes with FModel as glTF, then click <em>Open export folder</em> and pick the folder FModel wrote to. See ModelViewer/README.md for the steps.</p>
+        <p>Nothing is uploaded. Files are read straight from your disk.</p>
+      </div></div>
+      <div id="status"></div>
+    </div>
+    <div id="info" hidden>
+      <div class="title" id="infoName"></div>
+      <div><code id="infoPath"></code></div>
+      <div class="meta" id="infoMeta"></div>
+      <div class="row">
+        <button id="copyBtn">Copy object path</button>
+        <button id="starBtn">Star</button>
+        <button id="wireBtn">Wireframe</button>
+        <button id="resetBtn">Reset camera</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+
+const MODEL_EXT = /\.(glb|gltf|obj)$/i;
+const PAGE = 300;
+const STAR_KEY = 'dwmv.starred';
+
+// ---------- state ----------
+let files = new Map();      // lower-case relative path -> File
+let byBase = new Map();     // lower-case basename -> File (fallback for textures)
+let models = [];            // { file, rel, name, dir, objectPath, search }
+let filtered = [];
+let shown = 0;
+let selected = null;
+let starred = new Set(loadStars());
+
+function loadStars() {
+  try { return JSON.parse(localStorage.getItem(STAR_KEY) || '[]'); } catch { return []; }
+}
+function saveStars() {
+  try { localStorage.setItem(STAR_KEY, JSON.stringify([...starred])); } catch {}
+}
+
+// FModel writes Exports/<Game>/Content/Art/Env/X/SM_Y.glb, which is /Game/Art/Env/X/SM_Y.SM_Y in game.
+// Plugin content (<Game>/Plugins/.../<Plugin>/Content/...) mounts at /<Plugin>/...
+function toObjectPath(rel) {
+  const parts = rel.replace(/\\/g, '/').split('/');
+  const ci = parts.lastIndexOf('Content');
+  const file = parts[parts.length - 1];
+  const base = file.replace(MODEL_EXT, '');
+  if (ci < 0) return '/' + parts.slice(0, -1).concat(base).join('/') + '.' + base;
+  const isPlugin = parts.slice(0, ci).includes('Plugins');
+  const mount = isPlugin ? parts[ci - 1] : 'Game';
+  const inner = parts.slice(ci + 1, -1);
+  return '/' + [mount, ...inner, base].join('/') + '.' + base;
+}
+window.toObjectPath = toObjectPath;
+
+// ---------- loading a folder ----------
+const dirInput = document.getElementById('dirInput');
+document.getElementById('openBtn').onclick = () => dirInput.click();
+dirInput.onchange = () => ingest([...dirInput.files]);
+
+// Drag and drop a folder too.
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  const items = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  const out = [];
+  async function walk(entry, prefix) {
+    if (entry.isFile) {
+      const f = await new Promise((res, rej) => entry.file(res, rej));
+      Object.defineProperty(f, 'dwRel', { value: prefix + f.name });
+      out.push(f);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const child of batch) await walk(child, prefix + entry.name + '/');
+      } while (batch.length);
+    }
+  }
+  for (const it of items) await walk(it, '');
+  ingest(out);
+});
+
+function relOf(f) { return f.dwRel || f.webkitRelativePath || f.name; }
+
+function ingest(list) {
+  files = new Map(); byBase = new Map(); models = [];
+  for (const f of list) {
+    const rel = relOf(f).replace(/\\/g, '/');
+    files.set(rel.toLowerCase(), f);
+    byBase.set(f.name.toLowerCase(), f);
+    if (MODEL_EXT.test(f.name)) {
+      const parts = rel.split('/');
+      const objectPath = toObjectPath(rel);
+      const name = f.name.replace(MODEL_EXT, '');
+      const dir = objectPath.slice(0, objectPath.lastIndexOf('/'));
+      models.push({ file: f, rel, name, dir, objectPath, search: objectPath.toLowerCase() });
+    }
+  }
+  models.sort((a, b) => a.objectPath.localeCompare(b.objectPath));
+  buildFolderList();
+  thumbCache.clear();
+  applyFilter();
+}
+window.ingest = ingest;
+
+function buildFolderList() {
+  // Offer every folder level (up to 5 deep) that contains models, with counts.
+  const counts = new Map();
+  for (const m of models) {
+    const segs = m.dir.split('/').filter(Boolean);
+    for (let d = 1; d <= Math.min(segs.length, 5); d++) {
+      const k = '/' + segs.slice(0, d).join('/');
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+  }
+  const sel = document.getElementById('folder');
+  sel.innerHTML = '<option value="">All folders</option>';
+  for (const k of [...counts.keys()].sort()) {
+    const depth = k.split('/').length - 2;
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = '  '.repeat(depth) + k.split('/').pop() + ' (' + counts.get(k) + ')';
+    sel.appendChild(o);
+  }
+}
+
+// ---------- filtering and grid ----------
+const grid = document.getElementById('grid');
+const searchEl = document.getElementById('search');
+const folderEl = document.getElementById('folder');
+const kindEl = document.getElementById('kind');
+const starOnlyEl = document.getElementById('starOnly');
+let searchTimer;
+searchEl.oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilter, 150); };
+folderEl.onchange = kindEl.onchange = starOnlyEl.onchange = applyFilter;
+
+function applyFilter() {
+  const words = searchEl.value.toLowerCase().split(/\s+/).filter(Boolean);
+  const folder = folderEl.value;
+  const kind = kindEl.value;
+  const starOnly = starOnlyEl.checked;
+  filtered = models.filter(m =>
+    (!folder || m.dir === folder || m.dir.startsWith(folder + '/')) &&
+    (!kind || m.name.startsWith(kind)) &&
+    (!starOnly || starred.has(m.objectPath)) &&
+    words.every(w => m.search.includes(w)));
+  document.getElementById('summary').textContent = models.length
+    ? `${filtered.length} of ${models.length} models, ${starred.size} starred`
+    : 'No models found in that folder. Pick the folder FModel exported to.';
+  grid.innerHTML = '';
+  shown = 0;
+  renderMore();
+}
+
+function renderMore() {
+  document.getElementById('more')?.remove();
+  const end = Math.min(shown + PAGE, filtered.length);
+  for (let i = shown; i < end; i++) grid.appendChild(makeCard(filtered[i]));
+  shown = end;
+  if (shown < filtered.length) {
+    const more = document.createElement('div');
+    more.id = 'more';
+    more.textContent = `Showing ${shown} of ${filtered.length}. Scroll for more.`;
+    grid.appendChild(more);
+    moreObserver.observe(more);
+  }
+}
+const moreObserver = new IntersectionObserver(es => {
+  if (es.some(e => e.isIntersecting)) renderMore();
+}, { root: grid });
+
+function makeCard(m) {
+  const card = document.createElement('div');
+  card.className = 'card' + (selected === m ? ' sel' : '');
+  card.title = m.objectPath;
+  const img = document.createElement('img');
+  img.className = 'thumb';
+  img.alt = '';
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = m.name;
+  card.append(img, name);
+  if (starred.has(m.objectPath)) {
+    const s = document.createElement('div'); s.className = 'star'; s.textContent = '★'; card.appendChild(s);
+  }
+  card.onclick = () => {
+    grid.querySelectorAll('.card.sel').forEach(c => c.classList.remove('sel'));
+    card.classList.add('sel');
+    select(m);
+  };
+  card._model = m;
+  thumbObserver.observe(card);
+  return card;
+}
+
+// ---------- asset loading ----------
+function loaderFor(m) {
+  const manager = new THREE.LoadingManager();
+  const urls = [];
+  const baseDir = m.rel.toLowerCase().split('/').slice(0, -1);
+  // Resolve relative URIs (textures, .bin) against the model's own folder, then by bare file name.
+  manager.setURLModifier(url => {
+    if (/^(blob:|data:|https?:)/.test(url)) return url;
+    const clean = decodeURIComponent(url).replace(/\\/g, '/').toLowerCase();
+    const stack = [...baseDir];
+    for (const seg of clean.split('/')) {
+      if (seg === '..') stack.pop(); else if (seg && seg !== '.') stack.push(seg);
+    }
+    const f = files.get(stack.join('/')) || byBase.get(clean.split('/').pop());
+    if (!f) return url;
+    const u = URL.createObjectURL(f);
+    urls.push(u);
+    return u;
+  });
+  return { manager, cleanup: () => urls.forEach(u => URL.revokeObjectURL(u)) };
+}
+
+async function loadModel(m) {
+  const { manager, cleanup } = loaderFor(m);
+  try {
+    if (/\.obj$/i.test(m.file.name)) {
+      return new OBJLoader(manager).parse(await m.file.text());
+    }
+    const buf = await m.file.arrayBuffer();
+    const baseUrl = '';
+    const gltf = await new Promise((res, rej) => new GLTFLoader(manager).parse(buf, baseUrl, res, rej));
+    return gltf.scene;
+  } finally {
+    // Give texture loads a moment to resolve before revoking their blob URLs.
+    setTimeout(cleanup, 10000);
+  }
+}
+
+function prepare(obj) {
+  obj.traverse(o => {
+    if (o.isMesh) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const mat of mats) if (mat) mat.side = THREE.DoubleSide;
+    }
+  });
+  const box = new THREE.Box3().setFromObject(obj);
+  return box;
+}
+
+function frame(camera, controls, box) {
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.length() / 2, 1e-3);
+  const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05;
+  camera.near = dist / 1000; camera.far = dist * 100;
+  camera.position.copy(center).add(new THREE.Vector3(1, 0.7, 1).normalize().multiplyScalar(dist));
+  camera.updateProjectionMatrix();
+  if (controls) { controls.target.copy(center); controls.update(); }
+  else camera.lookAt(center);
+}
+
+function addLights(scene) {
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x444450, 2.2));
+  const d = new THREE.DirectionalLight(0xffffff, 2.0);
+  d.position.set(3, 5, 2);
+  scene.add(d);
+}
+
+// ---------- thumbnails ----------
+const thumbCache = new Map();
+const thumbQueue = [];
+let thumbBusy = false;
+const thumbRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
+thumbRenderer.setSize(160, 160);
+thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
+const thumbObserver = new IntersectionObserver(es => {
+  for (const e of es) {
+    if (!e.isIntersecting) continue;
+    thumbObserver.unobserve(e.target);
+    const m = e.target._model;
+    const img = e.target.querySelector('img');
+    if (thumbCache.has(m.objectPath)) img.src = thumbCache.get(m.objectPath);
+    else { thumbQueue.push({ m, img }); pumpThumbs(); }
+  }
+}, { root: grid, rootMargin: '200px' });
+
+async function pumpThumbs() {
+  if (thumbBusy) return;
+  thumbBusy = true;
+  while (thumbQueue.length) {
+    const { m, img } = thumbQueue.shift();
+    if (!img.isConnected) continue;
+    try {
+      const obj = await loadModel(m);
+      const box = prepare(obj);
+      const scene = new THREE.Scene();
+      addLights(scene);
+      scene.add(obj);
+      const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 1000);
+      frame(cam, null, box);
+      thumbRenderer.render(scene, cam);
+      const url = thumbRenderer.domElement.toDataURL('image/png');
+      thumbCache.set(m.objectPath, url);
+      img.src = url;
+      disposeTree(obj);
+    } catch (err) {
+      console.warn('thumbnail failed', m.rel, err);
+    }
+  }
+  thumbBusy = false;
+}
+
+function disposeTree(obj) {
+  obj.traverse(o => {
+    o.geometry?.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const mat of mats) { for (const v of Object.values(mat)) if (v?.isTexture) v.dispose(); mat.dispose(); }
+  });
+}
+
+// ---------- main viewport ----------
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+view.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+addLights(scene);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+camera.position.set(3, 2, 3);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+let current = null, currentBox = null, grid3d = null, wire = false;
+
+function resize() {
+  const r = view.getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / Math.max(r.height, 1);
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view);
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+const statusEl = document.getElementById('status');
+let loadToken = 0;
+async function select(m) {
+  selected = m;
+  const token = ++loadToken;
+  document.getElementById('empty').hidden = true;
+  statusEl.textContent = 'Loading ' + m.name + '...';
+  showInfo(m, null);
+  let obj;
+  try { obj = await loadModel(m); }
+  catch (err) { if (token === loadToken) statusEl.textContent = 'Could not load: ' + err.message; return; }
+  if (token !== loadToken) { disposeTree(obj); return; }
+  if (current) { scene.remove(current); disposeTree(current); }
+  if (grid3d) { scene.remove(grid3d); grid3d.geometry.dispose(); }
+  current = obj;
+  currentBox = prepare(obj);
+  setWire(wire);
+  scene.add(obj);
+  const size = currentBox.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.z, 1e-3) * 2;
+  grid3d = new THREE.GridHelper(span, 20, 0x3a4050, 0x2a2e36);
+  grid3d.position.y = currentBox.min.y;
+  scene.add(grid3d);
+  frame(camera, controls, currentBox);
+  let tris = 0, meshes = 0;
+  obj.traverse(o => { if (o.isMesh) { meshes++; const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3; } });
+  showInfo(m, { size, tris: Math.round(tris), meshes });
+  statusEl.textContent = '';
+}
+
+function showInfo(m, stats) {
+  document.getElementById('info').hidden = false;
+  document.getElementById('infoName').textContent = m.name;
+  document.getElementById('infoPath').textContent = m.objectPath;
+  document.getElementById('infoMeta').textContent = stats
+    ? `Size ${stats.size.x.toFixed(2)} x ${stats.size.y.toFixed(2)} x ${stats.size.z.toFixed(2)} (export units)  ·  ${stats.tris.toLocaleString()} triangles  ·  ${stats.meshes} mesh part(s)  ·  ${(m.file.size / 1024).toFixed(0)} KB`
+    : m.rel;
+  document.getElementById('starBtn').textContent = starred.has(m.objectPath) ? 'Unstar' : 'Star';
+}
+
+function setWire(on) {
+  wire = on;
+  current?.traverse(o => {
+    if (!o.isMesh) return;
+    for (const mat of Array.isArray(o.material) ? o.material : [o.material]) if (mat) mat.wireframe = on;
+  });
+}
+
+document.getElementById('wireBtn').onclick = () => setWire(!wire);
+document.getElementById('resetBtn').onclick = () => currentBox && frame(camera, controls, currentBox);
+document.getElementById('copyBtn').onclick = async () => {
+  if (!selected) return;
+  try { await navigator.clipboard.writeText(selected.objectPath); statusEl.textContent = 'Copied ' + selected.objectPath; }
+  catch { statusEl.textContent = 'Copy failed. Select the path text and copy it by hand.'; }
+};
+document.getElementById('starBtn').onclick = () => {
+  if (!selected) return;
+  const p = selected.objectPath;
+  starred.has(p) ? starred.delete(p) : starred.add(p);
+  saveStars();
+  document.getElementById('starBtn').textContent = starred.has(p) ? 'Unstar' : 'Star';
+  const scroll = grid.scrollTop;
+  applyFilter();
+  grid.scrollTop = scroll;
+};
+document.getElementById('exportBtn').onclick = () => {
+  const list = [...starred].sort().map(p => ({ name: p.split('.').pop(), objectPath: p }));
+  const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), objects: list }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'starred-objects.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+</script>
+</body>
+</html>

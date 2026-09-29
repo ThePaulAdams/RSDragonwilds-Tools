@@ -22,6 +22,12 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
 | [**AutoRun**](AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
 
+### Other tools
+
+| Tool | Description |
+| :--- | :--- |
+| [**ModelViewer**](ModelViewer/README.md) | Browser app for finding the game's 3D objects (walls, towers, furniture, props) from an FModel export, with thumbnails, search, a 3D view, and the in-game object path for each model. Not a mod; not deployed by `deploy.ps1`. |
+
 ---
 
 ## Master Controls Cheat-Sheet
