@@ -16,7 +16,12 @@
      - **Mining Rocks:** Coal, Clay, Blurite, Adamant, Mithril, Runite, Rune Essence
      - **Elemental Anima Vents:** Fire, Water, Earth, Air, Nature, Astral
      - **Fishing Spots:** Catchable fish and fishing nodes
-4. **Extreme Performance Optimization:**
+4. **Death Marker:**
+   - When you die, a red marker is placed where your body fell, on both the minimap and the fullscreen map.
+   - Walking back to the spot (within 5m) clears it, or press `Ctrl+F6`.
+5. **Co-op Teammate Markers:**
+   - Every other player in your world gets a marker on both maps, tinted green at full health through red at low health.
+6. **Extreme Performance Optimization:**
    - Dynamic distance-based culling prevents lag spikes.
    - Active map widgets are culled from 6,000+ down to ~150–220, maintaining locked 60+ FPS.
 
@@ -26,6 +31,9 @@
 
 - `F6`: Toggle minimap visibility on / off.
 - `F7`: Force reload / reinitialize minimap.
+- `F9`: Toggle resource icons on / off.
+- `Ctrl+F6`: Clear the death marker.
+- `PageUp` / `PageDown`: Zoom. `[` / `]`: Resize.
 
 ---
 

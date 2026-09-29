@@ -38,6 +38,7 @@ local TrackedResourceActors = {}
 local NextResourceScanTick = 0
 local MapIconCompClass = nil
 local PurgeAllResourceComponents = nil
+local RepopulateMarkers = nil -- defined with the player markers below
 
 -- Persist only a name across Lua reloads, never a transient UObject pointer.
 local OwnedWidgetName = nil
@@ -342,6 +343,8 @@ local function SetupMinimapWidget(Widget, PC)
             end
         end
     end)
+
+    if RepopulateMarkers then pcall(RepopulateMarkers, Widget) end
 
     Log("Minimap widget successfully configured and visible in viewport!")
     return true
@@ -1316,6 +1319,344 @@ local function ScanAndRegisterResources()
     end
 end
 
+-- =========================================================================
+-- 6b. Player Markers: death marker + co-op teammate markers
+-- =========================================================================
+-- Icons use IconZOrder 11/12 so the resource purge/prune passes (ZOrder 10) never touch them.
+local MarkerConfig = {
+    DeathMarkerEnabled = true,
+    DeathTexture = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Fire.T_Icons_Rune_Fire",
+    DeathFallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Fire.T_Icon_Rune_Fire",
+    DeathIconSize = 34.0,
+    DeathIconColor = { R = 1.0, G = 0.25, B = 0.25, A = 1.0 },
+    -- Walking this close to the death spot clears the marker (5 m).
+    DeathClearRadius = 500.0,
+    -- A respawn further than this from where the old body was counts as a death (20 m).
+    RespawnJumpDistance = 2000.0,
+
+    CoopMarkersEnabled = true,
+    CoopTexture = "/Game/Art/UI/Icons/Runes/T_Icons_Rune_Air.T_Icons_Rune_Air",
+    CoopFallback = "/Game/Art/UI/Icons/Resources_ConceptArt/T_Icon_Rune_Air.T_Icon_Rune_Air",
+    CoopIconSize = 30.0,
+    -- Teammate icons are tinted green at full health through red at low health.
+    TintCoopByHealth = true,
+}
+
+local DeathMarker = nil        -- { Actor, Comp, Location }
+local CoopMarkers = {}         -- [pawnAddress] = { Pawn, Comp }
+local LastPawnState = nil      -- { Address, World, Location, Dead }
+local HealthAccessor = nil     -- cached function(pawn) -> fraction or nil
+local HealthDiscoveryLogged = false
+
+local function MarkerValid(o)
+    if not o then return false end
+    local ok, res = pcall(function() return o:IsValid() and o:GetAddress() ~= 0 end)
+    return ok and res
+end
+
+-- Adds one MapIconComponent to an actor and registers it with both maps.
+local function AttachMarkerIcon(actor, texPath, fallback, size, color, zOrder, translation)
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then
+        MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent")
+    end
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then return nil end
+    local transform = {
+        Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+        Translation = translation or { X = 0, Y = 0, Z = 150.0 },
+        Scale3D = { X = 1, Y = 1, Z = 1 }
+    }
+    local comp, deferred = nil, true
+    local ok, res = pcall(function() return actor:AddComponentByClass(MapIconCompClass, false, transform, true) end)
+    if ok and MarkerValid(res) then
+        comp = res
+    else
+        deferred = false
+        ok, res = pcall(function() return actor:AddComponentByClass(MapIconCompClass, false, transform, false) end)
+        if ok and MarkerValid(res) then comp = res end
+    end
+    if not comp then return nil end
+
+    local tex = GetResourceTexture(texPath) or GetResourceTexture(fallback)
+    local umgMat = GetDefaultUMGMaterial()
+    pcall(function()
+        if umgMat and umgMat:IsValid() then
+            comp.IconMaterial_UMG = umgMat
+            comp.InitialIconMaterial_UMG = umgMat
+        end
+        if tex and tex:IsValid() then comp.IconTexture = tex end
+        comp.IconSize = size
+        comp.IconSizeUnit = 0
+        comp.IconDrawColor = color
+        comp.bIconRotates = false
+        comp.IconZOrder = zOrder
+        comp.bHideOwnerInsideFog = false
+        comp.bIconVisible = true
+    end)
+    local before = GetMapIconWidgetCount(MinimapWidget)
+    local official = GetOfficialMap()
+    local offBefore = GetMapIconWidgetCount(official)
+    pcall(function()
+        local finished = false
+        if deferred and actor.FinishAddComponent then
+            finished = pcall(function() actor:FinishAddComponent(comp, false, transform) end)
+        end
+        if not finished and comp.RegisterComponent then comp:RegisterComponent() end
+    end)
+    pcall(function()
+        if comp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then comp:SetIconMaterialForUMG(umgMat) end
+        if tex and tex:IsValid() and comp.SetIconTexture then comp:SetIconTexture(tex) end
+        if comp.SetIconDrawColor then comp:SetIconDrawColor(color) end
+        if comp.SetIconSize then comp:SetIconSize(size, 0) end
+        if comp.SetIconZOrder then comp:SetIconZOrder(zOrder) end
+        if comp.SetIconVisible then comp:SetIconVisible(true) end
+    end)
+    pcall(function()
+        if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon
+            and GetMapIconWidgetCount(MinimapWidget) == before then
+            MinimapWidget:AddMapIcon(comp)
+        end
+        if official and official:IsValid() and official.AddMapIcon
+            and GetMapIconWidgetCount(official) == offBefore then
+            official:AddMapIcon(comp)
+        end
+    end)
+    return comp
+end
+
+local function DestroyMarkerComp(comp)
+    if MarkerValid(comp) then
+        pcall(function()
+            if comp.SetIconVisible then comp:SetIconVisible(false) end
+            comp:K2_DestroyComponent(comp)
+        end)
+    end
+end
+
+local function ForgetDestroyedMarkerIcons()
+    pcall(function()
+        if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+            MinimapWidget:ForgetDestroyedIcons()
+        end
+        local official = GetOfficialMap()
+        if official and official:IsValid() and official.ForgetDestroyedIcons then official:ForgetDestroyedIcons() end
+    end)
+end
+
+-- Spawns a bare Actor at a location to carry the death icon.
+local function SpawnMarkerActor(loc)
+    local statics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local actorClass = StaticFindObject("/Script/Engine.Actor")
+    local PC = UEHelpers.GetPlayerController()
+    if not MarkerValid(statics) or not MarkerValid(actorClass) or not MarkerValid(PC) then return nil end
+    local transform = {
+        Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+        Translation = { X = loc.X, Y = loc.Y, Z = loc.Z },
+        Scale3D = { X = 1, Y = 1, Z = 1 }
+    }
+    local actor = nil
+    -- UE5 signature takes a TransformScaleMethod; older builds do not.
+    local ok = pcall(function()
+        actor = statics:BeginDeferredActorSpawnFromClass(PC, actorClass, transform, 1, nil, 1)
+        statics:FinishSpawningActor(actor, transform, 1)
+    end)
+    if not ok or not MarkerValid(actor) then
+        pcall(function()
+            actor = statics:BeginDeferredActorSpawnFromClass(PC, actorClass, transform, 1, nil)
+            statics:FinishSpawningActor(actor, transform)
+        end)
+    end
+    return MarkerValid(actor) and actor or nil
+end
+
+local function ClearDeathMarker(reason)
+    if not DeathMarker then return end
+    DestroyMarkerComp(DeathMarker.Comp)
+    if MarkerValid(DeathMarker.Actor) then pcall(function() DeathMarker.Actor:K2_DestroyActor() end) end
+    DeathMarker = nil
+    ForgetDestroyedMarkerIcons()
+    Log("[DEATH] Marker cleared (" .. tostring(reason) .. ")")
+end
+
+local function PlaceDeathMarker(loc)
+    if not MarkerConfig.DeathMarkerEnabled or not loc then return end
+    ClearDeathMarker("new death")
+    local actor = SpawnMarkerActor(loc)
+    if not actor then
+        Log("[DEATH] Could not spawn a marker actor at the death location.")
+        return
+    end
+    -- A bare Actor has no root, so the icon component becomes root at the given world translation.
+    local comp = AttachMarkerIcon(actor, MarkerConfig.DeathTexture, MarkerConfig.DeathFallback,
+        MarkerConfig.DeathIconSize, MarkerConfig.DeathIconColor, 12, { X = loc.X, Y = loc.Y, Z = loc.Z })
+    pcall(function() actor:K2_SetActorLocation(loc, false, {}, true) end)
+    DeathMarker = { Actor = actor, Comp = comp, Location = { X = loc.X, Y = loc.Y, Z = loc.Z } }
+    Log(string.format("[DEATH] Marked death location (%.0f, %.0f, %.0f) on the minimap and world map.", loc.X, loc.Y, loc.Z))
+end
+
+-- Health fraction (0..1) for any pawn, trying several common layouts and caching the one that works.
+local HealthReaders = {
+    function(p) return p:GetHealthPercent() end,
+    function(p) return p:GetHealth() / p:GetMaxHealth() end,
+    function(p) return p:GetCurrentHealth() / p:GetMaxHealth() end,
+    function(p) return p.HealthComponent:GetHealthPercent() end,
+    function(p) return p.HealthComponent:GetHealth() / p.HealthComponent:GetMaxHealth() end,
+    function(p) return p.HealthComponent.CurrentHealth / p.HealthComponent.MaxHealth end,
+    function(p) return p.HealthComponent.Health / p.HealthComponent.MaxHealth end,
+    function(p) return p.Health / p.MaxHealth end,
+}
+local function ReadHealthFraction(pawn)
+    if HealthAccessor then
+        local ok, v = pcall(HealthAccessor, pawn)
+        if ok and type(v) == "number" and v == v then return math.max(0, math.min(1, v)) end
+        return nil
+    end
+    for _, reader in ipairs(HealthReaders) do
+        local ok, v = pcall(reader, pawn)
+        if ok and type(v) == "number" and v == v and v >= 0 and v <= 1.0001 then
+            HealthAccessor = reader
+            return math.max(0, math.min(1, v))
+        end
+    end
+    if not HealthDiscoveryLogged then
+        HealthDiscoveryLogged = true
+        local names = {}
+        pcall(function()
+            local cls = pawn:GetClass()
+            while cls and cls:IsValid() do
+                cls:ForEachFunction(function(fn)
+                    local n = fn:GetFName():ToString()
+                    if n:lower():find("health") or n:lower():find("dead") then names[#names + 1] = n end
+                end)
+                cls:ForEachProperty(function(prop)
+                    local n = prop:GetFName():ToString()
+                    if n:lower():find("health") or n:lower():find("dead") then names[#names + 1] = n end
+                end)
+                cls = cls:GetSuperStruct()
+            end
+        end)
+        Log("[DISCOVERY] No health reader matched. Health-related members on pawn: "
+            .. (#names > 0 and table.concat(names, ", ") or "(none)"))
+    end
+    return nil
+end
+
+local function IsPawnDead(pawn)
+    local dead = false
+    pcall(function() if pawn.IsDead and pawn:IsDead() then dead = true end end)
+    if not dead then pcall(function() if pawn.bIsDead == true then dead = true end end) end
+    if not dead then
+        local h = ReadHealthFraction(pawn)
+        if h and h <= 0 then dead = true end
+    end
+    return dead
+end
+
+local function TrackDeath(PC)
+    if not MarkerConfig.DeathMarkerEnabled then return end
+    local pawn = PC and PC:IsValid() and PC.Pawn
+    local world = nil
+    pcall(function() world = PC:GetWorld():GetAddress() end)
+
+    if pawn and pawn:IsValid() then
+        local loc = nil
+        pcall(function() loc = pawn:K2_GetActorLocation() end)
+        local addr = pawn:GetAddress()
+        local dead = IsPawnDead(pawn)
+        local last = LastPawnState
+
+        if last and last.World == world then
+            if dead and not last.Dead and last.Address == addr then
+                PlaceDeathMarker(loc or last.Location)
+            elseif last.Address ~= addr and not last.Dead and last.Location and loc then
+                -- New pawn after a respawn: the old body was where we last saw it.
+                local dx, dy = loc.X - last.Location.X, loc.Y - last.Location.Y
+                if dx * dx + dy * dy > MarkerConfig.RespawnJumpDistance ^ 2 then
+                    PlaceDeathMarker(last.Location)
+                end
+            end
+        end
+        LastPawnState = { Address = addr, World = world, Location = loc or (last and last.Location), Dead = dead }
+
+        -- Reaching the spot clears the marker.
+        if DeathMarker and loc and not dead then
+            local d = DeathMarker.Location
+            local dx, dy, dz = loc.X - d.X, loc.Y - d.Y, loc.Z - d.Z
+            if dx * dx + dy * dy + dz * dz < MarkerConfig.DeathClearRadius ^ 2 then
+                ClearDeathMarker("reached death location")
+            end
+        end
+    elseif LastPawnState and LastPawnState.World ~= world then
+        LastPawnState = nil -- level change, not a death
+    end
+end
+
+local function HealthColor(fraction)
+    if not fraction then return { R = 0.3, G = 0.9, B = 1.0, A = 1.0 } end
+    return { R = math.min(1, 2 * (1 - fraction)), G = math.min(1, 2 * fraction), B = 0.1, A = 1.0 }
+end
+
+local function UpdateCoopMarkers(PC)
+    if not MarkerConfig.CoopMarkersEnabled then return end
+    local ownPawn = PC and PC:IsValid() and PC.Pawn
+    local ownAddr = ownPawn and ownPawn:IsValid() and ownPawn:GetAddress() or 0
+    local players = {}
+    pcall(function()
+        local gs = PC:GetWorld().GameState
+        gs.PlayerArray:ForEach(function(_, elem)
+            local ps = elem:get()
+            local p = nil
+            pcall(function() p = ps.PawnPrivate end)
+            if not MarkerValid(p) then pcall(function() p = ps:GetPawn() end) end
+            if MarkerValid(p) and p:GetAddress() ~= ownAddr then players[p:GetAddress()] = p end
+        end)
+    end)
+
+    local changed = false
+    for addr, marker in pairs(CoopMarkers) do
+        if not players[addr] or not MarkerValid(marker.Pawn) or not MarkerValid(marker.Comp) then
+            DestroyMarkerComp(marker.Comp)
+            CoopMarkers[addr] = nil
+            changed = true
+        end
+    end
+    for addr, pawn in pairs(players) do
+        local marker = CoopMarkers[addr]
+        if not marker then
+            local comp = AttachMarkerIcon(pawn, MarkerConfig.CoopTexture, MarkerConfig.CoopFallback,
+                MarkerConfig.CoopIconSize, HealthColor(nil), 11, nil)
+            if comp then
+                marker = { Pawn = pawn, Comp = comp }
+                CoopMarkers[addr] = marker
+                Log("[COOP] Tracking teammate " .. pawn:GetFName():ToString())
+            end
+        end
+        if marker and MarkerConfig.TintCoopByHealth then
+            local color = HealthColor(ReadHealthFraction(pawn))
+            pcall(function() marker.Comp:SetIconDrawColor(color) end)
+        end
+    end
+    if changed then ForgetDestroyedMarkerIcons() end
+end
+
+RepopulateMarkers = function(Widget)
+    if not Widget or not Widget:IsValid() or not Widget.AddMapIcon then return end
+    local comps = {}
+    if DeathMarker then comps[#comps + 1] = DeathMarker.Comp end
+    for _, m in pairs(CoopMarkers) do comps[#comps + 1] = m.Comp end
+    for _, comp in ipairs(comps) do
+        if MarkerValid(comp) then pcall(function() Widget:AddMapIcon(comp) end) end
+    end
+end
+
+local NextMarkerTick = 0
+local function UpdateMarkers(PC)
+    TrackDeath(PC)
+    if UpdateTick >= NextMarkerTick then
+        NextMarkerTick = UpdateTick + 10 -- teammates every 0.5 s
+        UpdateCoopMarkers(PC)
+    end
+end
+
 -- 7. Keybinds
 pcall(function()
     -- F6: Toggle Minimap On/Off
@@ -1329,6 +1670,11 @@ pcall(function()
             CheckMainMapVisibility()
             Log("Minimap visibility toggled: " .. (IsMinimapVisible and "VISIBLE" or "HIDDEN"))
         end)
+    end)
+
+    -- Ctrl+F6: Clear the death marker
+    RegisterKeyBind(Key.F6, { ModifierKey.CONTROL }, function()
+        ExecuteInGameThread(function() ClearDeathMarker("Ctrl+F6") end)
     end)
 
     -- F7: Force Reload
@@ -1388,6 +1734,8 @@ end)
 -- 8. Queue at most one game-thread update; retry expensive setup once a second.
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
+    -- Death tracking must run even while there is no pawn (death screen).
+    pcall(UpdateMarkers, PC)
     local Pawn = PC and PC:IsValid() and PC.Pawn
     if not Pawn or not Pawn:IsValid() or not Pawn.MapView or not Pawn.MapView:IsValid() then
         ReadyPawnAddress = nil

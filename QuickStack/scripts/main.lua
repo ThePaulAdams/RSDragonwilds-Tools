@@ -49,6 +49,21 @@ local Config = {
     -- Hold duration (in seconds) to trigger Ground Item Magnetism
     HoldDuration = 0.25,
 
+    -- Alt+G at an open crafting station: stacks of each accepted ingredient to pull from chests
+    StationFetchStacksPerItem = 1,
+    -- If a station accepts more item types than this, treat it as unfiltered and use name hints
+    StationFetchMaxItemTypes = 12,
+
+    -- Floating category labels above chests (Ctrl+L toggles)
+    ChestLabels = true,
+    ChestLabelRadius = 3000.0,  -- 30 meters
+    ChestLabelHeight = 110.0,   -- above the chest pivot
+    ChestLabelSize = 28.0,
+
+    -- Move items a crafting station drops on the ground into the matching category chest
+    AutoStoreStationOutput = true,
+    StationOutputRadius = 3000.0, -- only items that appear within 30 m of you
+
     -- Print detailed information to the console log
     DebugLog = true
 }
@@ -64,6 +79,8 @@ Log("  [Tap G]    : At Base: Auto-stack & sort into matching chests / In Wild: I
 Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all wild resources & ground items as you run!")
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items organized into nearby chests!")
+Log("  [Alt + G]  : STATION FETCH -> At an open crafting station, pull its ingredients from nearby chests (or pull the hovered item)")
+Log("  [Ctrl + L] : Toggle floating category labels above nearby chests")
 Log("==========================================")
 
 -- Helper: Safely get the name of any UObject, UClass, or UActorComponent without TrivialObject crashes
@@ -1787,9 +1804,425 @@ local function ExecuteQuickStack(depositOnly)
 end
 
 -- =========================================================================
+-- SHARED: store a stack into the best category chest nearby
+-- =========================================================================
+local function StoreIntoCategoryChest(itemData, count, durability, itemName, category, nearbyChests)
+    local stored = 0
+    local ranked = {}
+    for _, ch in ipairs(nearbyChests) do
+        local st = AnalyzeChest(ch)
+        local score = (st.DominantCategory == category and 100 or 0) + (st.CategoryCounts[category] or 0)
+        if st.TotalItemCount == 0 then score = 50 end
+        -- Never overflow into another category's chest.
+        if st.DominantCategory == category or st.TotalItemCount == 0 or Config.OverflowWhenCategoryFull then
+            table.insert(ranked, { Chest = ch, Score = score })
+        end
+    end
+    table.sort(ranked, function(a, b) return a.Score > b.Score end)
+    for _, cand in ipairs(ranked) do
+        if stored >= count then break end
+        local inv = cand.Chest.Inventory
+        local space = 0
+        pcall(function() space = inv:GetSpaceAvailableForItemByData(itemData) end)
+        if space > 0 then
+            local toAdd = math.min(count - stored, space)
+            local ok = false
+            pcall(function() ok = inv:AddItemByData(itemData, toAdd, durability or 1.0, {}) end)
+            if ok then stored = stored + toAdd end
+        end
+    end
+    if stored > 0 and Config.DebugLog then
+        Log(string.format("Stored %dx '%s' into [%s] chest.", stored, itemName, category))
+    end
+    return stored
+end
+
+local function PlayerContext()
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then return nil end
+    local loc = nil
+    pcall(function() loc = PC.Pawn:K2_GetActorLocation() end)
+    if not loc then return nil end
+    return PC, PC.Pawn, loc
+end
+
+local function DistSq(a, b)
+    local dx, dy, dz = a.X - b.X, a.Y - b.Y, a.Z - b.Z
+    return dx * dx + dy * dy + dz * dz
+end
+
+-- =========================================================================
+-- FETCH INGREDIENTS FOR THE OPEN CRAFTING STATION (Alt + G)
+-- =========================================================================
+-- Open a furnace/anvil/range etc. and press Alt+G: every item the station's
+-- inventory will accept is pulled from nearby chests into your backpack
+-- (one stack of each by default). Hovering an item instead pulls that item.
+local StationIngredientHints = {
+    -- Used only when the station accepts "anything" (no item filter found).
+    { Keys = { "furnace", "smelter" }, Items = { "ore", "coal" } },
+    { Keys = { "anvil", "smith" }, Items = { "bar" } },
+    { Keys = { "range", "cook", "campfire", "fire" }, Items = { "raw" } },
+    { Keys = { "sawmill", "carpent", "bench" }, Items = { "log", "plank" } },
+    { Keys = { "loom", "spinning", "wheel" }, Items = { "flax", "wool", "thread", "fibre", "fiber" } },
+    { Keys = { "tanning", "tanner" }, Items = { "hide", "pelt", "leather" } },
+    { Keys = { "kiln", "pottery" }, Items = { "clay" } },
+    { Keys = { "brew", "cauldron", "alch", "herb" }, Items = { "herb", "vial", "potion" } },
+}
+
+local function FindOpenStation(PC)
+    local okUI, uis = pcall(function() return FindAllOf("WorldActorInventoryUIAPI") end)
+    if not okUI or not uis then return nil end
+    for _, ui in ipairs(uis) do
+        local comp, owner = nil, nil
+        pcall(function() comp = ui:GetInventoryComponent() end)
+        if comp and comp:IsValid() then pcall(function() owner = comp:GetOwner() end) end
+        if owner and IsValidWorldActor(owner) and owner ~= PC.Pawn and not IsChestActor(owner) then
+            return { Actor = owner, Inventory = comp, ClassName = GetSafeClassName(owner) }
+        end
+    end
+    return nil
+end
+
+local function MaxStackOf(itemData)
+    local maxStack = 0
+    pcall(function()
+        if itemData.GetMaxStackSize then maxStack = itemData:GetMaxStackSize()
+        elseif itemData.MaxStackSize then maxStack = itemData.MaxStackSize end
+    end)
+    if not maxStack or maxStack <= 0 then maxStack = 20 end
+    return maxStack
+end
+
+local ExecuteQuickPull -- defined below (forward-declared by the station fetch)
+
+local function ExecuteStationFetch()
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+
+    -- Hovering an item always wins: pull every matching stack.
+    local hover = GetCurrentHoverTarget()
+    if hover then
+        ExecuteQuickPull(hover)
+        return
+    end
+
+    local station = FindOpenStation(PC)
+    if not station then
+        Log("Station Fetch: open a crafting station (or hover an item) and press [Alt + G].")
+        return
+    end
+
+    local nearbyChests = FindNearbyChests(playerLoc)
+    if #nearbyChests == 0 then
+        Log("Station Fetch: no chests nearby.")
+        return
+    end
+
+    -- Collect one entry per item type found in chests.
+    local types, order = {}, {}
+    for _, entry in ipairs(nearbyChests) do
+        local n = 0
+        pcall(function() n = entry.Inventory.ItemSlots:GetArrayNum() end)
+        for i = 1, n do
+            local item = nil
+            pcall(function() item = entry.Inventory.ItemSlots[i] end)
+            if IsValidItem(item) then
+                local addr = GetItemDataAddress(item)
+                if addr and not types[addr] then
+                    types[addr] = { DataAddr = addr, ItemData = item.ItemData, Name = GetItemName(item) }
+                    order[#order + 1] = types[addr]
+                end
+            end
+        end
+    end
+
+    -- Which of those does the station's own inventory accept?
+    local accepted = {}
+    for _, t in ipairs(order) do
+        local space = 0
+        pcall(function() space = station.Inventory:GetSpaceAvailableForItemByData(t.ItemData) end)
+        if space and space > 0 then accepted[#accepted + 1] = t end
+    end
+
+    -- A station that accepts nearly everything has no filter we can read: use name hints instead.
+    if #accepted == 0 or #accepted > Config.StationFetchMaxItemTypes then
+        local cls = station.ClassName:lower()
+        local wanted = nil
+        for _, hint in ipairs(StationIngredientHints) do
+            for _, k in ipairs(hint.Keys) do
+                if cls:find(k, 1, true) then wanted = hint.Items; break end
+            end
+            if wanted then break end
+        end
+        if not wanted then
+            Log(string.format("Station Fetch: can't tell what '%s' accepts (it took %d item types). Hover the ingredient and press [Alt + G] instead.",
+                station.ClassName, #accepted))
+            return
+        end
+        accepted = {}
+        for _, t in ipairs(order) do
+            local nm = t.Name:lower()
+            for _, w in ipairs(wanted) do
+                if nm:find(w, 1, true) then accepted[#accepted + 1] = t; break end
+            end
+        end
+    end
+
+    if #accepted == 0 then
+        Log(string.format("Station Fetch: nothing in nearby chests that '%s' uses.", station.ClassName))
+        return
+    end
+
+    local names = {}
+    for _, t in ipairs(accepted) do
+        ExecuteQuickPull({ Item = nil, DataAddr = t.DataAddr, Name = t.Name },
+            MaxStackOf(t.ItemData) * Config.StationFetchStacksPerItem)
+        names[#names + 1] = t.Name
+    end
+    Log(string.format(">>> Station Fetch for '%s': pulled %s", station.ClassName, table.concat(names, ", ")))
+end
+
+-- =========================================================================
+-- CHEST LABELS (floating category name above each nearby chest)
+-- =========================================================================
+local ChestLabels = {}          -- [actorAddress] = { Actor, Comp, Text }
+local ChestLabelsEnabled = Config.ChestLabels
+local TextRenderClass = nil
+local CategoryLabelText = {
+    FOOD = "Food", WOOD = "Wood", MINING = "Mining", FARMING = "Farming",
+    MAGIC = "Magic", EQUIPMENT = "Equipment", MISC = "Misc",
+}
+
+local function MakeText(str)
+    local lib = StaticFindObject("/Script/Engine.Default__KismetTextLibrary")
+    return lib:Conv_StringToText(str)
+end
+
+local function RemoveChestLabel(addr)
+    local label = ChestLabels[addr]
+    if label and label.Comp and label.Comp:IsValid() then
+        pcall(function() label.Comp:K2_DestroyComponent(label.Comp) end)
+    end
+    ChestLabels[addr] = nil
+end
+
+local function RemoveAllChestLabels()
+    for addr in pairs(ChestLabels) do RemoveChestLabel(addr) end
+end
+
+-- Labels left behind by a previous load of this script (Ctrl+R hot reload).
+local function PurgeOrphanChestLabels()
+    local ok, comps = pcall(function() return FindAllOf("TextRenderComponent") end)
+    if not ok or not comps then return end
+    for _, comp in ipairs(comps) do
+        pcall(function()
+            local owner = comp:GetOwner()
+            if owner and owner:IsValid() and IsChestActor(owner) then
+                comp:K2_DestroyComponent(comp)
+            end
+        end)
+    end
+end
+
+local function EnsureChestLabel(actor, text)
+    local addr = actor:GetAddress()
+    local label = ChestLabels[addr]
+    if label and label.Comp and label.Comp:IsValid() then
+        if label.Text ~= text then
+            pcall(function() label.Comp:K2_SetText(MakeText(text)) end)
+            label.Text = text
+        end
+        return
+    end
+    if not TextRenderClass or not TextRenderClass:IsValid() then
+        TextRenderClass = StaticFindObject("/Script/Engine.TextRenderComponent")
+    end
+    if not TextRenderClass or not TextRenderClass:IsValid() then return end
+    local comp = nil
+    pcall(function()
+        comp = actor:AddComponentByClass(TextRenderClass, false, {
+            Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+            Translation = { X = 0, Y = 0, Z = Config.ChestLabelHeight },
+            Scale3D = { X = 1, Y = 1, Z = 1 }
+        }, false)
+    end)
+    if not comp or not comp:IsValid() then return end
+    pcall(function()
+        comp:SetHorizontalAlignment(1) -- EHTA_Center
+        comp:SetVerticalAlignment(1)   -- EVRTA_TextCenter
+        comp:SetWorldSize(Config.ChestLabelSize)
+        comp:SetTextRenderColor({ R = 255, G = 215, B = 0, A = 255 })
+        comp:SetCollisionEnabled(0)
+        comp:K2_SetText(MakeText(text))
+    end)
+    ChestLabels[addr] = { Actor = actor, Comp = comp, Text = text }
+end
+
+local function RefreshChestLabels()
+    if not ChestLabelsEnabled then return end
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    local maxSq = Config.ChestLabelRadius * Config.ChestLabelRadius
+    local seen = {}
+    for _, entry in ipairs(FindNearbyChests(playerLoc)) do
+        if entry.Distance * entry.Distance <= maxSq then
+            local st = AnalyzeChest(entry)
+            local text = st.TotalItemCount == 0 and "Empty"
+                or (CategoryLabelText[st.DominantCategory] or st.DominantCategory or "Misc")
+            local addr = entry.Actor:GetAddress()
+            seen[addr] = true
+            EnsureChestLabel(entry.Actor, text)
+        end
+    end
+    for addr, label in pairs(ChestLabels) do
+        if not seen[addr] or not label.Actor or not label.Actor:IsValid() then RemoveChestLabel(addr) end
+    end
+end
+
+-- Turn each label to face the camera so it reads from any side.
+local function FaceChestLabels()
+    if not ChestLabelsEnabled or next(ChestLabels) == nil then return end
+    local PC = UEHelpers.GetPlayerController()
+    if not PC or not PC:IsValid() then return end
+    local cam = nil
+    pcall(function() cam = PC.PlayerCameraManager:GetCameraLocation() end)
+    if not cam then return end
+    for _, label in pairs(ChestLabels) do
+        pcall(function()
+            local loc = label.Comp:K2_GetComponentLocation()
+            local yaw = math.deg(math.atan(cam.Y - loc.Y, cam.X - loc.X))
+            label.Comp:K2_SetWorldRotation({ Pitch = 0.0, Yaw = yaw, Roll = 0.0 }, false, {}, true)
+        end)
+    end
+end
+
+local function ToggleChestLabels()
+    ChestLabelsEnabled = not ChestLabelsEnabled
+    if ChestLabelsEnabled then
+        RefreshChestLabels()
+    else
+        RemoveAllChestLabels()
+    end
+    Log("Chest labels: " .. (ChestLabelsEnabled and "ON" or "OFF"))
+end
+
+-- =========================================================================
+-- STATION OUTPUT AUTO-STORE
+-- =========================================================================
+-- When a crafting station finishes and drops its product on the ground, move
+-- that item straight into the matching category chest.
+local SeenWorldItems = {}         -- [address] = true for items that existed before
+local SeenWorldItemsPrimed = false
+local LoggedOwnerClasses = {}
+
+local StationKeywords = {
+    "furnace", "smelter", "kiln", "campfire", "range", "cook", "cauldron", "bench",
+    "anvil", "wheel", "station", "crafting", "grinder", "sawmill", "loom",
+    "stonecutter", "tanning", "brew", "pottery", "altar", "workshop", "forge",
+}
+local function IsStationActor(actor)
+    if not actor or not IsValidWorldActor(actor) then return false end
+    local cls = GetSafeClassName(actor):lower()
+    for _, kw in ipairs(StationKeywords) do
+        if cls:find(kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function StationThatMade(item)
+    for _, getter in ipairs({
+        function() return item:GetOwner() end,
+        function() return item.Owner end,
+        function() return item:GetInstigator() end,
+    }) do
+        local ok, owner = pcall(getter)
+        if ok and owner and IsStationActor(owner) then return owner end
+    end
+    return nil
+end
+
+local function AutoStoreStationOutput()
+    if not Config.AutoStoreStationOutput then return end
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    local okItems, items = pcall(function() return FindAllOf("WorldItem") end)
+    if not okItems or not items then return end
+
+    local fresh = {}
+    local maxSq = Config.StationOutputRadius * Config.StationOutputRadius
+    local current = {}
+    for _, actor in ipairs(items) do
+        if IsValidWorldActor(actor) then
+            local addr = actor:GetAddress()
+            current[addr] = true
+            if SeenWorldItemsPrimed and not SeenWorldItems[addr] then
+                local loc = nil
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+                if loc and DistSq(loc, playerLoc) <= maxSq then fresh[#fresh + 1] = actor end
+            end
+        end
+    end
+    SeenWorldItems = current
+    if not SeenWorldItemsPrimed then
+        SeenWorldItemsPrimed = true
+        return
+    end
+    if #fresh == 0 then return end
+
+    local nearbyChests = nil
+    for _, actor in ipairs(fresh) do
+        local station = StationThatMade(actor)
+        if not station and Config.DebugLog then
+            local ownerCls = "none"
+            pcall(function() ownerCls = GetSafeClassName(actor:GetOwner()) end)
+            if not LoggedOwnerClasses[ownerCls] then
+                LoggedOwnerClasses[ownerCls] = true
+                Log("[DISCOVERY] New ground item near you with owner class: " .. ownerCls)
+            end
+        end
+        if station then
+            nearbyChests = nearbyChests or FindNearbyChests(playerLoc)
+            local itemData, count, durability = nil, 1, 1.0
+            pcall(function() itemData = actor.ItemData end)
+            pcall(function() count = actor:GetStackSize() end)
+            pcall(function() durability = actor:GetDurability() or 1.0 end)
+            if itemData and itemData:IsValid() and count and count > 0 and #nearbyChests > 0 then
+                local name = GetItemName(actor)
+                local stored = StoreIntoCategoryChest(itemData, count, durability, name,
+                    GetItemCategory(actor), nearbyChests)
+                if stored >= count then
+                    pcall(function() actor:K2_DestroyActor() end)
+                    Log(string.format(">>> Auto-stored %dx '%s' from %s.", stored, name, GetSafeClassName(station)))
+                elseif stored > 0 then
+                    pcall(function() actor:SetStackSize(count - stored) end)
+                end
+            end
+        end
+    end
+end
+
+-- Background loop: labels every 3 s, label facing every 0.2 s, station output every 1 s.
+do
+    local tick, busy = 0, false
+    LoopAsync(200, function()
+        tick = tick + 1
+        if busy then return false end
+        busy = true
+        ExecuteInGameThread(function()
+            if tick % 15 == 1 then pcall(RefreshChestLabels) end
+            if tick % 5 == 0 then pcall(AutoStoreStationOutput) end
+            pcall(FaceChestLabels)
+            busy = false
+        end)
+        return false
+    end)
+end
+ExecuteInGameThread(function() pcall(PurgeOrphanChestLabels) end)
+
+-- =========================================================================
 -- EXECUTE QUICK PULL (Retrieve matching items from chests into player inventory)
 -- =========================================================================
-local function ExecuteQuickPull(target)
+ExecuteQuickPull = function(target, maxCount)
     if not target then
         Log("QuickPull failed: No target item specified.")
         return
@@ -1967,6 +2400,12 @@ local function ExecuteQuickPull(target)
         local chestActor = cEntry.ChestActor
         local cSlotZero = cEntry.SlotZero
         local cCount = cEntry.Count
+        if maxCount then
+            -- Station Fetch asks for a limited amount rather than every stack.
+            local left = maxCount - totalPulled
+            if left <= 0 then break end
+            cCount = math.min(cCount, left)
+        end
 
         -- Top-off existing partial player stacks
         while cCount > 0 and #playerTargetSlots > 0 do
@@ -2846,6 +3285,25 @@ pcall(function()
     Log("Keybind registered: [Shift + G] -> Unpack Relocation Crate into nearby chests.")
 end)
 
+-- Keybind Registration: Alt + G -> Fetch ingredients for the open crafting station (or pull the hovered item)
+pcall(function()
+    RegisterKeyBind(Config.Key, { ModifierKey.ALT }, function()
+        ExecuteInGameThread(function()
+            local ok, err = pcall(ExecuteStationFetch)
+            if not ok then Log("Station Fetch error: " .. tostring(err)) end
+        end)
+    end)
+    Log("Keybind registered: [Alt + G] -> Fetch ingredients for the open station / pull hovered item from chests.")
+end)
+
+-- Keybind Registration: Ctrl + L -> Toggle floating chest category labels
+pcall(function()
+    RegisterKeyBind(Key.L, { ModifierKey.CONTROL }, function()
+        ExecuteInGameThread(function() pcall(ToggleChestLabels) end)
+    end)
+    Log("Keybind registered: [Ctrl + L] -> Toggle chest category labels.")
+end)
+
 
 return {
     ExecuteQuickStack = ExecuteQuickStack,
@@ -2853,6 +3311,7 @@ return {
     ExecuteGroundMagnetism = ExecuteGroundMagnetism,
     ExecutePackRelocationCrate = ExecutePackRelocationCrate,
     ExecuteUnpackRelocationCrate = ExecuteUnpackRelocationCrate,
+    ExecuteStationFetch = ExecuteStationFetch,
     RelocationCrate = RelocationCrate,
     Config = Config
 }

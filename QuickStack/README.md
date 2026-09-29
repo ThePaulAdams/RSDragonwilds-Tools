@@ -46,12 +46,26 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 - Hover your mouse cursor over any item in your inventory or an open container and hold `[G]`.
 - The mod scans all nearby chests within 100m and retrieves every matching stack directly into your backpack, stopping when your backpack is full.
 - While hovering an item, nothing is sorted or moved until QuickStack knows whether you tapped (sort) or held (pull).
+- `[Alt + G]` while hovering does the same pull without holding.
 
 ### 6. Base Relocation Virtual Crate (`[Ctrl + G]` / `[Shift + G]`)
 - **Pack Base (`Ctrl + G`)**: Automatically sweeps all loose items on the ground within **150 meters** and packs them safely into a persistent virtual relocation crate.
 - **Unpack Base (`Shift + G`)**: Unpacks the virtual crate directly into nearby chests, auto-sorted by category.
 
-### 7. Strict Safety Safeguards & Furnace Protection
+### 7. Station Fetch (`[Alt + G]` at an open crafting station)
+- Open a furnace, anvil, cooking range or any other station and press `[Alt + G]`.
+- Every item in nearby chests that the station's own inventory will accept is pulled into your backpack, one stack of each by default (`StationFetchStacksPerItem`).
+- If the station accepts almost anything (no filter the mod can read), it falls back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
+
+### 8. Chest Category Labels (`[Ctrl + L]` toggle)
+- Floating labels ("Food", "Wood", "Mining", "Empty"...) above every chest within 30m, turned to face the camera.
+- Labels follow each chest's dominant category, so they update as you sort.
+
+### 9. Station Output Auto-Store
+- When a crafting station finishes and drops its product on the ground near you, the item is moved into the matching category chest.
+- Only items whose owner is a crafting station are touched; anything you drop yourself stays put.
+
+### 10. Strict Safety Safeguards & Furnace Protection
 - **Furnace & Crafting Station Blacklist**: Zero-tolerance filtering prevents blast furnaces, smelters, kilns, campfires, cooking ranges, anvils, and crafting benches from ever being identified as storage containers. Equipment (such as a Dragon Cursed Shield) is never deposited as fuel.
 - **Ammunition Protection**: Combat arrows, bolts, quivers, and ammunition are protected and kept in your backpack.
 - **Runes Protection**: Magic runes, rune pouches, and essence are protected from accidental depositing.
@@ -66,7 +80,9 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 | **`[G]` (Tap)** | Near Base / Chests | **Quick Stack & Category Sort**: Upgrades chests to 48 slots and organizes all items into dedicated category chests. |
 | **`[G]` (Tap)** | In the Wild | **Instant Harvest**: One-touch AoE harvest and ground loot collection. |
 | **`[G]` (Hold)** | Field / Roaming | **Continuous Ground Vacuum**: 40m continuous magnetism while sprinting. |
-| **`[G]` (Hold)** | Hovering Item | **Quick Pull**: Pulls all matching stacks from nearby chests into your backpack. |
+| **`[G]` (Hold) or `[Alt + G]`** | Hovering Item | **Quick Pull**: Pulls all matching stacks from nearby chests into your backpack. |
+| **`[Alt + G]`** | Open Crafting Station | **Station Fetch**: Pulls one stack of each ingredient the station accepts from nearby chests. |
+| **`[Ctrl + L]`** | Anywhere | **Chest Labels**: Toggle floating category labels above nearby chests. |
 | **`[Ctrl + G]`** | Base Relocation | **Pack Base**: Vacuums all ground items within 150m into virtual Relocation Crate. |
 | **`[Shift + G]`** | Base Relocation | **Unpack Base**: Unpacks Relocation Crate items categorized into nearby chests. |
 
@@ -90,6 +106,12 @@ local Config = {
     OrganizeNearbyChests = true,  -- Consolidate and reorganize inter-chest items
     OverflowWhenCategoryFull = false, -- Prevent contaminating dedicated chests
     HoldDuration = 0.25,          -- Seconds to distinguish Hold from Tap
+    StationFetchStacksPerItem = 1,-- Stacks of each ingredient Station Fetch pulls
+    StationFetchMaxItemTypes = 12,-- Above this, a station counts as unfiltered and name hints are used
+    ChestLabels = true,           -- Floating category labels above chests (Ctrl+L toggles)
+    ChestLabelRadius = 3000.0,    -- Label chests within 30m
+    AutoStoreStationOutput = true,-- Move station products from the ground into category chests
+    StationOutputRadius = 3000.0, -- Only items that appear within 30m of you
     DebugLog = true               -- Detailed UE4SS logging
 }
 ```
