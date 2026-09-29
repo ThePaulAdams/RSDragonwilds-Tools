@@ -54,8 +54,8 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 
 ### 7. Station Fetch (`[Alt + G]` at an open crafting station)
 - Open a furnace, anvil, cooking range or any other station and press `[Alt + G]`.
-- Every item in nearby chests that the station's own inventory will accept is pulled into your backpack, one stack of each by default (`StationFetchStacksPerItem`).
-- Furnaces, smelters and other processing stations are read directly: their `AcceptedResources` list decides what is fetched. At a crafting bench it fetches the ingredients of the recipe you have selected. With no station menu open, the nearest processing station within 6m is used. Each press logs a `[DISCOVERY]` line naming the station it found.
+- Items are pulled from nearby chests into your backpack, one stack of each chosen item by default (`StationFetchStacksPerItem`).
+- **You choose what is fetched at furnaces and smelters:** it only tops up what is already in the station. Put one iron ore in and `[Alt + G]` fetches iron ore; put a log in the fuel slot and it fetches logs; put both in for both. An empty station fetches nothing (set `StationFetchAllWhenEmpty = true` to fetch everything it accepts, or `StationFetchLoadedOnly = false` for the old behaviour). Hovering an item in your backpack and pressing `[Alt + G]` still pulls just that item. At a crafting bench it fetches the ingredients of the recipe you have selected. With no station menu open, the nearest processing station within 6m is used. Each press logs a `[DISCOVERY]` line naming the station it found.
 - Only if a station has no readable list does it fall back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
 
 ### 8. Chest Category Labels (`[Shift + F12]` toggle)
@@ -109,6 +109,8 @@ local Config = {
     HoldDuration = 0.25,          -- Seconds to distinguish Hold from Tap
     StationFetchStacksPerItem = 1,-- Stacks of each ingredient Station Fetch pulls
     StationFetchMaxItemTypes = 12,-- Above this, a station counts as unfiltered and name hints are used
+    StationFetchLoadedOnly = true,-- Furnaces: only fetch what is already in the ingredient/fuel slots
+    StationFetchAllWhenEmpty = false,-- Empty furnace: fetch everything it accepts (true) or nothing (false)
     ChestLabels = true,           -- Floating category labels above chests (Shift+F12 toggles)
     ChestLabelRadius = 3000.0,    -- Label chests within 30m
     AutoStoreStationOutput = true,-- Move station products from the ground into category chests

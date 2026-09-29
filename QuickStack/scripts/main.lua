@@ -53,6 +53,11 @@ local Config = {
     StationFetchStacksPerItem = 1,
     -- If a station accepts more item types than this, treat it as unfiltered and use name hints
     StationFetchMaxItemTypes = 12,
+    -- Furnaces/smelters: only fetch item types already in the station's ingredient or
+    -- fuel slots (put one iron ore in -> Alt+G fetches iron). Set false to fetch everything it accepts.
+    StationFetchLoadedOnly = true,
+    -- With StationFetchLoadedOnly, an empty station fetches everything it accepts (true) or nothing (false).
+    StationFetchAllWhenEmpty = false,
 
     -- Floating category labels above chests (Shift+F12 toggles)
     ChestLabels = true,
@@ -1913,12 +1918,39 @@ local function ComponentNear(comp, playerLoc, radius)
     return nil
 end
 
+-- Item types currently sitting in an inventory component, as { [dataAddr] = name }.
+local function InventoryDataSet(inv)
+    local set, n = {}, 0
+    pcall(function()
+        local count = inv.ItemSlots:GetArrayNum()
+        for i = 1, count do
+            local item = inv.ItemSlots[i]
+            local addr = GetItemDataAddress(item)
+            if addr and not set[addr] then set[addr] = GetItemName(item); n = n + 1 end
+        end
+    end)
+    return set, n
+end
+
 local function ProcessingStation(comp, owner)
     local accepted, n = DataSet(comp.AcceptedResources)
-    local inv = nil
+    local inv, fuel = nil, nil
     pcall(function() inv = comp.Resources end)
+    pcall(function() fuel = comp.Fuel end)
+    -- What the player already put in the ingredient and fuel slots: that is the
+    -- selection Station Fetch tops up.
+    local loaded, loadedCount = {}, 0
+    for _, source in ipairs({ inv, fuel }) do
+        if source and source:IsValid() then
+            local set, c = InventoryDataSet(source)
+            for addr, name in pairs(set) do
+                if not loaded[addr] then loaded[addr] = name; loadedCount = loadedCount + 1 end
+            end
+        end
+    end
     return { Actor = owner, Inventory = inv, ClassName = GetSafeClassName(owner),
-             Accepted = n > 0 and accepted or nil }
+             Accepted = n > 0 and accepted or nil, Processing = true,
+             Loaded = loadedCount > 0 and loaded or nil }
 end
 
 local function FindOpenStation(PC, playerLoc)
@@ -1989,6 +2021,18 @@ local function ExecuteStationFetch()
     for _ in pairs(station.Accepted or {}) do acceptedCount = acceptedCount + 1 end
     Log(string.format("[DISCOVERY] Station Fetch: found '%s' via %s, %d accepted item type(s) listed.",
         station.ClassName, how, acceptedCount))
+
+    -- Furnaces, smelters etc.: only top up what is already in the station, so the
+    -- player chooses (one iron ore in = fetch iron; a log in the fuel slot = fetch logs).
+    if station.Processing and Config.StationFetchLoadedOnly then
+        if station.Loaded then
+            station.Accepted = station.Loaded
+        elseif not Config.StationFetchAllWhenEmpty then
+            Log(string.format("Station Fetch: '%s' is empty. Put one of what you want (ore, fuel...) into it, then press [Alt + G] to fetch more of it. Or hover an item and press [Alt + G].",
+                station.ClassName))
+            return
+        end
+    end
 
     local nearbyChests = FindNearbyChests(playerLoc)
     if #nearbyChests == 0 then
