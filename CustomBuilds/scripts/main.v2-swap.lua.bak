@@ -1,0 +1,467 @@
+-- CustomBuilds (private, gitignored; single-player use)
+--
+-- Build viewer models with the game's own build mode, without creating any new game
+-- data (a Lua mod cannot safely create build pieces in this game: it crashed).
+--
+-- How: pick a model with the F10 console ("cb 3"). Then place any cheap decoration
+-- from the normal build menu. While a model is picked, the ghost preview and the
+-- placed piece show the model's mesh instead. The game places, charges and saves the
+-- decoration as usual; the mod records "piece id + location -> mesh" in placed.txt
+-- and puts the model back whenever that piece appears again (reload, walking back).
+-- Without the mod those pieces are just the decoration again: nothing is lost.
+--
+-- Console (F10):
+--   cb            list the models and what is picked
+--   cb <n>        pick model n for the next pieces you place
+--   cb off        stop (pieces you place are normal again)
+--   cb probe      report what the mod sees (build preview, nearby pieces) for debugging
+--   cb spawn <n>  test: put model n in front of you as a plain prop (not saved)
+--   cb clear      remove the test props
+--   cb restore    put the models back on recorded pieces around you
+--
+-- Nothing runs at world load except putting models back on pieces already in
+-- placed.txt. No hotkeys, no loops.
+
+local UEHelpers = require("UEHelpers")
+
+local ModName = "CustomBuilds"
+local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))) end
+
+local Config = {
+    MatchRadius = 200.0,    -- a new piece this close to where you placed with a model picked gets it
+    RestoreRadius = 80.0,   -- a saved record only applies to a piece this close to it
+    PendingSeconds = 20,
+}
+
+-- The working folder differs between setups, so look for models.txt in a few places.
+local ModDir = nil
+do
+    local dirs = {}
+    pcall(function()
+        local dir = debug.getinfo(1, "S").source:match("^@(.*[/\\])scripts[/\\]")
+        if dir then dirs[#dirs + 1] = dir end
+    end)
+    for _, d in ipairs({ "Mods/CustomBuilds/", "ue4ss/Mods/CustomBuilds/", "../Mods/CustomBuilds/",
+        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/CustomBuilds/" }) do
+        dirs[#dirs + 1] = d
+    end
+    for _, d in ipairs(dirs) do
+        local f = io.open(d .. "models.txt", "r")
+        if f then f:close(); ModDir = d; break end
+    end
+    ModDir = ModDir or dirs[#dirs]
+end
+
+-- =========================================================================
+-- Helpers
+-- =========================================================================
+local function Valid(o)
+    if not o then return false end
+    local ok, res = pcall(function() return o:IsValid() and o:GetAddress() ~= 0 end)
+    return ok and res
+end
+
+local function NameOf(o)
+    local n = ""
+    pcall(function() n = o:GetFName():ToString() end)
+    return n
+end
+
+local function ClassName(o)
+    local n = ""
+    pcall(function() n = o:GetClass():GetFName():ToString() end)
+    return n
+end
+
+local function Get(p)
+    if type(p) == "userdata" or type(p) == "table" then
+        local ok, v = pcall(function() return p:get() end)
+        if ok and v ~= nil then return v end
+    end
+    return p
+end
+
+local function Later(ms, fn)
+    if ExecuteInGameThreadWithDelay then
+        ExecuteInGameThreadWithDelay(ms, fn)
+    elseif ExecuteWithDelay then
+        ExecuteWithDelay(ms, function() ExecuteInGameThread(fn) end)
+    end
+end
+
+local function Dist(a, b)
+    local dx, dy, dz = a.X - b.X, a.Y - b.Y, a.Z - b.Z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function Trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+
+-- Viewer path (RSDragonwilds/Content/Art/X.X) or game path (/Game/Art/X.X) -> game path.
+local function GamePath(p)
+    p = Trim(p):gsub("\\", "/")
+    if p:sub(1, 1) ~= "/" then
+        local root, rest = p:match("^([^/]+)/Content/(.+)$")
+        if root == "RSDragonwilds" then p = "/Game/" .. rest
+        elseif root then p = "/" .. root .. "/" .. rest
+        else p = "/" .. p end
+    end
+    if not p:match("%.[^/]+$") then p = p .. "." .. p:match("([^/]+)$") end
+    return p
+end
+
+-- =========================================================================
+-- Models and saved placements
+-- =========================================================================
+local Models = {}
+
+local function LoadModels()
+    Models = {}
+    local f = io.open(ModDir .. "models.txt", "r")
+    if not f then Log("models.txt not found in " .. ModDir); return end
+    for line in f:lines() do
+        if not line:match("^%s*#") and line:find("|", 1, true) then
+            local name, path = line:match("^(.-)|(.+)$")
+            name, path = Trim(name), GamePath(path)
+            if name ~= "" and path ~= "" then Models[#Models + 1] = { Name = name, Mesh = path } end
+        end
+    end
+    f:close()
+    Log(string.format("%d models listed in models.txt", #Models))
+end
+
+local Placed = {}   -- piece id (string) -> { X, Y, Z, Mesh }
+
+local function LoadPlaced()
+    Placed = {}
+    local f = io.open(ModDir .. "placed.txt", "r")
+    if not f then return end
+    local n = 0
+    for line in f:lines() do
+        local id, x, y, z, mesh = line:match("^(%d+)|([-%d%.e]+)|([-%d%.e]+)|([-%d%.e]+)|(.+)$")
+        if id then
+            Placed[id] = { X = tonumber(x), Y = tonumber(y), Z = tonumber(z), Mesh = mesh }
+            n = n + 1
+        end
+    end
+    f:close()
+    Log(string.format("%d placed models on record", n))
+end
+
+local function SavePlaced()
+    local f = io.open(ModDir .. "placed.txt", "w")
+    if not f then Log("Could not write placed.txt"); return end
+    f:write("# CustomBuilds: piece id|x|y|z|mesh. Written by the mod.\n")
+    for id, r in pairs(Placed) do
+        f:write(string.format("%s|%.1f|%.1f|%.1f|%s\n", id, r.X, r.Y, r.Z, r.Mesh))
+    end
+    f:close()
+end
+
+-- =========================================================================
+-- Mesh swap
+-- =========================================================================
+local MeshCache = {}
+
+local function LoadMesh(path)
+    local m = MeshCache[path]
+    if Valid(m) then return m end
+    m = StaticFindObject(path)
+    if not Valid(m) and LoadAsset then
+        pcall(LoadAsset, path)
+        m = StaticFindObject(path)
+        if not Valid(m) then
+            pcall(LoadAsset, (path:gsub("%.[^/]+$", "")))
+            m = StaticFindObject(path)
+        end
+    end
+    if Valid(m) then MeshCache[path] = m; return m end
+    Log("Mesh not found: " .. path)
+    return nil
+end
+
+local function HasMesh(c)
+    local ok, m = pcall(function() return c.StaticMesh end)
+    return ok and Valid(m)
+end
+
+-- Static mesh components of a building actor: its StaticMesh slot plus CachedMeshes.
+local function MeshComponents(actor)
+    local list, seen = {}, {}
+    local function add(c)
+        if Valid(c) and not seen[c:GetAddress()] then
+            seen[c:GetAddress()] = true
+            list[#list + 1] = c
+        end
+    end
+    pcall(function() add(actor.StaticMesh) end)
+    pcall(function()
+        local arr = actor.CachedMeshes
+        for i = 1, arr:GetArrayNum() do add(arr[i]) end
+    end)
+    return list
+end
+
+local function SkeletalComponents(actor)
+    local list = {}
+    pcall(function()
+        local arr = actor:K2_GetComponentsByClass(StaticFindObject("/Script/Engine.SkeletalMeshComponent"))
+        for i = 1, arr:GetArrayNum() do
+            if Valid(arr[i]) then list[#list + 1] = arr[i] end
+        end
+    end)
+    return list
+end
+
+-- Put `path` on the actor's main mesh component and hide its other meshes.
+-- ghost = true keeps the ghost/preview material on every slot.
+local function Swap(actor, path, ghost)
+    local mesh = LoadMesh(path)
+    if not mesh then return false end
+    local comps = MeshComponents(actor)
+    local target = nil
+    for _, c in ipairs(comps) do
+        if HasMesh(c) then target = c; break end
+    end
+    if not target then
+        Log("[DISCOVERY] " .. ClassName(actor) .. " has no static mesh to swap; pick a different decoration")
+        return false
+    end
+    local ghostMat = nil
+    if ghost then pcall(function() ghostMat = target:GetMaterial(0) end) end
+    local ok, err = pcall(function()
+        pcall(function() target:SetMobility(2) end) -- Movable, so SetStaticMesh is allowed in play
+        target:SetStaticMesh(mesh)
+        pcall(function() target:EmptyOverrideMaterials() end)
+        if Valid(ghostMat) then
+            local n = 1
+            pcall(function() n = target:GetNumMaterials() end)
+            for i = 0, n - 1 do target:SetMaterial(i, ghostMat) end
+        end
+        for _, c in ipairs(comps) do
+            if c:GetAddress() ~= target:GetAddress() then pcall(function() c:SetVisibility(false, false) end) end
+        end
+        for _, c in ipairs(SkeletalComponents(actor)) do pcall(function() c:SetVisibility(false, false) end) end
+    end)
+    if not ok then Log("Swap failed on " .. ClassName(actor) .. ": " .. tostring(err)) end
+    return ok
+end
+
+-- =========================================================================
+-- Placement tracking
+-- =========================================================================
+local Skin = nil      -- model picked with "cb <n>", or nil
+local Pending = {}    -- { Model, X, Y, Z, Time } placements waiting for their actor
+local BaseActorClass = nil
+
+local function RestoreOrClaim(actor, tries)
+    if not Valid(actor) then return end
+    local preview = false
+    pcall(function() preview = actor.bIsPreview end)
+    if preview then
+        if Skin then Swap(actor, Skin.Mesh, true) end
+        return
+    end
+    local id = 0
+    pcall(function() id = tonumber(actor.BuildingPieceID) or 0 end)
+    if id == 0 then
+        if (tries or 0) < 5 then Later(400, function() RestoreOrClaim(actor, (tries or 0) + 1) end) end
+        return
+    end
+    local loc = actor:K2_GetActorLocation()
+    local rec = Placed[tostring(id)]
+    if rec then
+        if Dist(rec, loc) <= Config.RestoreRadius then Swap(actor, rec.Mesh, false) end
+        return
+    end
+    local now = os.time()
+    for i = #Pending, 1, -1 do
+        local p = Pending[i]
+        if now - p.Time > Config.PendingSeconds then
+            table.remove(Pending, i)
+        elseif Dist(p, loc) <= Config.MatchRadius then
+            table.remove(Pending, i)
+            if Swap(actor, p.Model.Mesh, false) then
+                Placed[tostring(id)] = { X = loc.X, Y = loc.Y, Z = loc.Z, Mesh = p.Model.Mesh }
+                SavePlaced()
+                Log(string.format("Placed %s (piece %d, %s)", p.Model.Name, id, ClassName(actor)))
+            end
+            return
+        end
+    end
+end
+
+local function BuildingActors()
+    local out = {}
+    for _, a in ipairs(FindAllOf("BaseBuildingActor") or {}) do
+        if Valid(a) and not NameOf(a):find("^Default__") then out[#out + 1] = a end
+    end
+    return out
+end
+
+local function RestoreAll()
+    local n = 0
+    for _, a in ipairs(BuildingActors()) do
+        local id = 0
+        pcall(function() id = tonumber(a.BuildingPieceID) or 0 end)
+        local rec = Placed[tostring(id)]
+        if rec and Dist(rec, a:K2_GetActorLocation()) <= Config.RestoreRadius then
+            if Swap(a, rec.Mesh, false) then n = n + 1 end
+        end
+    end
+    return n
+end
+
+local SpawnHookSeen = false
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildModeComponent:Server_SpawnBuilding", function(self, index, transform)
+        if not SpawnHookSeen then SpawnHookSeen = true; Log("[DISCOVERY] Server_SpawnBuilding hook fires") end
+        if not Skin then return end
+        local ok, err = pcall(function()
+            local t = Get(transform).Translation
+            Pending[#Pending + 1] = { Model = Skin, X = t.X, Y = t.Y, Z = t.Z, Time = os.time() }
+        end)
+        if not ok then Log("Could not read spawn transform: " .. tostring(err)) end
+    end)
+end)
+
+-- Every building actor that appears: the preview gets the picked model, placed pieces
+-- get their recorded model back, and a new piece where a model was placed is claimed.
+local okBeginPlay, errBeginPlay = pcall(RegisterBeginPlayPostHook, function(actor)
+    local a = Get(actor)
+    if not Valid(BaseActorClass) then
+        BaseActorClass = StaticFindObject("/Script/Dominion.BaseBuildingActor")
+        if not Valid(BaseActorClass) then return end
+    end
+    local ok, is = pcall(function() return a:IsA(BaseActorClass) end)
+    if not ok or not is then return end
+    Later(250, function() RestoreOrClaim(a, 0) end)
+end)
+if not okBeginPlay then Log("RegisterBeginPlayPostHook unavailable: " .. tostring(errBeginPlay)) end
+
+-- The game resets meshes/materials when a ghost is built.
+pcall(function()
+    RegisterHook("/Script/Dominion.BaseBuildingActor:OnRep_IsGhosted", function(self)
+        local a = Get(self)
+        Later(250, function() RestoreOrClaim(a, 0) end)
+    end)
+end)
+
+-- =========================================================================
+-- Console
+-- =========================================================================
+local TestProps = {}
+
+local function Pawn()
+    local pc = UEHelpers.GetPlayerController()
+    if Valid(pc) and Valid(pc.Pawn) then return pc, pc.Pawn end
+end
+
+local function SpawnProp(model)
+    local pc, pawn = Pawn()
+    if not pawn then return "not in a world" end
+    local mesh = LoadMesh(model.Mesh)
+    if not mesh then return "mesh not found: " .. model.Mesh end
+    local loc = pawn:K2_GetActorLocation()
+    local fwd = pawn:GetActorForwardVector()
+    local xf = {
+        Rotation = { X = 0.0, Y = 0.0, Z = 0.0, W = 1.0 },
+        Translation = { X = loc.X + fwd.X * 400, Y = loc.Y + fwd.Y * 400, Z = loc.Z - 90 },
+        Scale3D = { X = 1.0, Y = 1.0, Z = 1.0 },
+    }
+    local gs = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local cls = StaticFindObject("/Script/Engine.StaticMeshActor")
+    Log("spawn: step 1 begin deferred spawn")
+    local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
+    if not Valid(a) then return "spawn failed" end
+    Log("spawn: step 2 finish spawn")
+    a = gs:FinishSpawningActor(a, xf, 1)
+    if not Valid(a) then return "finish spawn failed" end
+    Log("spawn: step 3 set mesh")
+    local c = a.StaticMeshComponent
+    pcall(function() c:SetMobility(2) end)
+    c:SetStaticMesh(mesh)
+    TestProps[#TestProps + 1] = a
+    return "spawned " .. model.Name .. " 4 m in front of you (test only, not saved)"
+end
+
+local function Probe(say)
+    local pc, pawn = Pawn()
+    if not pawn then say("not in a world"); return end
+    local here = pawn:K2_GetActorLocation()
+    local placing = nil
+    for _, comp in ipairs(FindAllOf("BuildModeComponent") or {}) do
+        pcall(function()
+            local w = comp.CurrentlyPlacingPieceData
+            local d = nil
+            pcall(function() d = w:Get() end)
+            if not Valid(d) then pcall(function() d = w:get() end) end
+            if Valid(d) then placing = d end
+        end)
+    end
+    say("Placing: " .. (placing and NameOf(placing) or "nothing selected")
+        .. (placing and (" (category " .. tostring(placing.RepresentationCategory) .. ")") or ""))
+    local previews, near = 0, 0
+    for _, a in ipairs(BuildingActors()) do
+        local preview = false
+        pcall(function() preview = a.bIsPreview end)
+        local d = nil
+        pcall(function() d = a.BuildingPieceData end)
+        local line = string.format("%s | data %s | meshes %d (with mesh: %s) | skeletal %d | id %s",
+            ClassName(a), Valid(d) and NameOf(d) or "?", #MeshComponents(a),
+            (function()
+                for _, c in ipairs(MeshComponents(a)) do if HasMesh(c) then return "yes" end end
+                return "no"
+            end)(), #SkeletalComponents(a), tostring(a.BuildingPieceID))
+        if preview then
+            previews = previews + 1
+            say("Preview: " .. line)
+        elseif Dist(here, a:K2_GetActorLocation()) < 1500 and near < 8 then
+            near = near + 1
+            say("Nearby: " .. line)
+        end
+    end
+    say(string.format("%d preview actors, %d building actors in total", previews, #BuildingActors()))
+end
+
+RegisterConsoleCommandHandler("cb", function(full, params, out)
+    local function Say(msg)
+        Log(msg)
+        pcall(function() out:Log(ModName .. ": " .. msg) end)
+    end
+    local cmd = params[1] and params[1]:lower() or ""
+    local ok, err = pcall(function()
+        if cmd == "" or cmd == "list" then
+            for i, m in ipairs(Models) do Say(string.format("%d  %s", i, m.Name)) end
+            Say("Picked: " .. (Skin and Skin.Name or "none") .. ". Type cb <number>, then place a small decoration.")
+        elseif tonumber(cmd) then
+            local m = Models[tonumber(cmd)]
+            if not m then Say("No model " .. cmd); return end
+            if not LoadMesh(m.Mesh) then Say("Mesh not found for " .. m.Name); return end
+            Skin = m
+            Say("Picked " .. m.Name .. ". Now place a small decoration from the build menu. Type cb off to stop.")
+        elseif cmd == "off" then
+            Skin = nil
+            Say("Off. Pieces you place are normal again.")
+        elseif cmd == "probe" then
+            Probe(Say)
+        elseif cmd == "spawn" then
+            local m = Models[tonumber(params[2] or "1") or 1]
+            if m then Say(SpawnProp(m)) else Say("No such model") end
+        elseif cmd == "clear" then
+            for _, a in ipairs(TestProps) do if Valid(a) then pcall(function() a:K2_DestroyActor() end) end end
+            TestProps = {}
+            Say("Test props removed")
+        elseif cmd == "restore" then
+            Say(string.format("Restored %d placed models", RestoreAll()))
+        else
+            Say("Commands: cb, cb <n>, cb off, cb probe, cb spawn <n>, cb clear, cb restore")
+        end
+    end)
+    if not ok then Say("Error: " .. tostring(err)) end
+    return true
+end)
+
+Log("Mod folder: " .. tostring(ModDir))
+LoadModels()
+LoadPlaced()
+Log("Ready. F10 console: cb")

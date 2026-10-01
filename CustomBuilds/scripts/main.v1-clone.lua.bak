@@ -1,0 +1,795 @@
+-- CustomBuilds (private, gitignored; single-player use)
+--
+-- Puts models found with the model viewer into the game's own BUILD menu.
+--
+-- The game saves a placed piece only as "which BuildingPieceData, where", keyed by
+-- the data asset's PersistenceID. A piece type the game does not know at load time
+-- would be dropped, so this mod never adds new piece types. Instead each model is
+-- shown in the menu as a copy of a cheap existing decoration (same PersistenceID and
+-- index), so the game places and saves that real decoration. The mod then swaps the
+-- placed actor's mesh to the model and records "piece id + location -> mesh" in
+-- placed.txt next to this script, and puts the mesh back whenever that piece's actor
+-- appears again (world load, walking back into range, ghost -> built).
+-- Without the mod those pieces are simply the base decoration again: nothing is lost.
+--
+-- Modes (Config.Mode):
+--   "clone": new entries named after the models, added next to the base decoration.
+--   "reuse": renames existing decorations to the model names (one decoration per model);
+--            placing one of those gives the model. Used when the game will not take new
+--            entries.
+--   "auto" : "clone" if a safe test shows new entries can be added, else "reuse".
+--
+-- Caveats: collision and the placement box stay the base decoration's; from far away
+-- (when the game draws pieces as instances) the base decoration may show instead.
+--
+-- Console (F10): "cb" prints status, "cb restore" re-applies meshes around you.
+-- No hotkeys. Everything runs from UFunction hooks on the game thread; no loops.
+
+local UEHelpers = require("UEHelpers")
+
+local ModName = "CustomBuilds"
+local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))) end
+
+local Config = {
+    Mode = "clone",   -- Paul wants new entries only; "auto" would fall back to renaming
+    -- Base decorations, tried in this order (substring of the data asset name). A base
+    -- must be unlocked and be a real actor piece (not an instanced one) so its mesh can
+    -- be swapped. "reuse" mode takes one per model, so keep a few spare patterns.
+    BasePreference = {
+        "Decoration_Food_", "Decoration_Drink_", "Decoration_Material_", "Decoration_",
+    },
+    -- Never used as a base: pieces that do something (storage, stations, beds, doors...).
+    BaseExclude = { "Chest", "Crate", "Storage", "Station", "Bed", "Door", "Gate", "Farm", "Totem", "Protection" },
+    MatchRadius = 200.0,    -- a new piece this close to where you placed a model gets it
+    RestoreRadius = 80.0,   -- a saved record only applies to a piece this close to it
+    PendingSeconds = 20,
+    NotifyMenu = false,     -- call the game's "buildings unlocked" UI event for the new entries
+}
+
+local CATALOGUE_PATH = "/Game/Gameplay/BaseBuilding_New/BuildingPieces/DA_BuildPieceCatalogue_Default.DA_BuildPieceCatalogue_Default"
+local CLONE_PREFIX = "CB_"
+
+-- The working folder differs between setups, so look for models.txt in a few places.
+local ModDir = nil
+do
+    local dirs = {}
+    pcall(function()
+        local dir = debug.getinfo(1, "S").source:match("^@(.*[/\\])scripts[/\\]")
+        if dir then dirs[#dirs + 1] = dir end
+    end)
+    for _, d in ipairs({ "Mods/CustomBuilds/", "ue4ss/Mods/CustomBuilds/", "../Mods/CustomBuilds/",
+        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/CustomBuilds/" }) do
+        dirs[#dirs + 1] = d
+    end
+    for _, d in ipairs(dirs) do
+        local f = io.open(d .. "models.txt", "r")
+        if f then f:close(); ModDir = d; break end
+    end
+    ModDir = ModDir or dirs[#dirs]
+end
+
+-- =========================================================================
+-- Helpers
+-- =========================================================================
+local function Valid(o)
+    if not o then return false end
+    local ok, res = pcall(function() return o:IsValid() and o:GetAddress() ~= 0 end)
+    return ok and res
+end
+
+local function NameOf(o)
+    local n = ""
+    pcall(function() n = o:GetFName():ToString() end)
+    return n
+end
+
+local function PathOf(o)
+    local p = ""
+    pcall(function() p = o:GetFullName():match("^%S+%s+(.+)$") or "" end)
+    return p
+end
+
+local function Get(p)
+    if type(p) == "userdata" or type(p) == "table" then
+        local ok, v = pcall(function() return p:get() end)
+        if ok and v ~= nil then return v end
+    end
+    return p
+end
+
+local function Later(ms, fn)
+    if ExecuteInGameThreadWithDelay then
+        ExecuteInGameThreadWithDelay(ms, fn)
+    elseif ExecuteWithDelay then
+        ExecuteWithDelay(ms, function() ExecuteInGameThread(fn) end)
+    end
+end
+
+local function Dist(a, b)
+    local dx, dy, dz = a.X - b.X, a.Y - b.Y, a.Z - b.Z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function Trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+
+-- Viewer path (RSDragonwilds/Content/Art/X.X) or game path (/Game/Art/X.X) -> game path.
+local function GamePath(p)
+    p = Trim(p):gsub("\\", "/")
+    if p:sub(1, 1) ~= "/" then
+        local root, rest = p:match("^([^/]+)/Content/(.+)$")
+        if root == "RSDragonwilds" then p = "/Game/" .. rest
+        elseif root then p = "/" .. root .. "/" .. rest
+        else p = "/" .. p end
+    end
+    if not p:match("%.[^/]+$") then p = p .. "." .. p:match("([^/]+)$") end
+    return p
+end
+
+-- =========================================================================
+-- Models and saved placements
+-- =========================================================================
+local Models = {}
+
+local function LoadModels()
+    Models = {}
+    local f = io.open(ModDir .. "models.txt", "r")
+    if not f then Log("models.txt not found in " .. ModDir); return end
+    for line in f:lines() do
+        if not line:match("^%s*#") and line:find("|", 1, true) then
+            local name, path = line:match("^(.-)|(.+)$")
+            name, path = Trim(name), GamePath(path)
+            if name ~= "" and path ~= "" then Models[#Models + 1] = { Name = name, Mesh = path } end
+        end
+    end
+    f:close()
+    Log(string.format("%d models listed in models.txt", #Models))
+end
+
+local Placed = {}   -- piece id (string) -> { X, Y, Z, Mesh }
+
+local function LoadPlaced()
+    Placed = {}
+    local f = io.open(ModDir .. "placed.txt", "r")
+    if not f then return end
+    local n = 0
+    for line in f:lines() do
+        local id, x, y, z, mesh = line:match("^(%d+)|([-%d%.e]+)|([-%d%.e]+)|([-%d%.e]+)|(.+)$")
+        if id then
+            Placed[id] = { X = tonumber(x), Y = tonumber(y), Z = tonumber(z), Mesh = mesh }
+            n = n + 1
+        end
+    end
+    f:close()
+    Log(string.format("%d placed models on record", n))
+end
+
+local function SavePlaced()
+    local f = io.open(ModDir .. "placed.txt", "w")
+    if not f then Log("Could not write placed.txt"); return end
+    f:write("# CustomBuilds: piece id|x|y|z|mesh. Written by the mod.\n")
+    for id, r in pairs(Placed) do
+        f:write(string.format("%s|%.1f|%.1f|%.1f|%s\n", id, r.X, r.Y, r.Z, r.Mesh))
+    end
+    f:close()
+end
+
+-- =========================================================================
+-- Mesh swap
+-- =========================================================================
+local MeshCache = {}
+
+local function LoadMesh(path)
+    local m = MeshCache[path]
+    if Valid(m) then return m end
+    m = StaticFindObject(path)
+    if not Valid(m) and LoadAsset then
+        pcall(LoadAsset, path)
+        m = StaticFindObject(path)
+        if not Valid(m) then
+            pcall(LoadAsset, (path:gsub("%.[^/]+$", "")))
+            m = StaticFindObject(path)
+        end
+    end
+    if Valid(m) then MeshCache[path] = m; return m end
+    Log("Mesh not found: " .. path)
+    return nil
+end
+
+local function MeshComponents(actor)
+    local list, seen = {}, {}
+    local function add(c)
+        if Valid(c) and not seen[c:GetAddress()] then
+            seen[c:GetAddress()] = true
+            list[#list + 1] = c
+        end
+    end
+    pcall(function() add(actor.StaticMesh) end)
+    pcall(function()
+        local arr = actor.CachedMeshes
+        for i = 1, arr:GetArrayNum() do add(arr[i]) end
+    end)
+    return list
+end
+
+local function HasMesh(c)
+    local ok, m = pcall(function() return c.StaticMesh end)
+    return ok and Valid(m)
+end
+
+-- Put `path` on the actor's main mesh component and hide its other meshes.
+-- ghost = true keeps the ghost/preview material on every slot.
+local function Swap(actor, path, ghost)
+    local mesh = LoadMesh(path)
+    if not mesh then return false end
+    local comps = MeshComponents(actor)
+    local target = nil
+    for _, c in ipairs(comps) do
+        if HasMesh(c) then target = c; break end
+    end
+    if not target then
+        -- Pieces drawn with a skeletal mesh (pets) still have an empty StaticMesh slot.
+        pcall(function() if Valid(actor.StaticMesh) then target = actor.StaticMesh end end)
+    end
+    if not target then
+        Log("[DISCOVERY] " .. NameOf(actor) .. " has no static mesh component to swap")
+        return false
+    end
+    pcall(function()
+        local skel = StaticFindObject("/Script/Engine.SkeletalMeshComponent")
+        local arr = actor:K2_GetComponentsByClass(skel)
+        for i = 1, arr:GetArrayNum() do
+            local c = arr[i]
+            if Valid(c) then c:SetVisibility(false, false) end
+        end
+    end)
+    pcall(function() target:SetVisibility(true, false) end)
+    local ghostMat = nil
+    if ghost then pcall(function() ghostMat = target:GetMaterial(0) end) end
+    local ok, err = pcall(function()
+        pcall(function() target:SetMobility(2) end) -- Movable, so SetStaticMesh is allowed in play
+        target:SetStaticMesh(mesh)
+        pcall(function() target:EmptyOverrideMaterials() end)
+        if Valid(ghostMat) then
+            local n = 1
+            pcall(function() n = target:GetNumMaterials() end)
+            for i = 0, n - 1 do target:SetMaterial(i, ghostMat) end
+        end
+        for _, c in ipairs(comps) do
+            if c:GetAddress() ~= target:GetAddress() then pcall(function() c:SetVisibility(false, false) end) end
+        end
+    end)
+    if not ok then Log("Swap failed on " .. NameOf(actor) .. ": " .. tostring(err)) end
+    return ok
+end
+
+-- =========================================================================
+-- Menu entries
+-- =========================================================================
+local EntryModel = {}   -- BuildingPieceData path -> model
+local Selected = nil    -- model of the build entry currently selected, or nil
+local Pending = {}      -- { Model, X, Y, Z, Time } placements waiting for their actor
+local ActiveMode = nil
+local SetupFor = 0     -- address of the ProgressComponent the entries were set up for
+local BaseActorClass = nil
+
+local function IsDefault(o) return NameOf(o):find("^Default__") ~= nil end
+
+local function Progress()
+    local pc = UEHelpers.GetPlayerController()
+    local first = nil
+    for _, p in ipairs(FindAllOf("ProgressComponent") or {}) do
+        if Valid(p) and not IsDefault(p) then
+            first = first or p
+            local owner = nil
+            pcall(function() owner = p:GetOwner() end)
+            if Valid(owner) and Valid(pc) then
+                local a = owner:GetAddress()
+                if a == pc:GetAddress() then return p end
+                local ps = nil
+                pcall(function() ps = pc.PlayerState end)
+                if Valid(ps) and a == ps:GetAddress() then return p end
+            end
+        end
+    end
+    return first
+end
+
+local function UnlockedSet(progress)
+    local set = {}
+    pcall(function()
+        local arr = progress.BuildingsUnlocked
+        for i = 1, arr:GetArrayNum() do
+            local d = arr[i]
+            if Valid(d) then set[d:GetAddress()] = true end
+        end
+    end)
+    pcall(function()
+        progress.BuildingsUnlockedThatShouldNotPersist:ForEach(function(e)
+            local d = Get(e)
+            if Valid(d) then set[d:GetAddress()] = true end
+        end)
+    end)
+    return set
+end
+
+local function Category(d)
+    local c = nil
+    pcall(function() c = tonumber(d.RepresentationCategory) end)
+    return c
+end
+
+-- Unlocked actor-type pieces matching BasePreference, best first. unlocked = nil
+-- accepts locked pieces too.
+local function BaseCandidates(unlocked)
+    local list, hist = {}, {}
+    for _, d in ipairs(FindAllOf("BuildingPieceData") or {}) do
+        if Valid(d) and not IsDefault(d) then
+            local name = NameOf(d)
+            local cat = Category(d)
+            local isUnlocked = unlocked == nil or unlocked[d:GetAddress()]
+            if name:find("Decoration", 1, true) then
+                local k = tostring(cat) .. (isUnlocked and "/unlocked" or "/locked")
+                hist[k] = (hist[k] or 0) + 1
+            end
+            local excluded = false
+            for _, pat in ipairs(Config.BaseExclude) do
+                if name:find(pat, 1, true) then excluded = true; break end
+            end
+            if not excluded and not name:find("^" .. CLONE_PREFIX) and (cat == 0 or cat == 2) and isUnlocked then
+                for rank, pat in ipairs(Config.BasePreference) do
+                    if name:find(pat, 1, true) then
+                        list[#list + 1] = { Data = d, Name = name, Rank = rank }
+                        break
+                    end
+                end
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.Rank ~= b.Rank then return a.Rank < b.Rank end
+        return a.Name < b.Name
+    end)
+    local parts = {}
+    for k, v in pairs(hist) do parts[#parts + 1] = k .. "=" .. v end
+    Log("[DISCOVERY] Decoration pieces by RepresentationCategory (0 actor, 1 lightweight, 2 managed actor, 3 instanced): "
+        .. table.concat(parts, ", "))
+    return list
+end
+
+local function SoftString(e)
+    if e == nil then return "" end
+    for _, f in ipairs({
+        function() return e:ToString() end,
+        function() return Get(e):ToString() end,
+        function() return tostring(e) end,
+    }) do
+        local ok, s = pcall(f)
+        if ok and type(s) == "string" and s ~= "" then return s end
+    end
+    return ""
+end
+
+-- Appends obj to a TArray<TSoftObjectPtr>. Returns true only when read back correctly.
+local function SoftAppend(arr, obj)
+    local n = arr:GetArrayNum()
+    local wanted = NameOf(obj)
+    local function readLast()
+        local ok, e = pcall(function() return arr[n + 1] end)
+        return ok and SoftString(e) or ""
+    end
+    for i, value in ipairs({ obj, PathOf(obj) }) do
+        local ok, err = pcall(function() arr[n + 1] = value end)
+        local now = arr:GetArrayNum()
+        local read = now > n and readLast() or ""
+        if ok and now == n + 1 and read:find(wanted, 1, true) then return true end
+        Log(string.format("[DISCOVERY] Soft pointer append try %d: ok=%s num %d->%d read='%s' err=%s",
+            i, tostring(ok), n, now, read, tostring(err)))
+        if now > n then return false end -- the array grew without the value: stop here
+    end
+    return false
+end
+
+-- Safe test on the DeprecatedPieces list of a scratch catalogue made just for the
+-- test, so the game's real menu data is never touched by a failed try.
+local function SoftAppendWorks(cat, probe)
+    local ok, res = pcall(function()
+        Log("Test: step A create scratch catalogue")
+        local scratch = StaticConstructObject(cat:GetClass(), cat:GetOuter())
+        Log("Test: step B append to scratch list")
+        if not Valid(scratch) then Log("[DISCOVERY] Could not make a scratch catalogue"); return false end
+        local arr = scratch.DeprecatedPieces
+        if arr:GetArrayNum() ~= 0 then
+            Log("[DISCOVERY] DeprecatedPieces is not empty; skipping the new-entry test")
+            return false
+        end
+        local okAppend, works = pcall(SoftAppend, arr, probe)
+        arr:Empty()
+        return okAppend and works
+    end)
+    return ok and res
+end
+
+local function FindCollection(cat, baseName)
+    local fallback, decor = nil, nil
+    local found = nil
+    pcall(function()
+        for i = 1, cat.Pages:GetArrayNum() do
+            local page = cat.Pages[i]
+            for j = 1, page.Collection:GetArrayNum() do
+                local col = page.Collection[j]
+                fallback = fallback or col
+                if not decor then
+                    local label = ""
+                    pcall(function() label = col.Label:ToString() end)
+                    if label:lower():find("decor") then decor = col end
+                end
+                local arr = col.Collection
+                for k = 1, arr:GetArrayNum() do
+                    if SoftString(arr[k]):find(baseName, 1, true) then
+                        found = col
+                        Log(string.format("Base %s is in menu page %d, section %d", baseName, i, j))
+                        return
+                    end
+                end
+            end
+        end
+    end)
+    return found or decor or fallback
+end
+
+-- Fields copied from the base piece one by one. Critical ones are read back and
+-- must match, or the copy is thrown away (a piece without its actor class or index
+-- could break the build preview).
+local CopyFields = {
+    { "BuildingPieceDataIndex", true }, { "RepresentationCategory", true },
+    { "PersistenceID", true }, { "BuildableActor", true }, { "DerivedData", true },
+    { "InternalName", false }, { "DisplayIcon", false }, { "Category", false }, { "PieceTag", false },
+    { "Requirements", false }, { "ReducedRefundedMaterials", false },
+    { "BuildingStabilityProfileRowHandle", false }, { "BuildingPieceProxyData", false },
+    { "BuildXpEvent", false }, { "ConstructionXPOnBuild", false },
+    { "bShouldBeVisibleFromFarAway", false }, { "bOnlyAvailableToHost", false },
+    { "bIgnoreAutomaticUnlocks", false },
+}
+
+local function ValueText(v)
+    local t = type(v)
+    if t == "nil" or t == "number" or t == "boolean" then return tostring(v) end
+    if t == "string" then return v end
+    local s = SoftString(v)
+    if s:find("^UScriptStruct") or s:find("^userdata") or s:find("^table") then return nil end
+    return s
+end
+
+local Clones = {}   -- key -> clone made this session (auto-named, so found again here)
+
+local function MakeClone(base, index, model)
+    local key = PathOf(base) .. "#" .. index
+    if Valid(Clones[key]) then return Clones[key] end
+    local tag = "Clone " .. index .. " (" .. model.Name .. "): "
+
+    -- The plain two-argument form is what CheatManagerEnabler and the minimap use and is
+    -- known to work here; the named/flagged/template form crashed the game.
+    Log(tag .. "step 1 create object")
+    local clone = StaticConstructObject(base:GetClass(), base:GetOuter())
+    if not Valid(clone) then Log(tag .. "create returned nothing"); return nil end
+    Log(tag .. "step 1 done: " .. PathOf(clone))
+
+    for _, f in ipairs(CopyFields) do
+        local field, critical = f[1], f[2]
+        Log(tag .. "step 2 copy " .. field)
+        local okRead, value = pcall(function() return base[field] end)
+        if not okRead then
+            Log(tag .. "  read failed: " .. tostring(value))
+            if critical then return nil end
+        else
+            local okSet, err = pcall(function() clone[field] = value end)
+            if not okSet and type(value) == "userdata" then
+                -- Strings and soft paths may only be settable from their text form.
+                local text = ValueText(value)
+                if text and text ~= "" then
+                    Log(tag .. "  set as value failed (" .. tostring(err) .. "), trying text '" .. text .. "'")
+                    okSet, err = pcall(function() clone[field] = text end)
+                end
+            end
+            if not okSet then Log(tag .. "  set failed: " .. tostring(err)) end
+            if critical then
+                local want = ValueText(value)
+                local okBack, back = pcall(function() return clone[field] end)
+                local got = okBack and ValueText(back) or nil
+                if not okSet or want == nil or want == "" or got ~= want then
+                    Log(string.format("%s  %s did not copy (base '%s', copy '%s'); dropping this clone",
+                        tag, field, tostring(want), tostring(got)))
+                    return nil
+                end
+            end
+        end
+    end
+
+    Log(tag .. "step 3 name")
+    pcall(function() clone.DisplayName = FText(model.Name) end)
+    pcall(function() clone.Description = FText("Custom model (CustomBuilds). Built and saved as: " .. NameOf(base)) end)
+    Log(tag .. "ready")
+    Clones[key] = clone
+    return clone
+end
+
+local function NotifyUnlocked(datas)
+    for _, ui in ipairs(FindAllOf("BuildingUIAPI") or {}) do
+        if Valid(ui) and not IsDefault(ui) then
+            local ok, err = pcall(function() ui:OnBuildingsUnlocked(datas, true) end)
+            if not ok then Log("[DISCOVERY] OnBuildingsUnlocked call failed: " .. tostring(err)) end
+        end
+    end
+end
+
+local function SetupClone(cat, progress, base)
+    Log("Step: finding the base piece's menu section")
+    local col = FindCollection(cat, NameOf(base))
+    if not col then Log("No menu section found"); return false end
+    local clones = {}
+    for i, model in ipairs(Models) do
+        local clone = MakeClone(base, i, model)
+        if clone then
+            local already = false
+            pcall(function()
+                local arr = col.Collection
+                for k = 1, arr:GetArrayNum() do
+                    if SoftString(arr[k]):find(NameOf(clone), 1, true) then already = true; break end
+                end
+            end)
+            Log("Step: adding " .. model.Name .. " to the menu section")
+            if already or SoftAppend(col.Collection, clone) then
+                Log("Step: unlocking " .. model.Name)
+                pcall(function() progress.BuildingsUnlockedThatShouldNotPersist:Add(clone) end)
+                EntryModel[PathOf(clone)] = model
+                clones[#clones + 1] = clone
+            else
+                Log("Could not add " .. model.Name .. " to the menu")
+                return #clones > 0
+            end
+        end
+    end
+    if #clones > 0 and Config.NotifyMenu then
+        Log("Step: telling the build menu about the new entries")
+        NotifyUnlocked(clones)
+    end
+    Log(string.format("Added %d model entries to the build menu (base: %s)", #clones, NameOf(base)))
+    return #clones > 0
+end
+
+local function SetupReuse(candidates)
+    local n = math.min(#Models, #candidates)
+    for i = 1, n do
+        local d, model = candidates[i].Data, Models[i]
+        pcall(function() d.DisplayName = FText(model.Name) end)
+        EntryModel[PathOf(d)] = model
+        Log(string.format("Menu entry %s now places: %s", candidates[i].Name, model.Name))
+    end
+    if n < #Models then
+        Log(string.format("Only %d spare decorations found; %d models left out", n, #Models - n))
+    end
+    return n > 0
+end
+
+local function Setup()
+    if #Models == 0 then return end
+    local cat = StaticFindObject(CATALOGUE_PATH)
+    if not Valid(cat) then
+        for _, c in ipairs(FindAllOf("BuildPieceCatalogue") or {}) do
+            if Valid(c) and not IsDefault(c) then cat = c; break end
+        end
+    end
+    local progress = Progress()
+    if not Valid(cat) or not Valid(progress) then
+        Log("Build catalogue or player progress not found yet")
+        return
+    end
+    if ActiveMode and SetupFor == progress:GetAddress() then return end
+    ActiveMode = nil
+    local unlocked = UnlockedSet(progress)
+    local count = 0
+    for _ in pairs(unlocked) do count = count + 1 end
+    Log(string.format("[DISCOVERY] %d building pieces unlocked for this character", count))
+    local candidates = BaseCandidates(unlocked)
+    if #candidates == 0 then
+        Log("[DISCOVERY] No unlocked base found; trying locked ones (their entries may stay hidden)")
+        candidates = BaseCandidates(nil)
+    end
+    if #candidates == 0 then
+        Log("[DISCOVERY] No unlocked actor-type decoration found to use as a base. Nothing added.")
+        return
+    end
+    local names = {}
+    for i = 1, math.min(8, #candidates) do names[#names + 1] = candidates[i].Name end
+    Log("Base candidates: " .. table.concat(names, ", "))
+
+    local base = candidates[1].Data
+    local mode = Config.Mode
+    Log("Step: base is " .. NameOf(base) .. "; making a test copy")
+    if mode ~= "reuse" then
+        -- Always test on a scratch list first, so a failed try never leaves a broken entry
+        -- in the real menu.
+        local probe = MakeClone(base, 0, { Name = "Probe" })
+        local works = probe and SoftAppendWorks(cat, probe)
+        Log("New menu entries " .. (works and "work" or "not possible"))
+        if not works then
+            if mode == "clone" then
+                Log("Clone mode: not adding anything (set Mode = \"auto\" to allow renaming decorations)")
+                return
+            end
+            mode = "reuse"
+        else
+            mode = "clone"
+        end
+    end
+    local ok = false
+    if mode == "clone" then ok = SetupClone(cat, progress, base) end
+    if not ok and mode ~= "reuse" and Config.Mode == "auto" then
+        mode = "reuse"
+        ok = SetupReuse(candidates)
+    elseif mode == "reuse" then
+        ok = SetupReuse(candidates)
+    end
+    if ok then ActiveMode = mode; SetupFor = progress:GetAddress() end
+end
+
+-- =========================================================================
+-- Placement tracking
+-- =========================================================================
+local function ModelFor(data)
+    if not Valid(data) then return nil end
+    return EntryModel[PathOf(data)]
+end
+
+local function RestoreOrClaim(actor, tries)
+    if not Valid(actor) then return end
+    local preview = false
+    pcall(function() preview = actor.bIsPreview end)
+    if preview then
+        local model = nil
+        pcall(function() model = ModelFor(actor.BuildingPieceData) end)
+        model = model or Selected
+        if model then Swap(actor, model.Mesh, true) end
+        return
+    end
+    local id = 0
+    pcall(function() id = tonumber(actor.BuildingPieceID) or 0 end)
+    if id == 0 then
+        if (tries or 0) < 5 then Later(400, function() RestoreOrClaim(actor, (tries or 0) + 1) end) end
+        return
+    end
+    local loc = actor:K2_GetActorLocation()
+    local rec = Placed[tostring(id)]
+    if rec then
+        if Dist(rec, loc) <= Config.RestoreRadius then Swap(actor, rec.Mesh, false) end
+        return
+    end
+    local now = os.time()
+    for i = #Pending, 1, -1 do
+        local p = Pending[i]
+        if now - p.Time > Config.PendingSeconds then
+            table.remove(Pending, i)
+        elseif Dist(p, loc) <= Config.MatchRadius then
+            table.remove(Pending, i)
+            Placed[tostring(id)] = { X = loc.X, Y = loc.Y, Z = loc.Z, Mesh = p.Model.Mesh }
+            SavePlaced()
+            Swap(actor, p.Model.Mesh, false)
+            Log(string.format("Placed %s (piece %d)", p.Model.Name, id))
+            return
+        end
+    end
+end
+
+local function RestoreAll()
+    local n = 0
+    for _, a in ipairs(FindAllOf("BaseBuildingActor") or {}) do
+        if Valid(a) and not IsDefault(a) then
+            local id = 0
+            pcall(function() id = tonumber(a.BuildingPieceID) or 0 end)
+            local rec = Placed[tostring(id)]
+            if rec and Dist(rec, a:K2_GetActorLocation()) <= Config.RestoreRadius then
+                if Swap(a, rec.Mesh, false) then n = n + 1 end
+            end
+        end
+    end
+    return n
+end
+
+local function OnSelected(data)
+    Selected = ModelFor(data)
+end
+
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildModeComponent:OnPieceSelected", function(self, data)
+        OnSelected(Get(data))
+    end)
+end)
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildingUIAPI:CallOnBuildingItemSelected", function(self, data)
+        OnSelected(Get(data))
+    end)
+end)
+
+local SpawnHookSeen = false
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildModeComponent:Server_SpawnBuilding", function(self, index, transform)
+        if not SpawnHookSeen then SpawnHookSeen = true; Log("[DISCOVERY] Server_SpawnBuilding hook fires") end
+        local comp = Get(self)
+        local model = Selected
+        pcall(function()
+            local w = comp.CurrentlyPlacingPieceData
+            local d = nil
+            pcall(function() d = w:Get() end)
+            if not Valid(d) then pcall(function() d = w:get() end) end
+            if Valid(d) then model = ModelFor(d) end
+        end)
+        if not model then return end
+        local ok, err = pcall(function()
+            local t = Get(transform).Translation
+            Pending[#Pending + 1] = { Model = model, X = t.X, Y = t.Y, Z = t.Z, Time = os.time() }
+        end)
+        if not ok then Log("Could not read spawn transform: " .. tostring(err)) end
+    end)
+end)
+
+-- Every building actor that appears: previews get the selected model, placed pieces
+-- get their recorded model back, and a new piece where a model was placed is claimed.
+local okBeginPlay, errBeginPlay = pcall(RegisterBeginPlayPostHook, function(actor)
+    local a = Get(actor)
+    if not BaseActorClass or not Valid(BaseActorClass) then
+        BaseActorClass = StaticFindObject("/Script/Dominion.BaseBuildingActor")
+        if not Valid(BaseActorClass) then return end
+    end
+    local ok, is = pcall(function() return a:IsA(BaseActorClass) end)
+    if not ok or not is then return end
+    Later(250, function() RestoreOrClaim(a, 0) end)
+end)
+if not okBeginPlay then Log("RegisterBeginPlayPostHook unavailable: " .. tostring(errBeginPlay)) end
+
+-- The game resets materials/meshes when a ghost is built or changes state.
+for _, fn in ipairs({ "OnGhostStateChanged", "BP_OnBuildingConstructed", "OnRep_IsGhosted" }) do
+    pcall(function()
+        RegisterHook("/Script/Dominion.BaseBuildingActor:" .. fn, function(self)
+            local a = Get(self)
+            Later(250, function() RestoreOrClaim(a, 0) end)
+        end)
+    end)
+end
+
+-- World ready: add the menu entries and restore meshes around the player.
+RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
+    Later(4000, function()
+        local ok, err = pcall(Setup)
+        if not ok then Log("Setup error: " .. tostring(err)) end
+        local restored = RestoreAll()
+        if restored > 0 then Log(string.format("Restored %d placed models", restored)) end
+    end)
+end)
+
+-- Runs on the game thread already (console commands are handled there), so the
+-- answer can go straight back to the in-game console.
+RegisterConsoleCommandHandler("cb", function(full, params, out)
+    local function Say(msg)
+        Log(msg)
+        pcall(function() out:Log(ModName .. ": " .. msg) end)
+    end
+    if params[1] == "restore" then
+        Say(string.format("Restored %d placed models", RestoreAll()))
+        return true
+    end
+    if not ActiveMode then
+        local ok, err = pcall(Setup)
+        if not ok then Say("Setup error: " .. tostring(err)) end
+    end
+    local placed = 0
+    for _ in pairs(Placed) do placed = placed + 1 end
+    Say(string.format("Mode: %s | models: %d | placed on record: %d | selected: %s | pending: %d",
+        tostring(ActiveMode), #Models, placed, Selected and Selected.Name or "none", #Pending))
+    if not ActiveMode then Say("Not active yet. See [CustomBuilds] lines in UE4SS.log for why.") end
+    return true
+end)
+
+Log("Mod folder: " .. tostring(ModDir))
+LoadModels()
+LoadPlaced()
+Log("Ready: models are added to the build menu once you are in a world.")

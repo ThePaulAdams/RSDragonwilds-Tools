@@ -1,0 +1,1498 @@
+-- CustomBuilds (private, gitignored; single-player use)
+--
+-- Build viewer models with the game's own build mode, without creating any new game
+-- data (a Lua mod cannot safely create build pieces in this game: it crashed).
+--
+-- How: pick a model with the F10 console ("cb 3"), then place any small cheap
+-- decoration from the normal build menu. The game places, charges and saves that
+-- decoration as usual; the mod puts the model on top of it as its own prop and
+-- records "piece id + position -> model" in placed.txt. After a reload the props are
+-- put back on the pieces that still exist; when a piece is taken down its model goes
+-- too. Without the mod those pieces are just the decoration again: nothing is lost.
+-- (Most decorations are "lightweight" pieces with no object of their own to reskin,
+-- so the model is a separate prop rather than a mesh swap.)
+--
+-- Console (F10):
+--   cb            list the models and what is picked
+--   cb <n>        pick model n for the next pieces you place
+--   cb off        stop (pieces you place are normal again)
+--   cb undo       remove the model from the last piece you placed (the piece stays)
+--   cb restore    put models back / tidy up models whose piece is gone
+--   cb probe      report what the mod sees, for debugging
+--   cb spawn <n>  test: put model n in front of you (not saved); cb clear removes it
+--
+-- At world load it only puts back the models listed in placed.txt. No hotkeys, no loops.
+
+local UEHelpers = require("UEHelpers")
+
+local ModName = "CustomBuilds"
+local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))) end
+
+local Config = {
+    ZOffset = 0.0,          -- raise (+) or lower (-) models relative to the placed piece, in cm
+    -- The small decoration placed under each model (its data asset name). The model
+    -- browser selects it for you; the wood barrel is cheap and hidden by most models.
+    BasePiece = "BUILDPIECE_DA_BaseBuilding_Decoration_General_Wood_Barrel_01",
+}
+
+-- The working folder differs between setups, so look for models.txt in a few places.
+local ModDir = nil
+do
+    local dirs = {}
+    pcall(function()
+        local dir = debug.getinfo(1, "S").source:match("^@(.*[/\\])scripts[/\\]")
+        if dir then dirs[#dirs + 1] = dir end
+    end)
+    for _, d in ipairs({ "Mods/CustomBuilds/", "ue4ss/Mods/CustomBuilds/", "../Mods/CustomBuilds/",
+        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/CustomBuilds/" }) do
+        dirs[#dirs + 1] = d
+    end
+    for _, d in ipairs(dirs) do
+        local f = io.open(d .. "models.txt", "r")
+        if f then f:close(); ModDir = d; break end
+    end
+    ModDir = ModDir or dirs[#dirs]
+end
+
+-- =========================================================================
+-- Helpers
+-- =========================================================================
+local function Valid(o)
+    if not o then return false end
+    local ok, res = pcall(function() return o:IsValid() and o:GetAddress() ~= 0 end)
+    return ok and res
+end
+
+-- Both check Valid first: calling a method on an empty object reference crashes the
+-- game inside UE4SS, and pcall cannot catch that.
+local function NameOf(o)
+    local n = ""
+    if not Valid(o) then return n end
+    pcall(function() n = o:GetFName():ToString() end)
+    return n
+end
+
+local function ClassName(o)
+    local n = ""
+    if not Valid(o) then return n end
+    pcall(function() n = o:GetClass():GetFName():ToString() end)
+    return n
+end
+
+local function Get(p)
+    if type(p) == "userdata" or type(p) == "table" then
+        local ok, v = pcall(function() return p:get() end)
+        if ok and v ~= nil then return v end
+    end
+    return p
+end
+
+-- World tracking. Leaving a world (main menu, loading another save) destroys every
+-- actor the mod holds; calling anything on those crashes the game. So every delayed
+-- job checks it is still in the world it was scheduled in, and a world change makes
+-- the mod drop all its references without touching them.
+local OnWorldChange = {}   -- functions that drop references
+local LastWorld = nil
+
+local function WorldKey()
+    local key = nil
+    pcall(function()
+        local pc = UEHelpers.GetPlayerController()
+        if Valid(pc) then
+            local w = pc:GetWorld()
+            if Valid(w) then key = w:GetAddress() end
+        end
+    end)
+    return key
+end
+
+local function CheckWorld()
+    local key = WorldKey()
+    if key ~= LastWorld then
+        LastWorld = key
+        for _, f in ipairs(OnWorldChange) do pcall(f) end
+    end
+    return key
+end
+
+-- Runs fn on the game thread after ms, only if still in the same world.
+local function Later(ms, fn)
+    local key = WorldKey()
+    local function run()
+        if key == nil or CheckWorld() ~= key then return end
+        fn()
+    end
+    if ExecuteInGameThreadWithDelay then
+        ExecuteInGameThreadWithDelay(ms, run)
+    elseif ExecuteWithDelay then
+        ExecuteWithDelay(ms, function() ExecuteInGameThread(run) end)
+    end
+end
+
+local function Dist(a, b)
+    local dx, dy, dz = a.X - b.X, a.Y - b.Y, a.Z - b.Z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function Trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+
+-- Viewer path (RSDragonwilds/Content/Art/X.X) or game path (/Game/Art/X.X) -> game path.
+local function GamePath(p)
+    p = Trim(p):gsub("\\", "/")
+    if p:sub(1, 1) ~= "/" then
+        local root, rest = p:match("^([^/]+)/Content/(.+)$")
+        if root == "RSDragonwilds" then p = "/Game/" .. rest
+        elseif root then p = "/" .. root .. "/" .. rest
+        else p = "/" .. p end
+    end
+    if not p:match("%.[^/]+$") then p = p .. "." .. p:match("([^/]+)$") end
+    return p
+end
+
+-- =========================================================================
+-- Models and saved placements
+-- =========================================================================
+local Models = {}
+
+local AllModels = {}   -- every mesh from the viewer export (models-all.txt), with Group
+
+-- "name | mesh [| category]" lines. Meshes are only loaded when picked.
+local function ReadList(file, into, defaultGroup)
+    local f = io.open(ModDir .. file, "r")
+    if not f then return false end
+    for line in f:lines() do
+        if not line:match("^%s*#") and line:find("|", 1, true) then
+            local name, path, group = line:match("^(.-)|([^|]+)|(.+)$")
+            if not name then name, path = line:match("^(.-)|(.+)$") end
+            name, path = Trim(name or ""), GamePath(path or "")
+            if name ~= "" and path ~= "" then
+                into[#into + 1] = { Name = name, Mesh = path, Group = group and Trim(group) or defaultGroup }
+            end
+        end
+    end
+    f:close()
+    return true
+end
+
+local function LoadModels()
+    Models, AllModels = {}, {}
+    if not ReadList("models.txt", Models, "Favourites") then Log("models.txt not found in " .. ModDir) end
+    ReadList("models-all.txt", AllModels, "Other")
+    Log(string.format("%d favourites in models.txt, %d models in models-all.txt", #Models, #AllModels))
+end
+
+
+-- =========================================================================
+-- Saved placements: piece id -> position, rotation and model mesh
+-- =========================================================================
+local Placed = {}   -- id (string) -> { X, Y, Z, QX, QY, QZ, QW, Mesh }
+local Order = {}    -- ids in placement order this session (for cb undo)
+
+local NUM = "([-%d%.e]+)"
+
+local function LoadPlaced()
+    Placed = {}
+    local f = io.open(ModDir .. "placed.txt", "r")
+    if not f then return end
+    local n = 0
+    local pat = "^(%d+)|" .. string.rep(NUM .. "|", 7) .. "(.+)$"
+    for line in f:lines() do
+        local id, x, y, z, qx, qy, qz, qw, mesh = line:match(pat)
+        if id then
+            Placed[id] = { X = tonumber(x), Y = tonumber(y), Z = tonumber(z),
+                QX = tonumber(qx), QY = tonumber(qy), QZ = tonumber(qz), QW = tonumber(qw) }
+            -- mesh, then optional "|key=value;..." extras (older lines: "|<base mesh>")
+            local m, extra = mesh:match("^(.-)|(.+)$")
+            Placed[id].Mesh = m or mesh
+            if extra and extra:find("=", 1, true) then
+                for k, v in extra:gmatch("(%w+)=([^;]*)") do
+                    if k == "base" then Placed[id].Base = v ~= "" and v or nil
+                    elseif k == "pitch" then Placed[id].Pitch = tonumber(v)
+                    elseif k == "roll" then Placed[id].Roll = tonumber(v)
+                    elseif k == "scale" then Placed[id].Scale = tonumber(v) end
+                end
+            else
+                Placed[id].Base = extra
+            end
+            n = n + 1
+        end
+    end
+    f:close()
+    Log(string.format("%d placed models on record", n))
+end
+
+local function SavePlaced()
+    local f = io.open(ModDir .. "placed.txt", "w")
+    if not f then Log("Could not write placed.txt"); return end
+    f:write("# CustomBuilds: piece id|x|y|z|qx|qy|qz|qw|mesh|base=..;pitch=..;roll=..;scale=.. Written by the mod.\n")
+    for id, r in pairs(Placed) do
+        f:write(string.format("%s|%.2f|%.2f|%.2f|%.6f|%.6f|%.6f|%.6f|%s|base=%s;pitch=%g;roll=%g;scale=%g\n",
+            id, r.X, r.Y, r.Z, r.QX, r.QY, r.QZ, r.QW, r.Mesh, r.Base or "", r.Pitch or 0, r.Roll or 0, r.Scale or 1))
+    end
+    f:close()
+end
+
+-- =========================================================================
+-- Model props
+-- =========================================================================
+local MeshCache = {}
+
+local function LoadMesh(path)
+    local m = MeshCache[path]
+    if Valid(m) then return m end
+    m = StaticFindObject(path)
+    if not Valid(m) and LoadAsset then
+        pcall(LoadAsset, path)
+        m = StaticFindObject(path)
+        if not Valid(m) then
+            pcall(LoadAsset, (path:gsub("%.[^/]+$", "")))
+            m = StaticFindObject(path)
+        end
+    end
+    if Valid(m) then MeshCache[path] = m; return m end
+    Log("Mesh not found: " .. path)
+    return nil
+end
+
+local function Pawn()
+    local pc = UEHelpers.GetPlayerController()
+    if Valid(pc) and Valid(pc.Pawn) then return pc, pc.Pawn end
+end
+
+-- Spawns a static mesh actor showing `meshPath` at r (X,Y,Z, QX..QW). Returns the actor.
+local function SpawnModel(meshPath, r)
+    local _, pawn = Pawn()
+    if not pawn then return nil, "not in a world" end
+    local mesh = LoadMesh(meshPath)
+    if not mesh then return nil, "mesh not found: " .. meshPath end
+    local xf = {
+        Rotation = { X = r.QX or 0.0, Y = r.QY or 0.0, Z = r.QZ or 0.0, W = r.QW or 1.0 },
+        Translation = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset },
+        Scale3D = { X = 1.0, Y = 1.0, Z = 1.0 },
+    }
+    local gs = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local cls = StaticFindObject("/Script/Engine.StaticMeshActor")
+    local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
+    if not Valid(a) then return nil, "spawn failed" end
+    a = gs:FinishSpawningActor(a, xf, 1)
+    if not Valid(a) then return nil, "finish spawn failed" end
+    local c = a.StaticMeshComponent
+    pcall(function() c:SetMobility(2) end)
+    c:SetStaticMesh(mesh)
+    return a
+end
+
+-- Tilt (pitch), turn (roll) and size on top of the yaw the piece was placed with.
+local function YawOf(r)
+    local x, y, z, w = r.QX or 0, r.QY or 0, r.QZ or 0, r.QW or 1
+    return math.deg(math.atan(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+end
+
+-- Per-model default orientation (orient.txt: mesh|pitch|roll|scale). Fixing a model
+-- once, e.g. standing a castle entrance up, applies to all later placements of it.
+local Orient = {}
+
+local function LoadOrient()
+    Orient = {}
+    local f = io.open(ModDir .. "orient.txt", "r")
+    if not f then return end
+    for line in f:lines() do
+        local mesh, p, r, s = line:match("^([^#|][^|]*)|([-%d%.e]+)|([-%d%.e]+)|([-%d%.e]+)")
+        if mesh then Orient[mesh] = { Pitch = tonumber(p), Roll = tonumber(r), Scale = tonumber(s) } end
+    end
+    f:close()
+end
+
+local function SaveOrient()
+    local f = io.open(ModDir .. "orient.txt", "w")
+    if not f then return end
+    f:write("# CustomBuilds: default tilt/turn/size per model (mesh|pitch|roll|scale). Written by the mod.\n")
+    for mesh, o in pairs(Orient) do
+        f:write(string.format("%s|%g|%g|%g\n", mesh, o.Pitch, o.Roll, o.Scale))
+    end
+    f:close()
+end
+
+local function OrientFor(mesh)
+    local o = Orient[mesh]
+    return o and { Pitch = o.Pitch, Roll = o.Roll, Scale = o.Scale } or { Pitch = 0, Roll = 0, Scale = 1 }
+end
+
+local function ApplyTransform(a, r)
+    if not Valid(a) then return end
+    pcall(function() a:K2_SetActorRotation({ Pitch = r.Pitch or 0, Yaw = YawOf(r), Roll = r.Roll or 0 }, true) end)
+    local s = r.Scale or 1
+    pcall(function() a:SetActorScale3D({ X = s, Y = s, Z = s }) end)
+end
+
+local Props = {}   -- id (string) -> spawned actor
+OnWorldChange[#OnWorldChange + 1] = function() Props = {} end
+
+local function DestroyProp(id)
+    local a = Props[id]
+    if Valid(a) then pcall(function() a:K2_DestroyActor() end) end
+    Props[id] = nil
+end
+
+-- =========================================================================
+-- Pieces
+-- =========================================================================
+local function Manager()
+    for _, m in ipairs(FindAllOf("GlobalBuildingManager") or {}) do
+        if Valid(m) and not NameOf(m):find("^Default__") then return m end
+    end
+end
+
+local function LastPieceId()
+    local id = nil
+    pcall(function() id = tonumber(Manager().GeneratedPieceID) end)
+    return id
+end
+
+-- true / false, or nil when the game's piece list cannot be read.
+local function PieceExists(id)
+    local m = Manager()
+    if not m then return nil end
+    local ok, res = pcall(function() return m.BuildingPieces:Contains(tonumber(id)) end)
+    if ok then return res and true or false end
+    return nil
+end
+
+-- Put missing props back. A record is only dropped when its piece is gone AND the
+-- game just reported a piece destroyed at that spot (`at`): the game's piece list
+-- may not hold far-away pieces, so "not in the list" alone is not proof.
+-- Props this mod already spawned in this world before a reload of the mod: adopt
+-- them instead of spawning duplicates.
+local function AdoptExisting()
+    local missing = {}
+    for id, r in pairs(Placed) do
+        if not Valid(Props[id]) then missing[#missing + 1] = id end
+    end
+    if #missing == 0 then return end
+    for _, a in ipairs(FindAllOf("StaticMeshActor") or {}) do
+        if Valid(a) and NameOf(a):find("^StaticMeshActor_") then
+            local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
+            if ok and loc then
+                for _, id in ipairs(missing) do
+                    local r = Placed[id]
+                    if not Valid(Props[id]) and Dist(loc, { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset }) < 2 then
+                        local meshPath = ""
+                        pcall(function()
+                            local sm = a.StaticMeshComponent.StaticMesh
+                            if Valid(sm) then meshPath = sm:GetFullName() end
+                        end)
+                        if meshPath:find(r.Mesh:match("[^/]+$"), 1, true) then Props[id] = a end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function Restore(at)
+    local spawned, removed = 0, 0
+    pcall(AdoptExisting)
+    for id, r in pairs(Placed) do
+        local exists = PieceExists(id)
+        if exists == false and at and Dist(at, r) <= 300 then
+            DestroyProp(id)
+            Placed[id] = nil
+            removed = removed + 1
+        elseif exists == true and not Valid(Props[id]) then
+            local a, err = SpawnModel(r.Mesh, r)
+            if a then Props[id] = a; ApplyTransform(a, r); spawned = spawned + 1 else Log("Restore " .. id .. ": " .. tostring(err)) end
+        end
+    end
+    if removed > 0 then SavePlaced() end
+    return spawned, removed
+end
+
+-- =========================================================================
+-- Hiding the base decoration. Small decorations are drawn as instances of one mesh
+-- in the game's building instance components; the instance at the piece's exact
+-- spot is shrunk to nothing, which removes its look and its collision. The game
+-- rebuilds those components when an area streams back in, so a slow timer checks
+-- the records near the player and hides them again when needed.
+-- =========================================================================
+local HIDDEN_SCALE = 0.0001
+local Hidden = {}   -- id -> { Comp, Index } where the base instance was last hidden
+OnWorldChange[#OnWorldChange + 1] = function() Hidden = {} end
+
+-- Instanced mesh components that may draw building pieces: the game's own
+-- BuildingHISMC first, then any other (hierarchical) instanced component, skipping
+-- foliage and landscape grass.
+local function InstanceComps()
+    local list, seen = {}, {}
+    for _, cls in ipairs({ "BuildingHISMC", "HierarchicalInstancedStaticMeshComponent", "InstancedStaticMeshComponent" }) do
+        for _, c in ipairs(FindAllOf(cls) or {}) do
+            if Valid(c) and not seen[c:GetAddress()] then
+                seen[c:GetAddress()] = true
+                local owner = ""
+                pcall(function() owner = ClassName(c:GetOwner()) end)
+                if not owner:find("Foliage") and not owner:find("Landscape") and not owner:find("Grass") then
+                    list[#list + 1] = c
+                end
+            end
+        end
+    end
+    return list
+end
+
+local OutParamChecked = false
+local function InstanceTransform(comp, index)
+    local t = {}
+    local ok, err = pcall(function() comp:GetInstanceTransform(index, t, true) end)
+    if not OutParamChecked then
+        OutParamChecked = true
+        Log("[DISCOVERY] GetInstanceTransform: ok=" .. tostring(ok) .. " translation read=" .. tostring(t.Translation ~= nil)
+            .. (ok and "" or (" err=" .. tostring(err))))
+    end
+    if ok and t.Translation then return t end
+    return nil
+end
+
+-- Logs what instanced pieces are near a spot (used when a base could not be found).
+local function DescribeInstancesNear(r)
+    local comps = InstanceComps()
+    Log(string.format("[DISCOVERY] %d instanced components to search", #comps))
+    local shown = 0
+    for _, comp in ipairs(comps) do
+        local hits = nil
+        pcall(function() hits = comp:GetInstancesOverlappingSphere({ X = r.X, Y = r.Y, Z = r.Z }, 150.0, true) end)
+        local n = 0
+        pcall(function() n = hits:GetArrayNum() end)
+        if n > 0 and shown < 12 then
+            shown = shown + 1
+            local mesh, owner = "", ""
+            pcall(function() mesh = NameOf(comp.StaticMesh) end)
+            pcall(function() owner = ClassName(comp:GetOwner()) end)
+            local best = math.huge
+            for k = 1, n do
+                local t = InstanceTransform(comp, Get(hits[k]))
+                if t then best = math.min(best, Dist(t.Translation, r)) end
+            end
+            Log(string.format("[DISCOVERY]   %s on %s mesh %s: %d near, closest origin %.0f cm",
+                ClassName(comp), owner, mesh, n, best))
+        end
+    end
+    if shown == 0 then Log("[DISCOVERY]   no instanced component has instances within 1.5 m") end
+end
+
+local function IsShrunk(t)
+    local s = t.Scale3D
+    return s and math.abs(s.X) < 0.01
+end
+
+local function Shrink(comp, index, t)
+    local q, p = t.Rotation, t.Translation
+    return comp:UpdateInstanceTransform(index, {
+        Rotation = { X = q.X, Y = q.Y, Z = q.Z, W = q.W },
+        Translation = { X = p.X, Y = p.Y, Z = p.Z },
+        Scale3D = { X = HIDDEN_SCALE, Y = HIDDEN_SCALE, Z = HIDDEN_SCALE },
+    }, true, true, true)
+end
+
+-- Finds the instance whose origin is at the record's spot and shrinks it.
+-- Returns the base mesh name when found (stored so later searches are cheaper).
+local function HideBase(id, r)
+    local h = Hidden[id]
+    if h and Valid(h.Comp) then
+        local t = InstanceTransform(h.Comp, h.Index)
+        if t and Dist(t.Translation, r) < 5 then
+            if not IsShrunk(t) then Shrink(h.Comp, h.Index, t) end
+            return r.Base
+        end
+    end
+    Hidden[id] = nil
+    for _, comp in ipairs(InstanceComps()) do
+        if Valid(comp) and not NameOf(comp):find("^Default__") then
+            local meshName = ""
+            pcall(function() meshName = NameOf(comp.StaticMesh) end)
+            if not r.Base or meshName == r.Base then
+                local hits = nil
+                pcall(function() hits = comp:GetInstancesOverlappingSphere({ X = r.X, Y = r.Y, Z = r.Z }, 30.0, true) end)
+                local n = 0
+                pcall(function() n = hits:GetArrayNum() end)
+                for k = 1, n do
+                    local index = Get(hits[k])
+                    local t = InstanceTransform(comp, index)
+                    if t and Dist(t.Translation, r) < 5 then
+                        if not IsShrunk(t) then Shrink(comp, index, t) end
+                        Hidden[id] = { Comp = comp, Index = index }
+                        return meshName
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local HideTicking = false
+OnWorldChange[#OnWorldChange + 1] = function() HideTicking = false end
+
+-- Every 3 s: re-hide the bases of models within 80 m (areas stream back in).
+local function HideTick()
+    local _, pawn = Pawn()
+    if pawn then
+        local here = pawn:K2_GetActorLocation()
+        for id, r in pairs(Placed) do
+            -- A base that could not be found is only searched for again every 30 s.
+            if Dist(here, r) < 8000 and (not r.RetryAt or os.clock() >= r.RetryAt) then
+                local ok, base = pcall(HideBase, id, r)
+                r.RetryAt = (ok and base) and nil or (os.clock() + 30)
+            end
+        end
+    end
+    Later(3000, HideTick)
+end
+
+local function StartHideTimer()
+    if HideTicking then return end
+    HideTicking = true
+    Later(3000, HideTick)
+end
+
+-- =========================================================================
+-- Placement
+-- =========================================================================
+local Skin = nil   -- model picked with "cb <n>", or nil
+
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildModeComponent:Server_SpawnBuilding", function(self, index, transform)
+        CheckWorld()
+        if not Skin then return end
+        local model = Skin
+        local r = nil
+        local ok, err = pcall(function()
+            local t = Get(transform)
+            local p, q = t.Translation, t.Rotation
+            r = { X = p.X, Y = p.Y, Z = p.Z, QX = q.X, QY = q.Y, QZ = q.Z, QW = q.W, Mesh = model.Mesh }
+            local o = OrientFor(model.Mesh)
+            r.Pitch, r.Roll, r.Scale = o.Pitch, o.Roll, o.Scale
+        end)
+        if not ok then Log("Could not read the placement: " .. tostring(err)); return end
+        -- Check how well the ghost's source matches where the piece really goes.
+        pcall(function()
+            local h = PlacementHelper()
+            if h then
+                local l = h:K2_GetActorLocation()
+                Log(string.format("[DISCOVERY] build helper is %.0f cm from the placed spot", Dist(l, r)))
+            end
+        end)
+        local before = LastPieceId()
+        -- The piece gets its id while the game handles the placement; look shortly after.
+        Later(400, function()
+            local id = LastPieceId()
+            if not id or id == before then
+                Log("No new piece after placing (blocked spot?); nothing added")
+                return
+            end
+            local key = tostring(id)
+            local a, why = SpawnModel(r.Mesh, r)
+            if not a then Log("Could not show " .. model.Name .. ": " .. tostring(why)); return end
+            Props[key] = a
+            ApplyTransform(a, r)
+            Placed[key] = r
+            Order[#Order + 1] = key
+            local ok, base = pcall(HideBase, key, r)
+            if ok and base then
+                r.Base = base
+                Log(string.format("Placed %s on piece %s (base %s hidden)", model.Name, key, base))
+            else
+                Log(string.format("Placed %s on piece %s; [DISCOVERY] base not hidden yet: %s",
+                    model.Name, key, ok and "no instance at the spot" or tostring(base)))
+                pcall(DescribeInstancesNear, r)
+            end
+            SavePlaced()
+            StartHideTimer()
+        end)
+    end)
+end)
+
+-- =========================================================================
+-- Ghost: a see-through, non-colliding copy of the picked model that follows the
+-- build placement while a model is picked. Driven by a game-thread timer that only
+-- runs while a model is picked (cb off stops it). No LoopAsync.
+-- =========================================================================
+local Ghost = { Actor = nil, Mesh = nil, Comp = nil, Ticking = false, Warned = false }
+OnWorldChange[#OnWorldChange + 1] = function()
+    Ghost.Actor, Ghost.Mesh, Ghost.Comp, Ghost.Ticking = nil, nil, nil, false
+end
+
+local function Weak(w)
+    local o = nil
+    pcall(function() o = w:Get() end)
+    if not Valid(o) then pcall(function() o = w:get() end) end
+    return Valid(o) and o or nil
+end
+
+local function PlayerBuildComp()
+    if Valid(Ghost.Comp) then return Ghost.Comp end
+    local pc = UEHelpers.GetPlayerController()
+    local first = nil
+    for _, c in ipairs(FindAllOf("BuildModeComponent") or {}) do
+        if Valid(c) and not NameOf(c):find("^Default__") then
+            first = first or c
+            local owner = nil
+            pcall(function() owner = c:GetOwner() end)
+            if Valid(owner) and Valid(pc) and (owner:GetAddress() == pc:GetAddress()
+                or (Valid(pc.Pawn) and owner:GetAddress() == pc.Pawn:GetAddress())) then
+                Ghost.Comp = c
+                return c
+            end
+        end
+    end
+    Ghost.Comp = first
+    return first
+end
+
+-- The build helper actor the game moves to the placement spot, while placing.
+local function PlacementHelper()
+    local comp = PlayerBuildComp()
+    if not comp then return nil end
+    if not Weak(comp.CurrentlyPlacingPieceData) then return nil end
+    return Weak(comp.BuildingHelperActor)
+end
+
+local function GhostMaterial()
+    local m = nil
+    pcall(function() m = StaticFindObject("/Script/Dominion.Default__BuildingSettings").LoadedGhostMaterial end)
+    return Valid(m) and m or nil
+end
+
+local function HideGhost()
+    if Valid(Ghost.Actor) then pcall(function() Ghost.Actor:SetActorHiddenInGame(true) end) end
+end
+
+local function DestroyGhost()
+    if Valid(Ghost.Actor) then pcall(function() Ghost.Actor:K2_DestroyActor() end) end
+    Ghost.Actor, Ghost.Mesh = nil, nil
+end
+
+local function UpdateGhost()
+    local helper = PlacementHelper()
+    if not helper then
+        if not Ghost.Warned and Weak((PlayerBuildComp() or {}).CurrentlyPlacingPieceData) then
+            Ghost.Warned = true
+            Log("[DISCOVERY] Placing a piece but no build helper actor to follow; no ghost")
+        end
+        HideGhost()
+        return false
+    end
+    local loc, rot = helper:K2_GetActorLocation(), helper:K2_GetActorRotation()
+    if not Valid(Ghost.Actor) or Ghost.Mesh ~= Skin.Mesh then
+        DestroyGhost()
+        local a = SpawnModel(Skin.Mesh, { X = loc.X, Y = loc.Y, Z = loc.Z })
+        if not a then return true end
+        local c = a.StaticMeshComponent
+        pcall(function() c:SetCollisionEnabled(0) end)
+        pcall(function() c:SetCastShadow(false) end)
+        local mat = GhostMaterial()
+        if mat then
+            local n = 1
+            pcall(function() n = c:GetNumMaterials() end)
+            for i = 0, n - 1 do pcall(function() c:SetMaterial(i, mat) end) end
+        end
+        Ghost.Actor, Ghost.Mesh = a, Skin.Mesh
+    end
+    pcall(function() Ghost.Actor:SetActorHiddenInGame(false) end)
+    Ghost.Actor:K2_SetActorLocationAndRotation(
+        { X = loc.X, Y = loc.Y, Z = loc.Z + Config.ZOffset }, rot, false, {}, true)
+    return true
+end
+
+local function GhostTick()
+    if not Skin then
+        DestroyGhost()
+        Ghost.Ticking = false
+        return
+    end
+    -- Fast while a piece is being placed, slow otherwise.
+    local ok, placing = pcall(UpdateGhost)
+    if not ok then Log("Ghost: " .. tostring(placing)); placing = false end
+    Later(placing and 50 or 500, GhostTick)
+end
+
+local function StartGhost()
+    Ghost.Comp, Ghost.Warned = nil, false
+    if not Ghost.Ticking then
+        Ghost.Ticking = true
+        Later(50, GhostTick)
+    end
+end
+
+-- A piece was taken down or destroyed: tidy up its model.
+pcall(function()
+    RegisterHook("/Script/Dominion.CellBuildingManager:NetMulticast_PlayDestructionSFX", function(self, index, location)
+        CheckWorld()
+        local at = nil
+        pcall(function()
+            local l = Get(location)
+            at = { X = l.X, Y = l.Y, Z = l.Z }
+        end)
+        if not at then return end
+        Later(500, function() pcall(Restore, at) end)
+    end)
+end)
+
+-- World loaded: put the recorded models back.
+RegisterHook("/Script/Engine.PlayerController:ClientRestart", function()
+    CheckWorld()
+    Later(5000, function()
+        StartHideTimer()
+        if Skin then StartGhost() end
+        -- Props from a previous world are no longer valid, so Restore respawns them;
+        -- after a respawn in the same world they still are and are left alone.
+        local ok, spawned, removed = pcall(Restore)
+        if ok and (spawned > 0 or removed > 0) then
+            Log(string.format("Restored %d models (%d whose piece is gone removed)", spawned, removed))
+        elseif not ok then
+            Log("Restore error: " .. tostring(spawned))
+        end
+    end)
+end)
+
+local ShowHint, HideHint   -- defined with the adjust keys below
+local MenuProbeFn = nil   -- set below; runs once when the build menu first opens
+local MenuProbed = false
+
+-- =========================================================================
+-- Model browser: a panel of the game's own buttons shown next to the build menu
+-- while it is open. Click a model to pick it; the mod then selects the base
+-- decoration (Config.BasePiece) so placement starts straight away.
+-- =========================================================================
+local BUTTON_CLASS = "/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C"
+local LABEL_CLASS = "/Game/UI/Common/WBP_MainMenuTabButton.WBP_MainMenuTabButton_C"
+local VISIBLE, COLLAPSED = 0, 1
+local PER_PAGE = 16
+local TILE_CLASS = "/Game/UI/Building/GridNav/WBP_BuildingCategoryItemSlot.WBP_BuildingCategoryItemSlot_C"
+local TILE_COLS, TILE_ROWS, TILE_SIZE = 4, 4, 86
+local TILES_PER_PAGE = TILE_COLS * TILE_ROWS
+
+local UI = { Built = false, Visible = false, Title = nil, Category = nil, Rows = {}, RowModel = {},
+    Prev = nil, Next = nil, Off = nil, Import = nil, Page = 1, Cat = 1, Owned = {}, Tiles = {}, TileModel = {} }
+
+OnWorldChange[#OnWorldChange + 1] = function()
+    -- The widgets belonged to the old world's player and went with it.
+    UI.Built, UI.Visible, UI.Title, UI.Category, UI.Rows, UI.RowModel = false, false, nil, nil, {}, {}
+    UI.Prev, UI.Next, UI.Off, UI.Import, UI.Owned = nil, nil, nil, nil, {}
+    UI.Tiles, UI.TileModel = {}, {}
+end
+
+-- Widgets left behind by a previous load of this mod (hot reload).
+if ModRef then
+    local recorded = nil
+    pcall(function() recorded = ModRef:GetSharedVariable(ModName .. ".UI") end)
+    if type(recorded) == "string" and recorded ~= "" then
+        local names = {}
+        for n in recorded:gmatch("[^|]+") do names[n] = true end
+        ExecuteInGameThread(function()
+            for _, cls in ipairs({ "WBP_DomAllCapsButton_C", "WBP_MainMenuTabButton_C", "WBP_BuildingCategoryItemSlot_C" }) do
+                for _, w in ipairs(FindAllOf(cls) or {}) do
+                    if Valid(w) and names[w:GetFullName()] then pcall(function() w:RemoveFromParent() end) end
+                end
+            end
+        end)
+    end
+end
+
+local function Text(s)
+    return StaticFindObject("/Script/Engine.Default__KismetTextLibrary"):Conv_StringToText(s)
+end
+
+-- Two levels: a list of categories (Favourites = models.txt, Search results, then
+-- the viewer's folders), and the models of the chosen category.
+local SEARCH, FAVOURITES = "SEARCH RESULTS", "FAVOURITES"
+local SearchResults = {}
+
+local function Groups()
+    local counts, list = {}, {}
+    if #Models > 0 then list[#list + 1] = { Name = FAVOURITES, Count = #Models } end
+    if UI.Search then list[#list + 1] = { Name = SEARCH, Count = #SearchResults } end
+    for _, m in ipairs(AllModels) do counts[m.Group] = (counts[m.Group] or 0) + 1 end
+    local names = {}
+    for g in pairs(counts) do names[#names + 1] = g end
+    table.sort(names)
+    for _, g in ipairs(names) do list[#list + 1] = { Name = g, Count = counts[g] } end
+    return list
+end
+
+local function ModelsIn(group)
+    if group == FAVOURITES then return Models end
+    if group == SEARCH then return SearchResults end
+    local out = {}
+    for _, m in ipairs(AllModels) do
+        if m.Group == group then out[#out + 1] = m end
+    end
+    return out
+end
+
+local function Search(text)
+    local needle = text:lower()
+    SearchResults = {}
+    for _, list in ipairs({ Models, AllModels }) do
+        for _, m in ipairs(list) do
+            if m.Name:lower():find(needle, 1, true) or m.Mesh:lower():find(needle, 1, true) then
+                SearchResults[#SearchResults + 1] = m
+            end
+        end
+    end
+    UI.Search = text
+    UI.Group, UI.Page = SEARCH, 1
+    return #SearchResults
+end
+
+local function NewWidget(pc, path, z)
+    local cls = StaticFindObject(path)
+    if not Valid(cls) and LoadAsset then pcall(LoadAsset, path); cls = StaticFindObject(path) end
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    local w = lib:Create(pc, cls, pc)
+    w:SetIsFocusable(false)
+    w:SetVisibility(COLLAPSED)
+    w:AddToViewport(z)
+    UI.Owned[#UI.Owned + 1] = w
+    return w
+end
+
+local function Place(w, x, y, width, height)
+    w:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
+    w:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
+    w:SetPositionInViewport({ X = x, Y = y }, false)
+    w:SetDesiredSizeInViewport({ X = width, Y = height })
+end
+
+local function Label(w, s)
+    pcall(function()
+        if Valid(w.LabelText) then w.LabelText:SetText(Text(s)) else w:SetLabelText(Text(s)) end
+    end)
+end
+
+local function BuildUI(pc)
+    UI.Title = NewWidget(pc, LABEL_CLASS, 10050)
+    UI.Category = NewWidget(pc, BUTTON_CLASS, 10051)
+    for i = 1, PER_PAGE do UI.Rows[i] = NewWidget(pc, BUTTON_CLASS, 10051) end
+    UI.Prev = NewWidget(pc, BUTTON_CLASS, 10051)
+    UI.Next = NewWidget(pc, BUTTON_CLASS, 10051)
+    UI.Off = NewWidget(pc, BUTTON_CLASS, 10051)
+    UI.Import = NewWidget(pc, BUTTON_CLASS, 10051)
+    -- The build menu's own tiles for the models (picture + the game's hover look).
+    local okTiles, err = pcall(function()
+        for i = 1, TILES_PER_PAGE do UI.Tiles[i] = NewWidget(pc, TILE_CLASS, 10052) end
+    end)
+    if not okTiles then
+        UI.Tiles = {}
+        Log("[DISCOVERY] Build menu tiles unavailable, using text rows: " .. tostring(err))
+    end
+    local names = {}
+    for _, w in ipairs(UI.Owned) do names[#names + 1] = w:GetFullName() end
+    if ModRef then pcall(function() ModRef:SetSharedVariable(ModName .. ".UI", table.concat(names, "|")) end) end
+    UI.Built = true
+end
+
+local function Layout(pc)
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = lib:GetViewportSize(pc), lib:GetViewportScale(pc)
+    local vw, vh = size.X / dpi, size.Y / dpi
+    -- A centred window: picture tiles on the left, names on the right.
+    local gridW = TILE_COLS * (TILE_SIZE + 5)
+    local listW, rowH, h = 380, 30, 44
+    local total = gridW + 16 + listW
+    local x = math.floor(vw / 2 - total / 2)
+    local y = math.max(40, math.floor(vh / 2 - 380))
+    Place(UI.Title, x, y, total, h); y = y + h + 4
+    Place(UI.Category, x, y, total, h); y = y + h + 10
+    local top = y
+    local hasTiles = UI.Group and #UI.Tiles > 0
+    local listX = hasTiles and (x + gridW + 16) or x
+    local rowW = hasTiles and listW or total
+    for i = 1, PER_PAGE do Place(UI.Rows[i], listX, top + (i - 1) * (rowH + 2), rowW, rowH) end
+    for i, t in ipairs(UI.Tiles) do
+        local col, row = (i - 1) % TILE_COLS, math.floor((i - 1) / TILE_COLS)
+        Place(t, x + col * (TILE_SIZE + 5), top + row * (TILE_SIZE + 5), TILE_SIZE, TILE_SIZE)
+    end
+    y = top + math.max(PER_PAGE * (rowH + 2), TILE_ROWS * (TILE_SIZE + 5)) + 10
+    local third = math.floor((total - 8) / 3)
+    Place(UI.Prev, x, y, third, h)
+    Place(UI.Next, x + third + 4, y, third, h)
+    Place(UI.Off, x + 2 * (third + 4), y, third, h)
+    y = y + h + 4
+    Place(UI.Import, x, y, total, h)
+end
+
+local BasePiece   -- defined below with the base-selection code
+
+-- Thumbnails: CustomBuilds\thumbs\Game\...\SM_X.png (made by make-thumbs.ps1),
+-- loaded on demand as textures and kept while the tile shows them.
+local Thumbs = {}
+local function Thumb(mesh)
+    local tex = Thumbs[mesh]
+    if Valid(tex) then return tex end
+    local path = ModDir .. "thumbs" .. mesh:gsub("%.[^/]+$", "") .. ".png"
+    local f = io.open(path, "rb")
+    if not f then return nil end
+    f:close()
+    local ok, t = pcall(function()
+        return StaticFindObject("/Script/Engine.Default__KismetRenderingLibrary")
+            :ImportFileAsTexture2D(UEHelpers.GetPlayerController(), path)
+    end)
+    if ok and Valid(t) then Thumbs[mesh] = t; return t end
+    Log("[DISCOVERY] Could not load thumbnail " .. path .. ": " .. tostring(t))
+    return nil
+end
+
+local function SetTile(tile, m)
+    pcall(function() tile.ContainedItemDataRow = BasePiece() end)
+    local img = nil
+    pcall(function() img = tile.ItemImage end)
+    if not Valid(img) then return end
+    local tex = Thumb(m.Mesh)
+    if tex then
+        pcall(function() img:SetBrushFromTexture(tex, false) end)
+        img:SetVisibility(3) -- HitTestInvisible: picture only, clicks go to the tile
+    else
+        img:SetVisibility(COLLAPSED)
+    end
+    pcall(function() if Valid(tile.NewBuildingPieceIcon) then tile.NewBuildingPieceIcon:SetVisibility(COLLAPSED) end end)
+    pcall(function() if Valid(tile.IconFavourited) then tile.IconFavourited:SetVisibility(Skin == m and 3 or COLLAPSED) end end)
+end
+
+local function Refresh()
+    local pc = UEHelpers.GetPlayerController()
+    if Valid(pc) then Layout(pc) end
+    local items, title
+    local tiles = UI.Group and #UI.Tiles > 0
+    if UI.Group then
+        items = ModelsIn(UI.Group)
+        title = UI.Group == "SEARCH RESULTS" and ("SEARCH: " .. (UI.Search or "")) or UI.Group
+        Label(UI.Category, "< ALL CATEGORIES")
+    else
+        items = Groups()
+        title = "CUSTOM MODELS"
+        Label(UI.Category, "SEARCH: F10, TYPE cb find <WORDS>")
+    end
+    local per = tiles and TILES_PER_PAGE or PER_PAGE
+    local pages = math.max(1, math.ceil(#items / per))
+    if UI.Page > pages then UI.Page = pages end
+    if UI.Page < 1 then UI.Page = 1 end
+    UI.TitleText = string.format("%s  %d/%d", title:upper(), UI.Page, pages)
+    Label(UI.Title, UI.TitleText)
+    UI.RowModel, UI.TileModel = {}, {}
+    for i = 1, PER_PAGE do
+        local item = items[(UI.Page - 1) * per + i]
+        local row = UI.Rows[i]
+        if item then
+            UI.RowModel[i] = item
+            if UI.Group then
+                Label(row, (Skin == item and "> " or "") .. item.Name:upper())
+            else
+                Label(row, string.format("%s  (%d)", item.Name:upper(), item.Count))
+            end
+            row:SetVisibility(VISIBLE)
+        else
+            row:SetVisibility(COLLAPSED)
+        end
+    end
+    for i, tile in ipairs(UI.Tiles) do
+        local m = tiles and items[(UI.Page - 1) * per + i] or nil
+        if m then
+            UI.TileModel[i] = m
+            SetTile(tile, m)
+            tile:SetVisibility(VISIBLE)
+        else
+            tile:SetVisibility(COLLAPSED)
+        end
+    end
+    Label(UI.Prev, "< PREV")
+    Label(UI.Next, "NEXT >")
+    Label(UI.Off, Skin and ("STOP: " .. Skin.Name:upper()) or "NORMAL BUILDING")
+    Label(UI.Import, "IMPORT STARRED FROM VIEWER")
+end
+
+-- The window can be opened outside the build menu, so it shows the mouse cursor and
+-- lets the mouse reach the UI while open, and gives control back when closed.
+local InputTaken = false
+
+local function TakeMouse(pc)
+    local shown = false
+    pcall(function() shown = pc.bShowMouseCursor end)
+    if shown then return end
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    local ok = pcall(function()
+        pc.bShowMouseCursor = true
+        lib:SetInputMode_GameAndUIEx(pc, nil, 0, false, false)
+    end)
+    InputTaken = ok
+end
+
+local function GiveMouseBack(pc)
+    if not InputTaken then return end
+    InputTaken = false
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    pcall(function()
+        pc.bShowMouseCursor = false
+        lib:SetInputMode_GameOnly(pc, false)
+    end)
+end
+
+local function ShowUI()
+    local pc = UEHelpers.GetPlayerController()
+    if not Valid(pc) or #Models + #AllModels == 0 then return end
+    if not UI.Built then BuildUI(pc) end
+    for _, w in ipairs({ UI.Title, UI.Category, UI.Prev, UI.Next, UI.Off, UI.Import }) do w:SetVisibility(VISIBLE) end
+    UI.Visible = true
+    Refresh()
+    TakeMouse(pc)
+end
+
+local function HideUI()
+    if not UI.Built then return end
+    for _, w in ipairs(UI.Owned) do
+        if Valid(w) then pcall(function() w:SetVisibility(COLLAPSED) end) end
+    end
+    UI.Visible = false
+    local pc = UEHelpers.GetPlayerController()
+    if Valid(pc) then GiveMouseBack(pc) end
+end
+
+local BasePieceCache = nil
+BasePiece = function()
+    if Valid(BasePieceCache) then return BasePieceCache end
+    for _, d in ipairs(FindAllOf("BuildingPieceData") or {}) do
+        if Valid(d) and NameOf(d) == Config.BasePiece then BasePieceCache = d; return d end
+    end
+    return nil
+end
+
+-- Start placing the base decoration, the same way a click in the build menu does.
+local function SelectBase()
+    local base = BasePiece()
+    if not base then
+        Log("Base decoration " .. Config.BasePiece .. " not found; pick any small decoration yourself")
+        return false
+    end
+    for _, ui in ipairs(FindAllOf("BuildingUIAPI") or {}) do
+        if Valid(ui) and not NameOf(ui):find("^Default__") then
+            local ok, err = pcall(function() ui:CallOnBuildingItemSelected(base) end)
+            if ok then return true end
+            Log("Selecting the base decoration failed: " .. tostring(err))
+        end
+    end
+    return false
+end
+
+local function Pick(m)
+    if not LoadMesh(m.Mesh) then Log("Mesh not found for " .. m.Name); return end
+    Skin = m
+    StartGhost()
+    Log("Picked " .. m.Name)
+    HideUI()
+    if ShowHint then ShowHint() end
+    -- Enter build mode if needed, then start placing the base decoration.
+    local comp = PlayerBuildComp()
+    if comp and not Weak(comp.CurrentlyPlacingPieceData) then
+        pcall(function() comp:ForceEnterBuildMode() end)
+    end
+    Later(200, function()
+        if not SelectBase() then Log("Could not start placing; open the build menu and pick any small decoration") end
+    end)
+end
+
+-- Adds models from the viewer's "Export starred" file (starred-objects.json in
+-- Downloads or in this mod's folder) to models.txt, skipping ones already listed.
+local function PrettyName(path)
+    local n = path:match("([^/%.]+)%.[^/]*$") or path:match("([^/]+)$") or path
+    n = n:gsub("^SM_", ""):gsub("_", " ")
+    return n
+end
+
+local function ImportStarred()
+    local files = { ModDir .. "starred-objects.json" }
+    local home = os.getenv("USERPROFILE")
+    if home then files[#files + 1] = home .. "/Downloads/starred-objects.json" end
+    local have = {}
+    for _, m in ipairs(Models) do have[m.Mesh] = true end
+    local added, found = {}, false
+    for _, file in ipairs(files) do
+        local f = io.open(file, "r")
+        if f then
+            found = true
+            local body = f:read("*a")
+            f:close()
+            for p in body:gmatch('"objectPath"%s*:%s*"([^"]+)"') do
+                local mesh = GamePath(p)
+                if not have[mesh] then
+                    have[mesh] = true
+                    added[#added + 1] = { Name = PrettyName(mesh), Mesh = mesh }
+                end
+            end
+        end
+    end
+    if not found then return "No starred-objects.json in Downloads or the mod folder. Use Export starred in the viewer first." end
+    if #added == 0 then return "Nothing new to import" end
+    local f = io.open(ModDir .. "models.txt", "a")
+    if not f then return "Could not write models.txt" end
+    f:write("\n# Imported from the viewer's starred list\n")
+    for _, m in ipairs(added) do
+        f:write(m.Name .. " | " .. m.Mesh .. "\n")
+        Models[#Models + 1] = m
+    end
+    f:close()
+    return string.format("Imported %d models", #added)
+end
+
+-- Show the browser with the build menu and hide it with the menu.
+local function OnMenu(open)
+    CheckWorld()
+    Later(1, function()
+        -- The browser is its own window now (N key); the build menu no longer opens it.
+        local ok, err = true, nil
+        if open and not MenuProbed and MenuProbeFn then
+            MenuProbed = true
+            Later(700, function() pcall(MenuProbeFn, Log) end)
+        end
+        if not ok then Log("Browser: " .. tostring(err)); pcall(HideUI) end
+    end)
+end
+
+local MenuHookSeen = false
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildModeComponent:OnSelectionMenuVisibilityUpdated", function(self, open)
+        if not MenuHookSeen then MenuHookSeen = true; Log("[DISCOVERY] build menu visibility hook fires") end
+        OnMenu(Get(open) == true)
+    end)
+end)
+
+pcall(function()
+    RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
+        if not UI.Visible then return end
+        local ok, button = pcall(function() return context:get() end)
+        if not ok or not Valid(button) then return end
+        local addr = button:GetAddress()
+        local function is(w) return Valid(w) and w:GetAddress() == addr end
+        Later(1, function()
+            if is(UI.Prev) then
+                UI.Page = math.max(1, UI.Page - 1); Refresh()
+            elseif is(UI.Next) then
+                UI.Page = UI.Page + 1; Refresh()
+            elseif is(UI.Category) then
+                if UI.Group then UI.Group, UI.Page = nil, UI.CatPage or 1; Refresh() end
+            elseif is(UI.Off) then
+                Skin = nil; HideHint(); Refresh()
+            elseif is(UI.Import) then
+                local msg = ImportStarred()
+                Log(msg)
+                Label(UI.Import, msg:upper())
+                Refresh()
+                Label(UI.Import, msg:upper())
+            else
+                for i, tile in ipairs(UI.Tiles) do
+                    if is(tile) and UI.TileModel[i] then Pick(UI.TileModel[i]); return end
+                end
+                for i, row in ipairs(UI.Rows) do
+                    local item = UI.RowModel[i]
+                    if is(row) and item then
+                        if item.Count then
+                            UI.CatPage, UI.Group, UI.Page = UI.Page, item.Name, 1
+                            Refresh()
+                        else
+                            Pick(item)
+                        end
+                        break
+                    end
+                end
+            end
+        end)
+    end)
+end)
+
+-- =========================================================================
+-- Console
+-- =========================================================================
+local TestProps = {}
+OnWorldChange[#OnWorldChange + 1] = function() TestProps = {} end
+
+local function Probe(say)
+    local _, pawn = Pawn()
+    if not pawn then say("not in a world"); return end
+    local placing = nil
+    for _, comp in ipairs(FindAllOf("BuildModeComponent") or {}) do
+        pcall(function()
+            local w = comp.CurrentlyPlacingPieceData
+            local d = nil
+            pcall(function() d = w:Get() end)
+            if not Valid(d) then pcall(function() d = w:get() end) end
+            if Valid(d) then placing = d end
+        end)
+    end
+    say("Placing: " .. (placing and NameOf(placing) or "nothing selected"))
+    say("Last piece id: " .. tostring(LastPieceId()) .. " | piece list readable: "
+        .. tostring(PieceExists(LastPieceId() or 0) ~= nil))
+    local n, live = 0, 0
+    for id in pairs(Placed) do
+        n = n + 1
+        if Valid(Props[id]) then live = live + 1 end
+    end
+    say(string.format("Models on record: %d, showing now: %d, picked: %s", n, live, Skin and Skin.Name or "none"))
+end
+
+
+-- =========================================================================
+-- Adjusting the picked model. Keys only act while a model is picked:
+--   Up/Down     tilt 90 deg (Shift: 15 deg)     Left/Right  turn 90 deg (Shift: 15 deg)
+--   + / -       bigger / smaller                Home        reset
+-- The change becomes that model's default (orient.txt) and is applied to the latest
+-- placed copy of it straight away. N opens/closes the browser, Esc closes it.
+-- =========================================================================
+local Hint = { Widget = nil }
+OnWorldChange[#OnWorldChange + 1] = function() Hint.Widget = nil end
+
+local function HintText()
+    local o = OrientFor(Skin.Mesh)
+    return string.format("%s   TILT %d   TURN %d   SIZE %.2f\nARROWS: TILT/TURN 90 (SHIFT 15)   + / -: SIZE   HOME: RESET   N: MODELS",
+        Skin.Name:upper(), o.Pitch, o.Roll, o.Scale)
+end
+
+ShowHint = function()
+    if not Skin then return end
+    local pc = UEHelpers.GetPlayerController()
+    if not Valid(pc) then return end
+    if not Valid(Hint.Widget) then
+        local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+        local w = lib:Create(pc, StaticFindObject(LABEL_CLASS), pc)
+        if not Valid(w) then return end
+        w:SetIsFocusable(false)
+        w:AddToViewport(10060)
+        Hint.Widget = w
+    end
+    local lay = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = lay:GetViewportSize(pc), lay:GetViewportScale(pc)
+    Place(Hint.Widget, size.X / dpi / 2 - 470, 24, 940, 70)
+    Label(Hint.Widget, HintText())
+    Hint.Widget:SetVisibility(3) -- HitTestInvisible
+end
+
+HideHint = function()
+    if Valid(Hint.Widget) then pcall(function() Hint.Widget:SetVisibility(COLLAPSED) end) end
+end
+
+local function Adjust(dPitch, dRoll, scaleMul, reset)
+    if not Skin then return end
+    local o = OrientFor(Skin.Mesh)
+    if reset then
+        o = { Pitch = 0, Roll = 0, Scale = 1 }
+    else
+        o.Pitch = (o.Pitch + dPitch) % 360
+        o.Roll = (o.Roll + dRoll) % 360
+        o.Scale = math.max(0.05, math.min(20, o.Scale * scaleMul))
+    end
+    Orient[Skin.Mesh] = o
+    SaveOrient()
+    -- The latest placed copy of this model follows along.
+    local key = Order[#Order]
+    local r = key and Placed[key]
+    if r and r.Mesh == Skin.Mesh then
+        r.Pitch, r.Roll, r.Scale = o.Pitch, o.Roll, o.Scale
+        SavePlaced()
+        ApplyTransform(Props[key], r)
+    end
+    ShowHint()
+end
+
+local function Bind(key, mods, fn)
+    local run = function() ExecuteInGameThread(function()
+        local ok, err = pcall(fn)
+        if not ok then Log("Key: " .. tostring(err)) end
+    end) end
+    if mods then RegisterKeyBind(key, mods, run) else RegisterKeyBind(key, run) end
+end
+
+Bind(Key.UP_ARROW, nil, function() Adjust(90, 0, 1) end)
+Bind(Key.DOWN_ARROW, nil, function() Adjust(-90, 0, 1) end)
+Bind(Key.LEFT_ARROW, nil, function() Adjust(0, -90, 1) end)
+Bind(Key.RIGHT_ARROW, nil, function() Adjust(0, 90, 1) end)
+Bind(Key.UP_ARROW, { ModifierKey.SHIFT }, function() Adjust(15, 0, 1) end)
+Bind(Key.DOWN_ARROW, { ModifierKey.SHIFT }, function() Adjust(-15, 0, 1) end)
+Bind(Key.LEFT_ARROW, { ModifierKey.SHIFT }, function() Adjust(0, -15, 1) end)
+Bind(Key.RIGHT_ARROW, { ModifierKey.SHIFT }, function() Adjust(0, 15, 1) end)
+Bind(Key.OEM_PLUS, nil, function() Adjust(0, 0, 1.25) end)
+Bind(Key.OEM_MINUS, nil, function() Adjust(0, 0, 0.8) end)
+Bind(Key.HOME, nil, function() Adjust(0, 0, 1, true) end)
+Bind(Key.N, nil, function()
+    CheckWorld()
+    if UI.Visible then HideUI() else ShowUI() end
+end)
+Bind(Key.ESCAPE, nil, function() if UI.Visible then HideUI() end end)
+
+-- Hovering one of our tiles shows the model's name in the panel title.
+local function TileIndex(ctx)
+    if not UI.Visible then return nil end
+    local ok, tile = pcall(function() return ctx:get() end)
+    if not ok or not Valid(tile) then return nil end
+    for i, t in ipairs(UI.Tiles) do
+        if Valid(t) and t:GetAddress() == tile:GetAddress() then return i end
+    end
+    return nil
+end
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotHovered", function(ctx)
+        local i = TileIndex(ctx)
+        if i and UI.TileModel[i] then
+            local name = UI.TileModel[i].Name:upper()
+            Later(1, function() Label(UI.Title, name) end)
+        end
+    end)
+end)
+pcall(function()
+    RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotUnhovered", function(ctx)
+        if TileIndex(ctx) and UI.TitleText then
+            local text = UI.TitleText
+            Later(1, function() Label(UI.Title, text) end)
+        end
+    end)
+end)
+
+-- Writes the build menu's widget structure to the log (build menu must be open).
+MenuProbeFn = function(Say)
+    local function cls(o) return ClassName(o) end
+    local function dump(w, depth, maxDepth)
+        if not Valid(w) or depth > maxDepth then return end
+        local extra = ""
+        pcall(function() if w.GetText then extra = " text='" .. w:GetText():ToString() .. "'" end end)
+        Log(string.rep("  ", depth) .. cls(w) .. " " .. NameOf(w) .. extra)
+        local n = 0
+        pcall(function() n = w:GetChildrenCount() end)
+        for i = 0, math.min(n, 30) - 1 do
+            local c = nil
+            pcall(function() c = w:GetChildAt(i) end)
+            dump(c, depth + 1, maxDepth)
+        end
+        pcall(function()
+            local root = w.WidgetTree.RootWidget
+            if Valid(root) then dump(root, depth + 1, maxDepth) end
+        end)
+    end
+    local slots = FindAllOf("WBP_BuildingCategoryItemSlot_C") or {}
+    Say(string.format("%d build menu tiles", #slots))
+    local shown = 0
+    for _, s in ipairs(slots) do
+        local vis = false
+        pcall(function() vis = s:IsVisible() end)
+        if vis and shown < 2 then
+            shown = shown + 1
+            local d = nil
+            pcall(function() d = s.ContainedItemDataRow end)
+            Log("TILE data=" .. (Valid(d) and NameOf(d) or "?") .. " index=" .. tostring(s.CategorySlotIndex))
+            local p, chain = nil, {}
+            pcall(function() p = s:GetParent() end)
+            for _ = 1, 6 do
+                if not Valid(p) then break end
+                chain[#chain + 1] = cls(p) .. ":" .. NameOf(p)
+                local q = nil
+                pcall(function() q = p:GetParent() end)
+                p = q
+            end
+            Log("TILE parents: " .. table.concat(chain, " <- "))
+            dump(s, 0, 6)
+        end
+    end
+    for _, c in ipairs(FindAllOf("BuildingAccordionCategoryContent") or {}) do
+        local vis = false
+        pcall(function() vis = c:IsVisible() end)
+        if vis then
+            local n = 0
+            pcall(function() n = c.ContentContainer:GetChildrenCount() end)
+            Log(string.format("CATEGORY %s container=%s children=%d slotclass=%s", NameOf(c),
+                Valid(c.ContentContainer) and cls(c.ContentContainer) or "?", n,
+                NameOf(c.ItemSlotWidgetRef)))
+        end
+    end
+    for _, t in ipairs(FindAllOf("WBP_Building_NavigableTabButton_C") or {}) do
+        Log("TAB " .. NameOf(t))
+    end
+    Say("Build menu structure written to UE4SS.log")
+end
+
+RegisterConsoleCommandHandler("cb", function(full, params, out)
+    local function Say(msg)
+        Log(msg)
+        pcall(function() out:Log(ModName .. ": " .. msg) end)
+    end
+    CheckWorld()
+    local cmd = params[1] and params[1]:lower() or ""
+    local ok, err = pcall(function()
+        if cmd == "" or cmd == "list" then
+            for i, m in ipairs(Models) do Say(string.format("%d  %s", i, m.Name)) end
+            Say("Picked: " .. (Skin and Skin.Name or "none") .. ". Type cb <number>, then place a small decoration.")
+        elseif tonumber(cmd) then
+            local m = Models[tonumber(cmd)]
+            if not m then Say("No model " .. cmd); return end
+            if not LoadMesh(m.Mesh) then Say("Mesh not found for " .. m.Name); return end
+            Skin = m
+            StartGhost()
+            ShowHint()
+            Say("Picked " .. m.Name .. ". Place a small decoration from the build menu; the model appears on it. cb off to stop.")
+        elseif cmd == "off" then
+            Skin = nil
+            HideHint()
+            Say("Off. Pieces you place are normal again.")
+        elseif cmd == "undo" then
+            local key = table.remove(Order)
+            if not key then Say("Nothing placed this session"); return end
+            DestroyProp(key)
+            Placed[key] = nil
+            SavePlaced()
+            Say("Removed the model from piece " .. key .. " (the decoration itself stays)")
+        elseif cmd == "ui" then
+            if UI.Visible then HideUI() else ShowUI() end
+        elseif cmd == "menuprobe" then
+            MenuProbeFn(Say)
+        elseif cmd == "find" or cmd == "search" then
+            local words = {}
+            for i = 2, #params do words[#words + 1] = params[i] end
+            local text = table.concat(words, " ")
+            if text == "" then Say("Type: cb find <words>, e.g. cb find statue"); return end
+            local n = Search(text)
+            Say(string.format("%d models match \"%s\". Open the build menu to see them.", n, text))
+            if UI.Visible then Refresh() end
+        elseif cmd == "import" then
+            Say(ImportStarred())
+        elseif cmd == "restore" then
+            local spawned, removed = Restore()
+            Say(string.format("Restored %d models, removed %d whose piece is gone", spawned, removed))
+        elseif cmd == "probe" then
+            Probe(Say)
+        elseif cmd == "spawn" then
+            local m = Models[tonumber(params[2] or "1") or 1]
+            if not m then Say("No such model"); return end
+            local _, pawn = Pawn()
+            local loc, fwd = pawn:K2_GetActorLocation(), pawn:GetActorForwardVector()
+            local a, why = SpawnModel(m.Mesh, { X = loc.X + fwd.X * 400, Y = loc.Y + fwd.Y * 400, Z = loc.Z - 90 })
+            if a then TestProps[#TestProps + 1] = a; Say("Spawned " .. m.Name .. " 4 m in front of you (test only, not saved)")
+            else Say(tostring(why)) end
+        elseif cmd == "clear" then
+            for _, a in ipairs(TestProps) do if Valid(a) then pcall(function() a:K2_DestroyActor() end) end end
+            TestProps = {}
+            Say("Test props removed")
+        else
+            Say("Commands: cb, cb <n>, cb off, cb undo, cb restore, cb probe, cb spawn <n>, cb clear")
+        end
+    end)
+    if not ok then Say("Error: " .. tostring(err)) end
+    return true
+end)
+
+Log("Mod folder: " .. tostring(ModDir))
+LoadModels()
+LoadPlaced()
+LoadOrient()
+Log("Ready. F10 console: cb")
+
+-- Loaded (or reloaded) while already in a world: put models back and keep bases hidden.
+ExecuteInGameThread(function()
+    if WorldKey() then
+        CheckWorld()
+        pcall(Restore)
+        StartHideTimer()
+    end
+end)
