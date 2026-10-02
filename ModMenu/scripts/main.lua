@@ -1,3 +1,25 @@
+-- Hot-reload-safe timers: UE4SS 3.0 runs these on the game thread and cancels them
+-- when the mod unloads (LoopAsync's own thread can hang or crash a reload).
+-- Inside a GameLoop body we are already on the game thread, so ExecuteInGameThread
+-- runs its callback straight away; everywhere else (key binds) it still queues.
+local QueueInGameThread = ExecuteInGameThread
+local InGameLoop = false
+local function ExecuteInGameThread(fn, ...)
+    if InGameLoop then return fn() end
+    return QueueInGameThread(fn, ...)
+end
+local function GameLoop(ms, fn)
+    if not LoopInGameThreadWithDelay then return LoopAsync(ms, fn) end
+    local handle
+    handle = LoopInGameThreadWithDelay(ms, function()
+        InGameLoop = true
+        local ok, stop = pcall(fn)
+        InGameLoop = false
+        if not ok then print("[GameLoop] " .. tostring(stop) .. "\n") end
+        if ok and stop == true and handle then CancelDelayedAction(handle) end
+    end)
+    return handle
+end
 local UEHelpers = require("UEHelpers")
 local function Log(message) print("[ModMenu] " .. tostring(message) .. "\n") end
 
@@ -156,8 +178,8 @@ end
 
 local Mods = {
     {"AutoRun", "Auto Run", "Runs forward in the camera direction without holding a movement key.", "Num Lock toggle | WASD or Escape stop"},
-    {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap and resource markers.", "F6 map | F7 reload | F9 icons | PgUp/PgDn zoom | [ / ] size"},
-    {"QuickStack", "Quick Stack", "Stacks nearby items into nearby chests.", "G stack to nearby chests"},
+    {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap, resource markers, your death spot and teammates.", "F6 map | F7 reload | F9 icons | Ctrl+F6 clear death marker | PgUp/PgDn zoom | [ / ] size"},
+    {"QuickStack", "Quick Stack", "Sorts items into category chests, labels chests, and fetches station ingredients from a clickable list.", "G stack | Alt+G station fetch or nearby storage | Shift+F12 labels | Ctrl+G pack | Shift+G unpack"},
     {"EnhancedReticle", "Enhanced Reticle", "Adds configurable reticle colour and size controls.", "F4 toggle | F1 colour | F2 size"},
     {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance.", "E/V grab/place | Z log magnet | Shift+F6 radius"},
     {
@@ -166,6 +188,11 @@ local Mods = {
         "Adds staff power tiers, emissive glow, and legendary infusion.",
         "F5 power | F3 glow | F8 infusion | Shift+F8 summon"
     },
+    {"BulkOpen", "Bulk Open", "Opens every bag and pack in your backpack.", "Ctrl+F9 open all (again to stop)"},
+    {"HomeRecall", "Home Recall", "Teleports you home after a short channel.", "Ctrl+F7 recall | Alt+F7 set home"},
+    {"HotbarScroll", "Hotbar Scroll", "Mouse wheel cycles your hotbar slots.", "Mouse wheel"},
+    {"RaidWarning", "Raid Warning", "Warns you when enemies gather at your base.", "Automatic"},
+    {"RecipeLookup", "Recipe Lookup", "Lists recipes and what you can craft with nearby materials.", "Alt+F12 show / next page | Esc close"},
     {"ModMenu", "Toolkit Dashboard", "Shows installed Toolkit features and their bindings.", "Pause > Toolkit | Back to menu | Ctrl+F8 toggle"},
 }
 local function Statuses()
@@ -366,7 +393,7 @@ local function Update()
     -- Opening Pause must NEVER call Show: page creation requires user activation.
 end
 
-LoopAsync(250, function()
+GameLoop(250, function()
     if Pending then return false end
     Pending = true
     ExecuteInGameThread(function()

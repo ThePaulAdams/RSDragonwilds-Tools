@@ -46,12 +46,33 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 - Hover your mouse cursor over any item in your inventory or an open container and hold `[G]`.
 - The mod scans all nearby chests within 100m and retrieves every matching stack directly into your backpack, stopping when your backpack is full.
 - While hovering an item, nothing is sorted or moved until QuickStack knows whether you tapped (sort) or held (pull).
+- `[Alt + G]` while hovering does the same pull without holding.
 
 ### 6. Base Relocation Virtual Crate (`[Ctrl + G]` / `[Shift + G]`)
 - **Pack Base (`Ctrl + G`)**: Automatically sweeps all loose items on the ground within **150 meters** and packs them safely into a persistent virtual relocation crate.
 - **Unpack Base (`Shift + G`)**: Unpacks the virtual crate directly into nearby chests, auto-sorted by category.
 
-### 7. Strict Safety Safeguards & Furnace Protection
+### 7. Station Fetch (`[Alt + G]` at an open crafting station)
+- Open any station (smelter, loom, spinning wheel, tanner, sawmill, crafting bench...) and a **picker** opens by itself (or press `[Alt + G]`) on the right with one button per item in your nearby chests that the station can use (ingredients and fuel, with how many you have). Click an item to pull a stack of it into your backpack; click again for another stack. `MORE` pages through long lists, the top button or `[Alt + G]` closes it until you next open that station, and it hides itself when you close the station. At a crafting bench it follows the recipe you select. Set `StationFetchAutoOpen = false` to open it only with `[Alt + G]`. At a crafting bench it lists the selected recipe's ingredients. Set `StationFetchPicker = false` to skip the picker and use the rules below.
+- Items are pulled from nearby chests into your backpack, one stack of each chosen item by default (`StationFetchStacksPerItem`).
+- **You choose what is fetched, at every station:** processing stations (smelters, loom, spinning wheel, tanner, sawmill, charcoal kiln, grindstone, stonecutter, campfire, grill, cauldron, fermentation barrel) only top up what is already in the station. Put one iron ore in and `[Alt + G]` fetches iron ore; put a log in the fuel slot and it fetches logs; put both in for both. An empty station fetches nothing (set `StationFetchAllWhenEmpty = true` to fetch everything it accepts, or `StationFetchLoadedOnly = false` for the old behaviour). Hovering an item in your backpack and pressing `[Alt + G]` still pulls just that item. Crafting benches fetch only the ingredients of the recipe you have selected, and nothing if none is selected. With no station menu open, the nearest processing station within 6m is used. Each press logs a `[DISCOVERY]` line naming the station it found.
+- Only if a station has no readable list does it fall back to name hints: ore and coal for furnaces, bars for anvils, raw food for ranges and campfires, and so on.
+
+### 7b. Nearby Storage dialog (`[Alt + G]` with no station open)
+- Press `[Alt + G]` near your chests (in normal play, or with a chest or your inventory open) and a full-screen **NEARBY STORAGE** page opens, built from the game's own menu frame and buttons.
+- It lists every item type across all nearby chests as one grid, with the total count and how many chests hold it, plus category tabs (All, Food, Wood, Mining, Farming, Magic, Armour, Equipment, Recipes, Misc).
+- Click an item to take a stack of it into your backpack (the counts update). `< PREV` / `NEXT >` page through long lists, `DEPOSIT ALL (G)` runs the normal quick stack and sort, and `CLOSE`, `Esc` or `[Alt + G]` closes it.
+- Hovering an item when you press `[Alt + G]` still pulls just that item instead. Set `StorageDialog = false` to turn the dialog off.
+
+### 8. Chest Category Labels (`[Shift + F12]` toggle)
+- Floating labels ("Food", "Wood", "Mining", "Empty"...) above every chest within 30m, turned to face the camera.
+- Labels follow each chest's dominant category, so they update as you sort.
+
+### 9. Station Output Auto-Store
+- When a crafting station finishes and drops its product on the ground near you, the item is moved into the matching category chest.
+- Only items whose owner is a crafting station are touched; anything you drop yourself stays put.
+
+### 10. Strict Safety Safeguards & Furnace Protection
 - **Furnace & Crafting Station Blacklist**: Zero-tolerance filtering prevents blast furnaces, smelters, kilns, campfires, cooking ranges, anvils, and crafting benches from ever being identified as storage containers. Equipment (such as a Dragon Cursed Shield) is never deposited as fuel.
 - **Ammunition Protection**: Combat arrows, bolts, quivers, and ammunition are protected and kept in your backpack.
 - **Runes Protection**: Magic runes, rune pouches, and essence are protected from accidental depositing.
@@ -66,7 +87,9 @@ With a single hotkey, QuickStack upgrades nearby storage chests to maximum 48-sl
 | **`[G]` (Tap)** | Near Base / Chests | **Quick Stack & Category Sort**: Upgrades chests to 48 slots and organizes all items into dedicated category chests. |
 | **`[G]` (Tap)** | In the Wild | **Instant Harvest**: One-touch AoE harvest and ground loot collection. |
 | **`[G]` (Hold)** | Field / Roaming | **Continuous Ground Vacuum**: 40m continuous magnetism while sprinting. |
-| **`[G]` (Hold)** | Hovering Item | **Quick Pull**: Pulls all matching stacks from nearby chests into your backpack. |
+| **`[G]` (Hold) or `[Alt + G]`** | Hovering Item | **Quick Pull**: Pulls all matching stacks from nearby chests into your backpack. |
+| **`[Alt + G]`** | Open Crafting Station | **Station Fetch**: Pulls one stack of each ingredient the station accepts from nearby chests. |
+| **`[Shift + F12]`** | Anywhere | **Chest Labels**: Toggle floating category labels above nearby chests. |
 | **`[Ctrl + G]`** | Base Relocation | **Pack Base**: Vacuums all ground items within 150m into virtual Relocation Crate. |
 | **`[Shift + G]`** | Base Relocation | **Unpack Base**: Unpacks Relocation Crate items categorized into nearby chests. |
 
@@ -90,6 +113,18 @@ local Config = {
     OrganizeNearbyChests = true,  -- Consolidate and reorganize inter-chest items
     OverflowWhenCategoryFull = false, -- Prevent contaminating dedicated chests
     HoldDuration = 0.25,          -- Seconds to distinguish Hold from Tap
+    StationFetchStacksPerItem = 1,-- Stacks of each ingredient Station Fetch pulls
+    StationFetchMaxItemTypes = 12,-- Above this, a station counts as unfiltered and name hints are used
+    StationFetchPicker = true,    -- Alt+G at a station opens a clickable list of what to fetch
+    StationFetchAutoOpen = true,  -- The picker opens by itself when a station menu opens
+    StorageDialog = true,         -- Alt+G away from stations opens the Nearby Storage dialog
+    StorageStacksPerClick = 1,    -- Stacks taken per click in the dialog
+    StationFetchLoadedOnly = true,-- Furnaces: only fetch what is already in the ingredient/fuel slots
+    StationFetchAllWhenEmpty = false,-- Empty furnace: fetch everything it accepts (true) or nothing (false)
+    ChestLabels = true,           -- Floating category labels above chests (Shift+F12 toggles)
+    ChestLabelRadius = 3000.0,    -- Label chests within 30m
+    AutoStoreStationOutput = true,-- Move station products from the ground into category chests
+    StationOutputRadius = 3000.0, -- Only items that appear within 30m of you
     DebugLog = true               -- Detailed UE4SS logging
 }
 ```

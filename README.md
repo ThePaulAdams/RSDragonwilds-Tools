@@ -21,6 +21,14 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | [**TelekineticWoodcraft**](TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[Shift+F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`Shift+F6`). |
 | [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
 | [**AutoRun**](AutoRun/README.md) | Quality of Life | `[Num Lock]` | Camera-oriented continuous autorun with seamless natural input cancellation (WASD, menus, jumping). |
+| [**BulkOpen**](BulkOpen/README.md) | Quality of Life | `[Ctrl+F9]` | Opens every bag and pack in your backpack with one key press. |
+| [**HomeRecall**](HomeRecall/README.md) | Travel | `[Ctrl+F7]`, `[Alt+F7]` | Teleports you home (saved spot or bed) after a 3-second channel, with a cooldown. |
+| [**HotbarScroll**](HotbarScroll/README.md) | Controls | Mouse wheel | Mouse wheel cycles your hotbar slots. |
+| [**RaidWarning**](RaidWarning/README.md) | Base | Automatic | On-screen warning when enemies gather at your base. |
+| [**RecipeLookup**](RecipeLookup/README.md) | Crafting | `[Alt+F12]` | Lists recipes (for the open station) and which ones you can craft with what's in your bag and nearby chests. |
+| [**ToolkitProbe**](ToolkitProbe/README.md) | Developer | `[Ctrl+F12]` | Dumps game object details to a file so features that need game-internal names can be finished. |
+
+> **New in this release (untested in game):** BulkOpen, HomeRecall, HotbarScroll, RaidWarning, RecipeLookup and ToolkitProbe, plus QuickStack Station Fetch, chest labels and station output auto-store, and minimap death and teammate markers. Each logs `[DISCOVERY]` lines to `UE4SS.log` when a guess about the game's internals doesn't match.
 
 ---
 
@@ -35,6 +43,15 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
 | **`[Ctrl + G]`** | **Quick Stack** | **Pack Base:** Vacuum all ground items within 150m into virtual Relocation Crate |
 | **`[Shift + G]`** | **Quick Stack** | **Unpack Base:** Deposit all Relocation Crate items categorized into nearby chests |
+| **`[Alt + G]`** | **Quick Stack** | **Station Fetch:** At an open station, pick what to pull from nearby chests from a clickable list. Anywhere else near your chests it opens the **Nearby Storage** dialog: every chest as one list with category tabs. Hovering an item pulls that item instead |
+| **`[Shift + F12]`** | **Quick Stack** | Toggle floating category labels above nearby chests |
+| **`[Ctrl + F6]`** | **OSRS Minimap** | Clear the death marker |
+| **`[Ctrl + F9]`** | **Bulk Open** | Open every bag/pack in your backpack |
+| **`[Ctrl + F7]`** | **Home Recall** | Recall home (3s channel, moving cancels) |
+| **`[Alt + F7]`** | **Home Recall** | Save the current spot as home |
+| **Mouse wheel** | **Hotbar Scroll** | Cycle hotbar slots |
+| **`[Alt + F12]`** | **Recipe Lookup** | Show recipes / next page (`Esc` closes) |
+| **`[Ctrl + F12]`** | **Toolkit Probe** | Write a probe file for the toolkit author |
 | **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |
 | **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons on / off |
 | **`[F4]`** | **Enhanced Reticle** | Toggle high-visibility crosshair on / off |
@@ -43,7 +60,9 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 | **`[E]`** or **`[V]`** | **Telekinetic Woodcraft** | Telekinetically grab, carry, or drop targeted log / trunk |
 | **`[Z]`** | **Telekinetic Woodcraft** | [Log Magnet] Mass-gather all logs within 150m into a neat pile |
 | **`[Shift + F6]`** | **Telekinetic Woodcraft** | Cycle Splinter spell AoE radius multiplier (1x, 2.5x, 5.0x) |
-| **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game |
+| **`[Ctrl + R]`** | **UE4SS Engine** | Live hot-reload all Lua mods without restarting the game (every toolkit mod runs its timers on UE4SS 3.0 game-thread timers, which unload cleanly; installing changed files also reloads that mod on its own) |
+
+The new mods use F7, F9 and F12 chords (F11 toggles fullscreen and Shift+F11 windowed mode, so avoid them) because the game ignores Ctrl/Alt, so a Ctrl+letter chord also fires the game's own binding for that letter, and UE4SS already owns Ctrl+O (debug console), Ctrl+J (object dump), Ctrl+H (header dump) and Ctrl+Num5–9 (other dumpers). Numpad keys were ruled out because AutoRun's Num Lock toggle turns them into End/arrow keys. F12 on its own is Steam's default screenshot key, so these chords may also save a Steam screenshot unless that key is changed in Steam.
 
 ---
 
@@ -81,6 +100,7 @@ If you cloned or downloaded this repository:
    .\deploy.ps1 -Tool TelekineticWoodcraft
    .\deploy.ps1 -Tool ModMenu
    .\deploy.ps1 -Tool AutoRun
+   .\deploy.ps1 -Tool BulkOpen
    ```
 4. The script copies files to your game directory and automatically updates `mods.txt`.
 
@@ -88,7 +108,7 @@ If you cloned or downloaded this repository:
 
 ### Option B: Manual Installation
 
-1. Copy the desired mod folders (`OSRSMinimap`, `QuickStack`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`, `AutoRun`) into:
+1. Copy the desired mod folders (`OSRSMinimap`, `QuickStack`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`, `AutoRun`, `BulkOpen`, `HomeRecall`, `HotbarScroll`, `RaidWarning`, `RecipeLookup`, `ToolkitProbe`) into:
    ```
    <GameRoot>/RSDragonwilds/Binaries/Win64/ue4ss/Mods/
    ```
@@ -101,6 +121,12 @@ If you cloned or downloaded this repository:
    TelekineticWoodcraft : 1
    ModMenu : 1
    AutoRun : 1
+   BulkOpen : 1
+   HomeRecall : 1
+   HotbarScroll : 1
+   RaidWarning : 1
+   RecipeLookup : 1
+   ToolkitProbe : 0
    ```
 4. Launch the game through Steam normally!
 
@@ -119,13 +145,18 @@ If you cloned or downloaded this repository:
 - **48-Slot Highest Tier Upgrade**: Dynamically upgrades all detected chests and crates to 48 slots (`MaxSlotCount = 48`) with high-tier static meshes in-place.
 - **Wild Gathering & Ground Magnetism (`Hold G`)**: Sweeps a 40m radius while sprinting, auto-harvesting wild crops (dwellberries, onions, flax, herbs, fallen wood, stones) directly into your backpack.
 - **Base Relocation Virtual Crate (`Ctrl+G` / `Shift+G`)**: Pack all ground items within 150m into a persistent virtual crate, then unpack them organized into nearby chests with one keypress.
-- **Targeted QuickPull**: Hover any item in your inventory or chest and hold `G` to pull all matching stacks from all nearby chests directly into your inventory.
+- **Targeted QuickPull**: Hover any item in your inventory or chest and hold `G` (or press `Alt+G`) to pull all matching stacks from all nearby chests directly into your inventory.
+- **Station Fetch (`Alt+G`)**: With any station open, shows a clickable list of the ingredients and fuel it can use from nearby chests; click one to pull a stack into your backpack.
+- **Chest Labels (`Shift+F12`)**: Floating category labels above chests within 30m.
+- **Station Output Auto-Store**: Products a crafting station drops on the ground go straight into the matching category chest.
 - **Strict Safe Guards**: Zero-tolerance blacklist prevents any crafting stations, blast furnaces, smelters, kilns, or campfires from being touched. Hotbar, combat ammunition, and runes are 100% protected.
 
 ### 3. OSRS Minimap (`OSRSMinimap`)
 - **Compass Rotation**: Player icon remains locked pointing UP while the world map rotates and pans under you, matching traditional OSRS navigation.
 - **Resource Pin Tracking (`F9`)**: Real-time map pins for nearby high-tier ores (Runite, Adamant, Mithril, Coal, Blurite), trees (Yew, Maple, Willow, Oak), fishing spots, and elemental anima vents.
 - **Main Map Isolation**: Operates on an independent map layer—opening your full-screen World Map (`M`) is 100% unaffected.
+- **Death Marker**: Marks where you died on both maps; clears when you get back there or with `Ctrl+F6`.
+- **Teammate Markers**: Other players in your world appear on both maps, tinted by health.
 
 ### 4. Enhanced Reticle (`EnhancedReticle`)
 - **High-Contrast Aiming**: Replaces the faint default reticle with bright, crisp crosshairs for precise spellcasting and archery.
