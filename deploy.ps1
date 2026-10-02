@@ -12,6 +12,10 @@ if (-not (Test-Path $GamePath)) {
 
 $availableTools = @("OSRSMinimap", "QuickStack", "EnhancedReticle", "TelekineticWoodcraft", "ModMenu", "AutoRun")
 
+# Private, gitignored mods: deployable only where their folder exists locally.
+$privateTools = @("CraftAnything") | Where-Object { Test-Path (Join-Path $ToolsDir $_) }
+$availableTools = @($availableTools) + @($privateTools)
+
 $toDeploy = @()
 if ($Tool -eq "All") {
     $toDeploy = $availableTools

@@ -1,4 +1,6 @@
 # RSDragonwilds-Tools .gitignore
 *Staff*/
+# Private mods (kept only on the local PC; deploy.ps1 still installs them)
+CraftAnything/
 *.log
 *.tmp
