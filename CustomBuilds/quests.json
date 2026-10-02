@@ -1,0 +1,135 @@
+{
+  "quests": [
+    {
+      "id": "quest_doric_ore",
+      "npc": "SK_Doric_01",
+      "npcName": "Doric",
+      "title": "Doric's Iron Delivery",
+      "repeatable": "daily",
+      "description": "Gather 3 Iron Ore from the hills and deliver them to Doric.",
+      "startDialogue": {
+        "speaker": "Doric",
+        "text": "Greetings, traveller! My forge has run cold and I'm desperately short on iron. Could you fetch me 3 pieces of Iron Ore from the hills?",
+        "choices": [
+          { "text": "I can help with that.", "target": "accept" },
+          { "text": "Where can I find iron ore?", "target": "hint" },
+          { "text": "Not right now, Doric.", "target": "decline" }
+        ],
+        "branches": {
+          "hint": {
+            "speaker": "Doric",
+            "text": "Check the rocky slopes and outcrops along the hills east of the sanctuary. Look for dark mineral veins.",
+            "choices": [
+              { "text": "Understood, I'll go gather some.", "target": "accept" },
+              { "text": "Sounds like too much work right now.", "target": "decline" }
+            ]
+          },
+          "decline": {
+            "speaker": "Doric",
+            "text": "Fair enough. The forge will be here whenever you're ready.",
+            "action": "close"
+          },
+          "accept": {
+            "speaker": "Doric",
+            "text": "Splendid! Bring me 3 pieces of Iron Ore and I'll make sure you're well rewarded.",
+            "action": "start_quest"
+          }
+        }
+      },
+      "objective": {
+        "type": "item",
+        "item": "Iron Ore",
+        "count": 3,
+        "hudText": "Gather Iron Ore"
+      },
+      "progressDialogue": {
+        "speaker": "Doric",
+        "text": "Any luck finding that iron ore? Remember to search the rocky hills to the east.",
+        "choices": [
+          { "text": "Still working on it, Doric.", "action": "close" }
+        ]
+      },
+      "turnInDialogue": {
+        "speaker": "Doric",
+        "text": "Ah, look at the quality of this ore! Just what my anvil needed. Thank you, traveller! Here is your reward.",
+        "choices": [
+          { "text": "Glad to help, Doric!", "action": "complete_quest" }
+        ]
+      },
+      "completedDialogue": {
+        "speaker": "Doric",
+        "text": "Thanks again for the iron, friend! The forge has never burned brighter."
+      },
+      "rewards": {
+        "text": "10x Garou Pack & Dwarven Smithing Lore",
+        "item": "GarouPack",
+        "count": 10
+      }
+    },
+    {
+      "id": "quest_wise_chronicle",
+      "npc": "SK_WiseOldMan_01",
+      "npcName": "Wise Old Man",
+      "title": "The Missing Chronicle",
+      "description": "Recover 2 Lost Chronicle Pages scattered near the camp ruins.",
+      "startDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Ah, young adventurer! A sudden gust of wind scattered pages from my ancient chronicle across the sanctuary. Would you lend an old man a hand?",
+        "choices": [
+          { "text": "I'll track down your pages.", "target": "accept" },
+          { "text": "What were you writing about?", "target": "lore" },
+          { "text": "I'm busy at the moment.", "target": "decline" }
+        ],
+        "branches": {
+          "lore": {
+            "speaker": "Wise Old Man",
+            "text": "Fascinating tales of the Third Age! Dragons, ancient gods, and grand fortresses. Much too precious to be lost to the mud.",
+            "choices": [
+              { "text": "I will find them for you.", "target": "accept" },
+              { "text": "Maybe another time.", "target": "decline" }
+            ]
+          },
+          "decline": {
+            "speaker": "Wise Old Man",
+            "text": "A pity. Let us hope the wolves don't develop a taste for ancient history.",
+            "action": "close"
+          },
+          "accept": {
+            "speaker": "Wise Old Man",
+            "text": "Splendid! Bring back 2 of the scattered pages and I shall reward your diligence.",
+            "action": "start_quest"
+          }
+        }
+      },
+      "objective": {
+        "type": "item",
+        "item": "Chronicle Page",
+        "count": 2,
+        "hudText": "Recover Chronicle Pages"
+      },
+      "progressDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Have you found those pages yet? Look around the old walls and ruins nearby.",
+        "choices": [
+          { "text": "Still searching, sir.", "action": "close" }
+        ]
+      },
+      "turnInDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Marvellous work! Every page intact. You have the keen eye of a true adventurer. Take this for your troubles!",
+        "choices": [
+          { "text": "Thank you, Wise Old Man!", "action": "complete_quest" }
+        ]
+      },
+      "completedDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Back to my readings! Thank you once again for your assistance."
+      },
+      "rewards": {
+        "text": "200 Gold Coins & Wisdom of the Ages",
+        "item": "Gold Coins",
+        "count": 200
+      }
+    }
+  ]
+}

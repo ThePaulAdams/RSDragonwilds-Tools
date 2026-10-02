@@ -21,6 +21,13 @@ local UEHelpers = require("UEHelpers")
 
 local ModName = "CustomBuilds"
 local function Log(msg) print(string.format("[%s] %s\n", ModName, tostring(msg))) end
+LastConsoleOut = nil
+function Say(msg)
+    Log(msg)
+    if LastConsoleOut then
+        pcall(function() LastConsoleOut:Log(ModName .. ": " .. tostring(msg)) end)
+    end
+end
 
 local Config = {
     ZOffset = 0.0,          -- raise (+) or lower (-) models relative to the placed piece, in cm
@@ -101,6 +108,37 @@ local function GetPC()
     local pc = UEHelpers.GetPlayerController()
     if Valid(pc) then MyPC = pc end
     return pc
+end
+
+local GameplayStatics = nil
+local LastPauseCheckTime = 0
+local LastPauseState = false
+local function IsGamePaused(pc)
+    if not Valid(pc) then return false end
+    local now = os.clock()
+    if now - LastPauseCheckTime < 0.25 then
+        return LastPauseState
+    end
+    LastPauseCheckTime = now
+
+    local ok1, paused = pcall(function() return pc:IsPaused() end)
+    if ok1 and paused then
+        LastPauseState = true
+        return true
+    end
+
+    if not Valid(GameplayStatics) then
+        GameplayStatics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    end
+    if Valid(GameplayStatics) then
+        local ok2, gPaused = pcall(function() return GameplayStatics:IsGamePaused(pc) end)
+        if ok2 and gPaused then
+            LastPauseState = true
+            return true
+        end
+    end
+    LastPauseState = false
+    return false
 end
 
 local function WorldKey()
@@ -220,7 +258,9 @@ local function ParsePlaced(text)
                     if k == "base" then r.Base = v ~= "" and v or nil
                     elseif k == "pitch" then r.Pitch = tonumber(v)
                     elseif k == "roll" then r.Roll = tonumber(v)
-                    elseif k == "scale" then r.Scale = tonumber(v) end
+                    elseif k == "scale" then r.Scale = tonumber(v)
+                    elseif k == "portal" then r.Portal = v ~= "" and v or nil
+                    elseif k == "target" then r.Target = v ~= "" and v or nil end
                 end
             else
                 r.Base = extra
@@ -232,8 +272,11 @@ local function ParsePlaced(text)
 end
 
 local function RecordLine(id, r)
-    return string.format("%s|%.2f|%.2f|%.2f|%.6f|%.6f|%.6f|%.6f|%s|base=%s;pitch=%g;roll=%g;scale=%g",
+    local s = string.format("%s|%.2f|%.2f|%.2f|%.6f|%.6f|%.6f|%.6f|%s|base=%s;pitch=%g;roll=%g;scale=%g",
         id, r.X, r.Y, r.Z, r.QX, r.QY, r.QZ, r.QW, r.Mesh, r.Base or "", r.Pitch or 0, r.Roll or 0, r.Scale or 1)
+    if r.Portal and r.Portal ~= "" then s = s .. ";portal=" .. r.Portal end
+    if r.Target and r.Target ~= "" then s = s .. ";target=" .. r.Target end
+    return s
 end
 
 local function ReadFile(path)
@@ -312,13 +355,246 @@ local function RotToQuat(pitch, yaw, roll)
              Z = cr * cp * sy - sr * sp * cy, W = cr * cp * cy + sr * sp * sy }
 end
 
--- Spawns a static mesh actor showing `meshPath` at r (X, Y, Z, yaw as QX..QW or Yaw,
--- Pitch, Roll, Scale). Everything is set before the actor finishes spawning, so the
--- engine registers it with its final mesh, transform and draw settings: placed props
--- stay static and are never hidden by distance. `movable` is for the moving ghost.
+-- =========================================================================
+-- NPCs & Base Companions
+-- =========================================================================
+local BaseNPCs = {} -- [address] = { Actor = a, Blueprint = bpPath, Mesh = mesh, Name = name, Key = key }
+OnWorldChange[#OnWorldChange + 1] = function() BaseNPCs = {} end
+
+local NPCMeshToBlueprint = {
+    -- Doric
+    ["/Game/Art/Skeleton/NPC/Humanoid/Doric_01/SK_Doric_01.SK_Doric_01"] = "/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C",
+    -- Wise Old Man
+    ["/Game/Art/Skeleton/NPC/Humanoid/WiseOldMan_01/SK_WiseOldMan_01.SK_WiseOldMan_01"] = "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C",
+    -- Vannaka
+    ["/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01"] = "/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C",
+    -- Zanik
+    ["/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01"] = "/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C",
+    -- Cook (Goblin Chef)
+    ["/Game/Art/Skeleton/NPC/Humanoid/M_MED_Goblin_Ranged_01/SK_M_MED_Goblin_Ranged_01.SK_M_MED_Goblin_Ranged_01"] = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Cook.BP_NPC_Cook_C",
+    -- Death
+    ["/Game/Art/Skeleton/NPC/Humanoid/Death_01/SK_Death_01.SK_Death_01"] = "/Game/Gameplay/NPCs/BP_NPC_Death.BP_NPC_Death_C",
+    -- Postie Pete
+    ["/Game/Art/Skeleton/NPC/Hybrid/Postie_Pete_01/SK_Postie_Pete_01.SK_Postie_Pete_01"] = "/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C",
+    -- Chicken
+    ["/Game/Art/Skeleton/NPC/Avian/Chicken_01/SK_Chicken_01.SK_Chicken_01"] = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Chicken.BP_NPC_Quest_Chicken_C",
+    -- Cow
+    ["/Game/Art/Skeleton/NPC/Creatures/Cow_01/SK_Cow_01.SK_Cow_01"] = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Cow.BP_NPC_Quest_Cow_C",
+    -- Garou (Elder Garou & Moon Garou variants)
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_01.SK_M_MED_MoonGarou_01_Outfit_01"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_02.SK_M_MED_MoonGarou_01_Outfit_02"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_03.SK_M_MED_MoonGarou_01_Outfit_03"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_04.SK_M_MED_MoonGarou_01_Outfit_04"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_05.SK_M_MED_MoonGarou_01_Outfit_05"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_07.SK_M_MED_MoonGarou_01_Outfit_07"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_08.SK_M_MED_MoonGarou_01_Outfit_08"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    -- Chinchompas
+    ["/Game/Art/Skeleton/NPC/Creatures/Chinchompa_01/SK_Chinchompa_01.SK_Chinchompa_01"] = "/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+    ["/DowdunReach/Art/Skeleton/NPC/Creatures/Chinchompa_Carnivorous_01/SK_Chinchompa_Carnivorous_01.SK_Chinchompa_Carnivorous_01"] = "/Game/Gameplay/AI/Chinchompa/BP_AI_Chinchompa_Character.BP_AI_Chinchompa_Character_C",
+    -- Base Props & Training
+    ["/Game/Art/Skeleton/NPC/Mechanical/TrainingDummy_01/SK_TrainingDummy_01.SK_TrainingDummy_01"] = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_TrainingDummy.BP_BaseBuilding_TrainingDummy_C",
+    ["/Game/Art/Skeleton/NPC/Mechanical/ArmourMannequin_01/SK_ArmourMannequin_01.SK_ArmourMannequin_01"] = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_ArmourMannequin.BP_BaseBuilding_ArmourMannequin_C",
+    -- Guard & Quest NPCs
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_KotHaar_Ket_01/SK_M_MED_KotHaar_Ket_01.SK_M_MED_KotHaar_Ket_01"] = "/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
+    ["/ScornedWilderness/Art/Skeleton/NPC/Humanoid/Zilyana_01/SK_Zilyana_01.SK_Zilyana_01"] = "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/Icthlarin_01/SK_Icthlarin_01.SK_Icthlarin_01"] = "/UmbralSands/Gameplay/Quests/NPCs/BP_NPC_Icthlarin.BP_NPC_Icthlarin_C",
+}
+
+local NPCBarks = {
+    doric = {
+        "Doric: Welcome to my workshop! What are we crafting today?",
+        "Doric: A solid foundation. That's the secret to any good structure.",
+        "Doric: Need an anvil? I've seen some fine ore in the hills nearby.",
+        "Doric: Keep hammering away! Great things take time.",
+    },
+    wise = {
+        "Wise Old Man: Ah, a fine fortress you've constructed here!",
+        "Wise Old Man: Mind if I take a look around? I won't touch the gold, promise...",
+        "Wise Old Man: Have you checked on the bank lately? Just curious.",
+        "Wise Old Man: Back in my adventuring days, we had to build our own castles!",
+    },
+    vannaka = {
+        "Vannaka: Stand tall, warrior! Even in your sanctuary, vigilance is key.",
+        "Vannaka: A well-defended perimeter will keep the wilderness beasts at bay.",
+        "Vannaka: Ready for your next task? The realm always needs defenders.",
+    },
+    zanik = {
+        "Zanik: It's so bright up here! Much better than the tunnels.",
+        "Zanik: Wow, you built all of this? The surface world is incredible!",
+        "Zanik: Let me know if you need any help exploring!",
+    },
+    cook = {
+        "Cook: Ah, the kitchen is coming along nicely! Any extra cabbage?",
+        "Cook: If you smell something burning... it's definitely not my soufflé.",
+        "Cook: A true adventurer fights on a full stomach!",
+    },
+    death = {
+        "Death: DO NOT MIND ME. I AM MERELY VISITING... FOR NOW.",
+        "Death: YOUR ARCHITECTURE IS SURPRISINGLY PERMANENT.",
+        "Death: I WILL SEE YOU SOON. BUT NOT TODAY.",
+    },
+    pete = {
+        "Postie Pete: Mail call! Nothing for you today, but lovely base you have here!",
+        "Postie Pete: Neither rain nor wilderness dragons shall stop the post!",
+    },
+    garou = {
+        "Elder Garou: *The wolf elder lowers his head in deep respect for your domain.*",
+        "Elder Garou: The moon watches over our pack... and over your hearth.",
+    },
+    chin = {
+        "Chinchompa: *Squeak! The fluffy creature nuzzles against your boots.*",
+        "Chinchompa: *Sniffs the air excitedly and wiggles its whiskers.*",
+    },
+    cow = {
+        "Cow: Mooooo! *Chews peacefully on some fresh grass.*",
+    },
+    chicken = {
+        "Chicken: Bwuuuk bwuk bwuk! *Pecks at the floor.*",
+    },
+    dummy = {
+        "Training Dummy: *Stands firm, ready for combat practice.*",
+    },
+    mannequin = {
+        "Armour Mannequin: *Holds your gear proudly on display.*",
+    },
+    zilyana = {
+        "Commander Zilyana: Saradomin's light shines upon this bastion.",
+    },
+    guard = {
+        "Guard: Keep the peace, citizen. This base is under my watch.",
+    }
+}
+
+local function ResolveNPCBlueprint(path)
+    if not path then return nil end
+    if NPCMeshToBlueprint[path] then return NPCMeshToBlueprint[path] end
+    local lower = path:lower()
+    for k, v in pairs(NPCMeshToBlueprint) do
+        if k:lower() == lower or k:lower():find(lower, 1, true) then return v end
+    end
+    if path:find("BP_NPC_") or path:find("_Character_C") then return path end
+    return nil
+end
+
+local function TraceGroundZ(x, y, z, ignoreActor)
+    local pc, pawn = Pawn()
+    local world = nil
+    if Valid(pc) then pcall(function() world = pc:GetWorld() end) end
+    if not Valid(world) and Valid(pawn) then pcall(function() world = pawn:GetWorld() end) end
+    if not Valid(world) then return nil end
+
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if not Valid(ksl) then return nil end
+
+    local start = { X = x, Y = y, Z = z + 500.0 }
+    local finish = { X = x, Y = y, Z = z - 2000.0 }
+    local outHit = {}
+    local ignoreList = ignoreActor and { ignoreActor } or {}
+    local ok, hit = pcall(function()
+        return ksl:LineTraceSingle(world, start, finish, 0, false, ignoreList, 0, outHit, false, {}, {}, 0.0)
+    end)
+    if ok and hit and outHit.Location then
+        return outHit.Location.Z
+    end
+    return nil
+end
+
+local function SpawnNPC(bpPath, r, movable, origMesh)
+    local pc, pawn = Pawn()
+    if not pawn then return nil, "not in world" end
+    local cls = StaticFindObject(bpPath)
+    if not Valid(cls) and LoadAsset then
+        pcall(LoadAsset, bpPath)
+        cls = StaticFindObject(bpPath)
+        if not Valid(cls) then
+            pcall(LoadAsset, (bpPath:gsub("%.[^/]+$", "")))
+            cls = StaticFindObject(bpPath)
+        end
+    end
+    if not Valid(cls) then return nil, "NPC class not found: " .. bpPath end
+
+    local yaw = r.Yaw
+    if not yaw then
+        local x, y, z, w = r.QX or 0, r.QY or 0, r.QZ or 0, r.QW or 1
+        yaw = math.deg(math.atan(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+    end
+    local s = r.Scale or 1
+
+    -- Terrain raycast snapping to prevent floating or sunken actors on slopes
+    local spawnZ = r.Z + Config.ZOffset
+    local groundZ = TraceGroundZ(r.X, r.Y, r.Z, pawn)
+    if groundZ then
+        spawnZ = groundZ + Config.ZOffset
+    end
+
+    local xf = {
+        Rotation = RotToQuat(r.Pitch or 0, yaw, r.Roll or 0),
+        Translation = { X = r.X, Y = r.Y, Z = spawnZ },
+        Scale3D = { X = s, Y = s, Z = s },
+    }
+    local gs = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    -- CollisionHandlingOverride: 2 = AdjustIfPossibleButAlwaysSpawn
+    local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 2, nil, 0)
+    if not Valid(a) then
+        a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
+    end
+    if not Valid(a) then return nil, "deferred spawn failed" end
+
+    -- Enable movable root mobility so rotation & interaction positioning are permitted
+    pcall(function()
+        if Valid(a.RootComponent) then
+            a.RootComponent:SetMobility(2) -- EComponentMobility::Movable
+        end
+    end)
+
+    -- Automatically hide tutorial placeholder boxes/crates baked into FTUE character blueprints
+    for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
+        pcall(function()
+            local comp = a[prop]
+            if Valid(comp) then comp:SetVisibility(false, false) end
+        end)
+    end
+
+    -- Companion identification tag
+    pcall(function() a.Tags:Add("BaseCompanion") end)
+
+    a = gs:FinishSpawningActor(a, xf, 0)
+    if not Valid(a) then return nil, "finish spawn failed" end
+
+    -- Isolate companion from vanilla Fellhollow quest trees
+    pcall(function()
+        local conv = a:GetComponentByClass(StaticFindObject("/Script/Dominion.DomConversationParticipant"))
+        if Valid(conv) then
+            conv:K2_DestroyComponent(conv)
+        end
+    end)
+
+    -- Register companion for interaction
+    local addr = a:GetAddress()
+    local name = a:GetFName():ToString()
+    local key = bpPath:match("BP_NPC_([%w_]+)") or bpPath:match("([^/%.]+)_C$") or "npc"
+    BaseNPCs[addr] = {
+        Actor = a,
+        Blueprint = bpPath,
+        Mesh = origMesh or r.Mesh,
+        Name = name,
+        Key = key:lower()
+    }
+
+    return a
+end
+
+-- Spawns a static mesh actor (or SkeletalMesh / NPC Character) showing `meshPath` at r
 local function SpawnModel(meshPath, r, movable)
     local _, pawn = Pawn()
     if not pawn then return nil, "not in a world" end
+
+    -- 1. Check if mapped to a living NPC Character Blueprint
+    local bpPath = ResolveNPCBlueprint(meshPath)
+    if bpPath then
+        return SpawnNPC(bpPath, r, movable, meshPath)
+    end
+
     local mesh = LoadMesh(meshPath)
     if not mesh then return nil, "mesh not found: " .. meshPath end
     local yaw = r.Yaw
@@ -333,11 +609,34 @@ local function SpawnModel(meshPath, r, movable)
         Scale3D = { X = s, Y = s, Z = s },
     }
     local gs = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+
+    -- 2. Check if it's a Skeletal Mesh
+    local isSkel = false
+    pcall(function() isSkel = mesh:GetClass():GetFName():ToString() == "SkeletalMesh" end)
+    if isSkel then
+        local cls = StaticFindObject("/Script/Engine.SkeletalMeshActor")
+        local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
+        if not Valid(a) then return nil, "skel spawn failed" end
+        local c = a.SkeletalMeshComponent
+        if movable then
+            pcall(function() c:SetMobility(2) end)
+            pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
+        end
+        pcall(function() c:SetSkeletalMeshAsset(mesh) end)
+        pcall(function() c.bNeverDistanceCull = true end)
+        a = gs:FinishSpawningActor(a, xf, 1)
+        return a
+    end
+
+    -- 3. Standard StaticMeshActor
     local cls = StaticFindObject("/Script/Engine.StaticMeshActor")
     local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
     if not Valid(a) then return nil, "spawn failed" end
     local c = a.StaticMeshComponent
-    if movable then pcall(function() c:SetMobility(2) end) end
+    if movable then
+        pcall(function() c:SetMobility(2) end)
+        pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
+    end
     pcall(function() c:SetStaticMesh(mesh) end)
     pcall(function() c.bNeverDistanceCull = true end)
     pcall(function() c.bAllowCullDistanceVolume = false end)
@@ -404,7 +703,10 @@ OnWorldChange[#OnWorldChange + 1] = function() Props = {} end
 
 local function DestroyProp(id)
     local a = Props[id]
-    if Valid(a) then pcall(function() a:K2_DestroyActor() end) end
+    if Valid(a) then
+        BaseNPCs[a:GetAddress()] = nil
+        pcall(function() a:K2_DestroyActor() end)
+    end
     Props[id] = nil
 end
 
@@ -437,6 +739,185 @@ end
 -- may not hold far-away pieces, so "not in the list" alone is not proof.
 -- Props this mod already spawned in this world before a reload of the mod: adopt
 -- them instead of spawning duplicates.
+CompanionClassNames = {
+    "BP_NPC_Doric_C",
+    "BP_NPC_Doric",
+    "BP_NPC_WiseOldMan_C",
+    "BP_NPC_WiseOldMan",
+    "BP_NPC_Vannaka_Fellhollow_C",
+    "BP_NPC_Vannaka_Fellhollow",
+    "BP_NPC_Zanik_Fellhollow_C",
+    "BP_NPC_Zanik_Fellhollow",
+    "BP_NPC_Cook_C",
+    "BP_NPC_Cook",
+    "BP_NPC_Death_C",
+    "BP_NPC_Death",
+    "BP_NPC_PostiePete_C",
+    "BP_NPC_PostiePete",
+    "BP_NPC_Quest_Chicken_C",
+    "BP_NPC_Quest_Chicken",
+    "BP_NPC_Quest_Cow_C",
+    "BP_NPC_Quest_Cow",
+    "BP_NPC_Elder_Garou_C",
+    "BP_NPC_Elder_Garou",
+    "BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+    "BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa",
+    "BP_BaseBuilding_TrainingDummy_C",
+    "BP_BaseBuilding_TrainingDummy",
+    "BP_BaseBuilding_ArmourMannequin_C",
+    "BP_BaseBuilding_ArmourMannequin",
+    "BP_NPC_KotHaarBouncer_C",
+    "BP_NPC_KotHaarBouncer",
+    "BP_NPC_SW_Zilyana_C",
+    "BP_NPC_SW_Zilyana",
+    "BP_NPC_Base_C",
+    "BP_NPC_Base",
+    "DominionNPCCharacter",
+    "DominionCharacterBase",
+    "Character",
+    "Pawn",
+    "SkeletalMeshActor"
+}
+
+function FindAllCompanions()
+    local companions = {}
+    local seenAddr = {}
+
+    local function addActor(a)
+        if not Valid(a) then return end
+        local ok, addr = pcall(function() return a:GetAddress() end)
+        if not ok or not addr or seenAddr[addr] then return end
+        seenAddr[addr] = true
+        companions[#companions + 1] = a
+    end
+
+    for _, cls in ipairs(CompanionClassNames) do
+        local ok, list = pcall(function() return FindAllOf(cls) end)
+        if ok and list then
+            for _, a in ipairs(list) do
+                if Valid(a) then
+                    local name = NameOf(a):lower()
+                    local cname = ClassName(a):lower()
+                    if cls:find("^BP_NPC_") or cls:find("Chinchompa") or cls:find("TrainingDummy") or cls:find("ArmourMannequin") then
+                        addActor(a)
+                    elseif name:find("doric") or cname:find("doric") or name:find("companion") or cname:find("companion") then
+                        addActor(a)
+                    end
+                end
+            end
+        end
+    end
+
+    for _, info in pairs(BaseNPCs or {}) do
+        if info and Valid(info.Actor) then addActor(info.Actor) end
+    end
+
+    for id, a in pairs(Props or {}) do
+        local r = Placed and Placed[id]
+        if r and ResolveNPCBlueprint(r.Mesh) and Valid(a) then
+            addActor(a)
+        end
+    end
+
+    for _, a in ipairs(TestProps or {}) do
+        if Valid(a) then addActor(a) end
+    end
+
+    return companions
+end
+
+function CleanupCompanions(keepSingle)
+    local companions = FindAllCompanions()
+    local destroyed = 0
+    local kept = 0
+
+    if not keepSingle then
+        for _, a in ipairs(companions) do
+            if Valid(a) then
+                pcall(function() a:K2_DestroyActor() end)
+                destroyed = destroyed + 1
+            end
+        end
+        BaseNPCs = {}
+        TestProps = {}
+        for id, a in pairs(Props or {}) do
+            local r = Placed and Placed[id]
+            if r and ResolveNPCBlueprint(r.Mesh) then
+                Props[id] = nil
+            end
+        end
+    else
+        local placedNPCs = {}
+        for id, r in pairs(Placed or {}) do
+            if ResolveNPCBlueprint(r.Mesh) then
+                placedNPCs[#placedNPCs + 1] = { id = id, r = r }
+            end
+        end
+
+        local claimedActors = {}
+        for _, p in ipairs(placedNPCs) do
+            local targetLoc = { X = p.r.X, Y = p.r.Y, Z = p.r.Z + Config.ZOffset }
+            local bestActor = nil
+            local bestDist = 9999999
+            for _, a in ipairs(companions) do
+                if Valid(a) and not claimedActors[a:GetAddress()] then
+                    local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
+                    if ok and loc then
+                        local d = Dist(loc, targetLoc)
+                        if d < bestDist then
+                            bestDist = d
+                            bestActor = a
+                        end
+                    end
+                end
+            end
+
+            if bestActor then
+                local addr = bestActor:GetAddress()
+                claimedActors[addr] = true
+                Props[p.id] = bestActor
+                BaseNPCs[addr] = {
+                    Actor = bestActor,
+                    Name = "Doric",
+                    Key = (p.r.Mesh or "doric"):lower(),
+                    Mesh = p.r.Mesh
+                }
+                kept = kept + 1
+            end
+        end
+
+        if #placedNPCs == 0 then
+            local keptClasses = {}
+            for _, a in ipairs(companions) do
+                if Valid(a) then
+                    local cname = ClassName(a)
+                    if not keptClasses[cname] then
+                        keptClasses[cname] = a
+                        claimedActors[a:GetAddress()] = true
+                        kept = kept + 1
+                        BaseNPCs[a:GetAddress()] = {
+                            Actor = a,
+                            Name = "Doric",
+                            Key = "doric"
+                        }
+                    end
+                end
+            end
+        end
+
+        for _, a in ipairs(companions) do
+            if Valid(a) and not claimedActors[a:GetAddress()] then
+                pcall(function() a:K2_DestroyActor() end)
+                destroyed = destroyed + 1
+            end
+        end
+    end
+
+    TestProps = {}
+    Log(string.format("[COMPANION] Cleanup completed: destroyed %d, kept %d", destroyed, kept))
+    return destroyed, kept
+end
+
 local function AdoptExisting()
     local missing = {}
     for id, r in pairs(Placed) do
@@ -461,16 +942,48 @@ local function AdoptExisting()
             end
         end
     end
+
+    local allComps = FindAllCompanions()
+    for _, id in ipairs(missing) do
+        local r = Placed[id]
+        if ResolveNPCBlueprint(r.Mesh) and not Valid(Props[id]) then
+            local targetLoc = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset }
+            local bestActor = nil
+            local bestDist = 9999999
+            for _, a in ipairs(allComps) do
+                if Valid(a) then
+                    local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
+                    if ok and loc then
+                        local d = Dist(loc, targetLoc)
+                        if d < 1500 and d < bestDist then
+                            bestActor = a
+                            bestDist = d
+                        end
+                    end
+                end
+            end
+            if bestActor then
+                Props[id] = bestActor
+                BaseNPCs[bestActor:GetAddress()] = {
+                    Key = (r.Mesh or "doric"):lower(),
+                    Name = "Doric",
+                    Actor = bestActor,
+                    Mesh = r.Mesh
+                }
+            end
+        end
+    end
 end
 
-local GameWorld = nil   -- world key once a real game world (with a building manager) is seen
+local GameWorld = nil
 
 local function Restore(at)
     local spawned, removed = 0, 0
-    -- Only in a real game world, never the main menu's.
     if not Manager() then return 0, 0 end
     GameWorld = WorldKey()
     pcall(AdoptExisting)
+    pcall(function() CleanupCompanions(true) end)
+
     for id, r in pairs(Placed) do
         local exists = id:find("^m") and true or PieceExists(id)
         if exists == false and at and Dist(at, r) <= 300 then
@@ -478,12 +991,118 @@ local function Restore(at)
             Placed[id] = nil
             removed = removed + 1
         elseif exists == true and not Valid(Props[id]) then
-            local a, err = SpawnModel(r.Mesh, r)
-            if a then Props[id] = a; spawned = spawned + 1 else Log("Restore " .. id .. ": " .. tostring(err)) end
+            local bpPath = ResolveNPCBlueprint(r.Mesh)
+            if bpPath then
+                local targetLoc = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset }
+                local allComps = FindAllCompanions()
+                local bestActor = nil
+                local bestDist = 9999999
+                local duplicates = {}
+
+                for _, a in ipairs(allComps) do
+                    if Valid(a) then
+                        local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
+                        if ok and loc then
+                            local d = Dist(loc, targetLoc)
+                            if d < 1500 then
+                                if not bestActor or d < bestDist then
+                                    if bestActor then duplicates[#duplicates + 1] = bestActor end
+                                    bestActor = a
+                                    bestDist = d
+                                else
+                                    duplicates[#duplicates + 1] = a
+                                end
+                            end
+                        end
+                    end
+                end
+
+                for _, dup in ipairs(duplicates) do
+                    pcall(function() dup:K2_DestroyActor() end)
+                end
+
+                if bestActor then
+                    Props[id] = bestActor
+                    BaseNPCs[bestActor:GetAddress()] = {
+                        Key = (r.Mesh or "doric"):lower(),
+                        Name = "Doric",
+                        Actor = bestActor,
+                        Mesh = r.Mesh
+                    }
+                else
+                    local a, err = SpawnModel(r.Mesh, r)
+                    if a then Props[id] = a; spawned = spawned + 1 else Log("Restore " .. id .. ": " .. tostring(err)) end
+                end
+            else
+                local a, err = SpawnModel(r.Mesh, r)
+                if a then Props[id] = a; spawned = spawned + 1 else Log("Restore " .. id .. ": " .. tostring(err)) end
+            end
         end
     end
     if removed > 0 then SavePlaced() end
     return spawned, removed
+end
+
+-- Surface / Camera helpers
+local function CameraView()
+    local pc = GetPC()
+    if not Valid(pc) then return nil end
+    local cam = nil
+    pcall(function() cam = pc.PlayerCameraManager end)
+    if not Valid(cam) then return nil end
+    local loc, rot = cam:GetCameraLocation(), cam:GetCameraRotation()
+    local fwd = StaticFindObject("/Script/Engine.Default__KismetMathLibrary"):GetForwardVector(rot)
+    return pc, loc, rot, fwd
+end
+
+local function WriteText(name, text)
+    if not ModDir then return false end
+    local f = io.open(ModDir .. name, "wb")
+    if not f then return false end
+    f:write(text)
+    f:close()
+    return true
+end
+
+local function PieceNames()
+    local names = {}
+    for _, d in ipairs(FindAllOf("BuildingPieceData") or {}) do
+        if Valid(d) and not NameOf(d):find("^Default__") then
+            local idx = nil
+            pcall(function() idx = tonumber(d.BuildingPieceDataIndex) end)
+            if idx and idx >= 0 and not names[idx] then names[idx] = NameOf(d) end
+        end
+    end
+    return names
+end
+
+local LastPieceCount = -1
+local LastExportAt = 0
+local function ExportNativePieces(playerLoc)
+    local now = os.clock()
+    if now - LastExportAt < 2 then return end
+    LastExportAt = now
+
+    local m = Manager()
+    if not m then return end
+    local names = PieceNames()
+    local lines = { "# CustomBuilds base reference: piece|x|y|z|yaw. Auto-exported for base builder." }
+    local count = 0
+    pcall(function()
+        m.BuildingPieces:ForEach(function(_, state)
+            local cv = Get(state).ClientVisible
+            local l = cv.Location
+            count = count + 1
+            lines[#lines + 1] = string.format("%s|%.2f|%.2f|%.2f|%.2f",
+                names[tonumber(cv.BuildingPieceDataIndex)] or ("piece" .. tostring(cv.BuildingPieceDataIndex)),
+                l.X, l.Y, l.Z, cv.Yaw)
+        end)
+    end)
+    if count ~= LastPieceCount then
+        LastPieceCount = count
+        WriteText("base.txt", table.concat(lines, "\n") .. "\n")
+        Log(string.format("Auto-exported %d native building pieces to base.txt", count))
+    end
 end
 
 -- Live sync: when placed.txt is changed by something else (e.g. the ashenfallen.com
@@ -492,6 +1111,15 @@ end
 local SyncAt = 0
 local function SyncPlaced()
     if not GameWorld or WorldKey() ~= GameWorld then return end
+    local _, pawn = Pawn()
+    if pawn then
+        local loc = pawn:K2_GetActorLocation()
+        local _, _, rot = CameraView()
+        local yaw = rot and rot.Yaw or 0
+        WriteText("player.txt", string.format("%.2f|%.2f|%.2f|%.2f\n", loc.X, loc.Y, loc.Z, yaw))
+        ExportNativePieces(loc)
+    end
+    if LoadQuests then pcall(LoadQuests) end
     local text = ReadFile(ModDir .. "placed.txt")
     if not text or text == LastText then return end
     LastText = text
@@ -1005,14 +1633,16 @@ local function UpdateGhost()
         DestroyGhost()
         local a = SpawnModel(Skin.Mesh, { X = p.X, Y = p.Y, Z = p.Z }, true)
         if not a then return end
-        local c = a.StaticMeshComponent
-        pcall(function() c:SetCollisionEnabled(0) end)
-        pcall(function() c:SetCastShadow(false) end)
-        local mat = GhostMaterial()
-        if mat then
-            local n = 1
-            pcall(function() n = c:GetNumMaterials() end)
-            for i = 0, n - 1 do pcall(function() c:SetMaterial(i, mat) end) end
+        local c = a.StaticMeshComponent or a.SkeletalMeshComponent
+        if Valid(c) then
+            pcall(function() c:SetCollisionEnabled(0) end)
+            pcall(function() c:SetCastShadow(false) end)
+            local mat = GhostMaterial()
+            if mat then
+                local n = 1
+                pcall(function() n = c:GetNumMaterials() end)
+                for i = 0, n - 1 do pcall(function() c:SetMaterial(i, mat) end) end
+            end
         end
         Ghost.Actor, Ghost.Mesh = a, Skin.Mesh
     end
@@ -1022,6 +1652,89 @@ local function UpdateGhost()
     pcall(function() Ghost.Actor:SetActorScale3D({ X = o.Scale, Y = o.Scale, Z = o.Scale }) end)
 end
 
+-- =========================================================================
+-- Teleporters / Portals
+-- Touching a portal teleports the player to its paired destination portal.
+-- =========================================================================
+local PortalCooldownUntil = 0
+local LastTeleportedPortal = nil
+
+local function CheckPortals()
+    if not Placed or not CheckWorld() then return end
+    local pc, pawn = Pawn()
+    if not Valid(pawn) or not Valid(pc) or IsGamePaused(pc) then return end
+
+    local now = os.clock()
+    local pLoc = pawn:K2_GetActorLocation()
+    if not pLoc then return end
+
+    for id, r in pairs(Placed) do
+        if r.Portal and r.Portal ~= "" and r.Target and r.Target ~= "" then
+            local a = Props[id]
+            local aLoc = Valid(a) and a:K2_GetActorLocation() or { X = r.X, Y = r.Y, Z = r.Z }
+            local dx = pLoc.X - aLoc.X
+            local dy = pLoc.Y - aLoc.Y
+            local dz = pLoc.Z - aLoc.Z
+            local dist2 = dx*dx + dy*dy + dz*dz
+
+            -- Touch radius: 180 cm (1.8m), height tolerance: 250 cm
+            if dist2 <= 32400 and math.abs(dz) <= 250 then
+                if LastTeleportedPortal == r.Portal then
+                    return
+                end
+                if now < PortalCooldownUntil then
+                    return
+                end
+
+                -- Find the paired portal
+                local targetRec, targetId = nil, nil
+                for tid, tr in pairs(Placed) do
+                    if tr.Portal == r.Target or tid == r.Target then
+                        targetRec = tr
+                        targetId = tid
+                        break
+                    end
+                end
+
+                if targetRec then
+                    local destYaw = 0
+                    if targetRec.QW and targetRec.QZ then
+                        destYaw = math.deg(2 * math.atan2(targetRec.QZ, targetRec.QW))
+                    end
+
+                    -- Forward exit offset (120cm along exit portal's facing yaw) + 25cm Z
+                    local rad = math.rad(destYaw)
+                    local exitX = targetRec.X + math.sin(rad) * 120
+                    local exitY = targetRec.Y + math.cos(rad) * 120
+                    local exitZ = targetRec.Z + 25
+
+                    local ok, res = pcall(function()
+                        return pawn:K2_TeleportTo({ X = exitX, Y = exitY, Z = exitZ }, { Pitch = 0, Yaw = destYaw, Roll = 0 })
+                    end)
+                    if not ok or res == false then
+                        pcall(function()
+                            pawn:K2_TeleportTo({ X = targetRec.X, Y = targetRec.Y, Z = targetRec.Z + 50 }, { Pitch = 0, Yaw = destYaw, Roll = 0 })
+                        end)
+                    end
+
+                    pcall(function()
+                        pc:SetControlRotation({ Pitch = 0, Yaw = destYaw, Roll = 0 })
+                    end)
+
+                    PortalCooldownUntil = now + 1.2
+                    LastTeleportedPortal = targetRec.Portal
+                    Say(string.format("Portal: teleported from '%s' to '%s'", r.Portal, targetRec.Portal or r.Target))
+                    return
+                end
+            else
+                if LastTeleportedPortal == r.Portal and dist2 > 48400 then
+                    LastTeleportedPortal = nil
+                end
+            end
+        end
+    end
+end
+
 -- One permanent game-thread loop (UE4SS's own looping timer, created once when the
 -- mod loads) drives the ghost; it does nothing unless a model is picked. Creating new
 -- timers from inside timer callbacks, as this used to, corrupted UE4SS's timer list
@@ -1029,6 +1742,9 @@ end
 local GhostLoop = nil
 
 local function GhostStep()
+    local pc = GetPC()
+    if not Valid(pc) or IsGamePaused(pc) then return end
+
     local now = os.clock()
     if now - SyncAt > 2 then
         SyncAt = now
@@ -1037,6 +1753,8 @@ local function GhostStep()
             if not ok then Log("Sync: " .. tostring(err)) end
         end
     end
+    pcall(function() if UpdateQuestWorldMarkers then UpdateQuestWorldMarkers() end end)
+    pcall(CheckPortals)
     if not Skin then
         -- CheckWorld first: after a world change the old ghost is gone and must not be touched.
         if Ghost.Actor and CheckWorld() then DestroyGhost() end
@@ -1176,10 +1894,11 @@ local UI = { Built = false, Visible = false, Title = nil, Category = nil, Rows =
 OnWorldChange[#OnWorldChange + 1] = function()
     -- The widgets belonged to the old world's player and went with it.
     UI.Built, UI.Visible, UI.Title, UI.Category, UI.Rows, UI.RowModel = false, false, nil, nil, {}, {}
-    UI.Prev, UI.Next, UI.Off, UI.Import, UI.Owned = nil, nil, nil, nil, {}
+    UI.Prev, UI.Next, UI.Off, UI.Import, UI.SearchBtn, UI.Owned = nil, nil, nil, nil, nil, {}
     UI.Tiles, UI.TileModel = {}, {}
     UI.Header, UI.CatPrev, UI.CatNext = nil, nil, nil
     UI.Backdrop = nil
+    UI.SearchMode, UI.SearchQuery = false, ""
 end
 
 -- Widgets left behind by a previous load of this mod (hot reload).
@@ -1206,12 +1925,93 @@ end
 -- Two levels: a list of categories (Favourites = models.txt, Search results, then
 -- the viewer's folders), and the models of the chosen category.
 local SEARCH, FAVOURITES = "SEARCH RESULTS", "FAVOURITES"
+local RECENT, PLACED_IN_WORLD = "RECENT", "PLACED IN WORLD"
 local SearchResults = {}
+
+-- Recent models: the last 8 unique models placed (newest first).
+local RecentModels = {}
+local MAX_RECENT = 8
+local function AddRecent(m)
+    if not m or not m.Mesh then return end
+    -- Remove any existing entry for this mesh so it moves to the front.
+    for i = #RecentModels, 1, -1 do
+        if RecentModels[i].Mesh == m.Mesh then table.remove(RecentModels, i) end
+    end
+    table.insert(RecentModels, 1, m)
+    while #RecentModels > MAX_RECENT do table.remove(RecentModels) end
+end
+
+-- Placed in World: returns models currently placed, deduped for the category list
+-- but full list for tiles.
+local function PlacedModels()
+    local out = {}
+    local seen = {}
+    for _, id in ipairs(Order) do
+        local r = Placed[id]
+        if r and not seen[r.Mesh] then
+            seen[r.Mesh] = true
+            out[#out + 1] = ModelForMesh(r.Mesh)
+        end
+    end
+    -- Also pick up entries not in Order (loaded from save).
+    for id, r in pairs(Placed) do
+        if not seen[r.Mesh] then
+            seen[r.Mesh] = true
+            out[#out + 1] = ModelForMesh(r.Mesh)
+        end
+    end
+    return out
+end
+
+local QUICK_FILTERS = {
+    { Name = "★ BONES & SKULLS", Query = "bone" },
+    { Name = "★ ROCKS & STONES", Query = "rock" },
+    { Name = "★ TREES & WOOD", Query = "tree" },
+    { Name = "★ WALLS & FLOORS", Query = "wall" },
+    { Name = "★ LIGHTS & TORCHES", Query = "light" },
+    { Name = "★ CHESTS & CRATES", Query = "chest" },
+    { Name = "★ STATUES & RUINS", Query = "statue" },
+    { Name = "★ DOORS & GATES", Query = "door" },
+}
+local ActiveFilterIdx = 0
+
+-- Pre-cached filter lists so clicking a filter is instantaneous
+local FilterCache = {}
+local function ModelsForFilter(query)
+    if FilterCache[query] then return FilterCache[query] end
+    local needle = query:lower()
+    local out = {}
+    local seen = {}
+    for _, list in ipairs({ Models, AllModels }) do
+        for _, m in ipairs(list) do
+            if not seen[m.Mesh] then
+                if m.Name:lower():find(needle, 1, true) or m.Mesh:lower():find(needle, 1, true) then
+                    seen[m.Mesh] = true
+                    out[#out + 1] = m
+                end
+            end
+        end
+    end
+    FilterCache[query] = out
+    return out
+end
 
 local function Groups()
     local counts, list = {}, {}
+    -- Recent first (if any).
+    if #RecentModels > 0 then list[#list + 1] = { Name = RECENT, Count = #RecentModels } end
     if #Models > 0 then list[#list + 1] = { Name = FAVOURITES, Count = #Models } end
     if UI.Search then list[#list + 1] = { Name = SEARCH, Count = #SearchResults } end
+    -- Placed in World.
+    local placedList = PlacedModels()
+    if #placedList > 0 then list[#list + 1] = { Name = PLACED_IN_WORLD, Count = #placedList } end
+    -- Quick Search Filters directly in the categories list
+    for _, qf in ipairs(QUICK_FILTERS) do
+        local matches = ModelsForFilter(qf.Query)
+        if #matches > 0 then
+            list[#list + 1] = { Name = qf.Name, Count = #matches, FilterQuery = qf.Query }
+        end
+    end
     for _, m in ipairs(AllModels) do counts[m.Group] = (counts[m.Group] or 0) + 1 end
     local names = {}
     for g in pairs(counts) do names[#names + 1] = g end
@@ -1223,6 +2023,11 @@ end
 local function ModelsIn(group)
     if group == FAVOURITES then return Models end
     if group == SEARCH then return SearchResults end
+    if group == RECENT then return RecentModels end
+    if group == PLACED_IN_WORLD then return PlacedModels() end
+    for _, qf in ipairs(QUICK_FILTERS) do
+        if group == qf.Name then return ModelsForFilter(qf.Query) end
+    end
     local out = {}
     for _, m in ipairs(AllModels) do
         if m.Group == group then out[#out + 1] = m end
@@ -1288,6 +2093,11 @@ end
 local function LoadModTexture(rel)
     local path = ModDir .. rel
     local f = io.open(path, "rb")
+    if not f and rel:sub(-4) == ".png" then
+        local txtPath = ModDir .. rel:sub(1, -5) .. ".txt"
+        f = io.open(txtPath, "rb")
+        if f then path = txtPath end
+    end
     if not f then return nil end
     f:close()
     local full = path
@@ -1299,6 +2109,7 @@ local function LoadModTexture(rel)
     local ok, t = pcall(function()
         return StaticFindObject("/Script/Engine.Default__KismetRenderingLibrary"):ImportFileAsTexture2D(GetPC(), full)
     end)
+    Log("[TEXTURE_LOAD] Path: " .. path .. " | ok=" .. tostring(ok) .. " | valid=" .. tostring(ok and Valid(t)))
     return (ok and Valid(t)) and t or nil
 end
 
@@ -1319,20 +2130,45 @@ local function EnsureBackdrop(pc)
     pcall(function() img = w.ItemImage end)
     if not Valid(img) then return end
     UI.PanelTex = tex   -- keep a reference
-    pcall(function() img:SetBrushFromTexture(tex, false) end)
-    pcall(function() img:SetColorAndOpacity({ R = 1, G = 1, B = 1, A = 1 }) end)
+    pcall(function()
+        img:SetBrushFromTexture(tex, false)
+        img:SetColorAndOpacity({ R = 1, G = 1, B = 1, A = 1 })
+        -- Set 9-slice box drawing so the gold corners stay crisp
+        if img.Brush then
+            img.Brush.DrawAs = 1 -- Box (9-slice)
+            img.Brush.Margin = { Left = 0.08, Top = 0.08, Right = 0.08, Bottom = 0.08 }
+        end
+    end)
     pcall(function() if Valid(w.NewBuildingPieceIcon) then w.NewBuildingPieceIcon:SetVisibility(COLLAPSED) end end)
     pcall(function() if Valid(w.IconFavourited) then w.IconFavourited:SetVisibility(COLLAPSED) end end)
-    -- The tile's size box fixes it at tile size; it is resized with the window in Layout.
+    -- Find any SizeBox in the widget hierarchy
+    UI.BackdropBoxes = {}
     pcall(function()
-        local box = img:GetParent():GetParent()
-        if Valid(box) and box.SetWidthOverride then UI.BackdropBox = box end
+        local function check(node)
+            if not Valid(node) then return end
+            if node.SetWidthOverride or node.WidthOverride ~= nil then
+                UI.BackdropBoxes[#UI.BackdropBoxes + 1] = node
+            end
+        end
+        local p = img
+        while Valid(p) do
+            check(p)
+            p = pcall(function() return p:GetParent() end) and p:GetParent() or nil
+        end
+        if Valid(w.WidgetTree) and Valid(w.WidgetTree.RootWidget) then
+            check(w.WidgetTree.RootWidget)
+            local root = w.WidgetTree.RootWidget
+            local n = pcall(function() return root:GetChildrenCount() end) and root:GetChildrenCount() or 0
+            for i = 0, n - 1 do
+                pcall(function() check(root:GetChildAt(i)) end)
+            end
+        end
     end)
     UI.BackdropImg = img
     UI.Backdrop = w
 end
 
--- A free-standing panel (for the hint bar): { W = widget, Box, Img }.
+-- A free-standing panel (for dialog and hint bars): { W = widget, Img, Boxes }.
 local function MakePanel(pc, z)
     local tex = LoadModTexture("ui/panel.png")
     if not tex then return nil end
@@ -1347,27 +2183,84 @@ local function MakePanel(pc, z)
     pcall(function()
         p.Img = w.ItemImage
         p.Img:SetBrushFromTexture(tex, false)
-        p.Box = p.Img:GetParent():GetParent()
+        p.Img:SetColorAndOpacity({ R = 1, G = 1, B = 1, A = 1 })
+        if p.Img.Brush then
+            p.Img.Brush.ImageSize = { X = 512, Y = 512 }
+            p.Img.Brush.DrawAs = 1 -- Box (9-slice)
+            p.Img.Brush.Margin = { Left = 0.08, Top = 0.08, Right = 0.08, Bottom = 0.08 }
+        end
     end)
     pcall(function() if Valid(w.NewBuildingPieceIcon) then w.NewBuildingPieceIcon:SetVisibility(COLLAPSED) end end)
     pcall(function() if Valid(w.IconFavourited) then w.IconFavourited:SetVisibility(COLLAPSED) end end)
+    p.Boxes = {}
+    pcall(function()
+        local function check(node)
+            if not Valid(node) then return end
+            if node.SetWidthOverride or node.WidthOverride ~= nil then
+                p.Boxes[#p.Boxes + 1] = node
+            end
+        end
+        local node = p.Img
+        while Valid(node) do
+            check(node)
+            node = pcall(function() return node:GetParent() end) and node:GetParent() or nil
+        end
+        if Valid(w.WidgetTree) and Valid(w.WidgetTree.RootWidget) then
+            check(w.WidgetTree.RootWidget)
+            local root = w.WidgetTree.RootWidget
+            local n = pcall(function() return root:GetChildrenCount() end) and root:GetChildrenCount() or 0
+            for i = 0, n - 1 do
+                pcall(function() check(root:GetChildAt(i)) end)
+            end
+        end
+    end)
     return p
 end
 
 local function SizePanel(p, x, y, w, h)
-    Place(p.W, x, y, w, h)
-    if Valid(p.Box) then pcall(function() p.Box:SetWidthOverride(w); p.Box:SetHeightOverride(h) end) end
-    if Valid(p.Img) then pcall(function() p.Img:SetDesiredSizeOverride({ X = w, Y = h }) end) end
-    pcall(function() p.W:SetVisibility(3) end)
+    if not p or not Valid(p.W) then return end
+    local cx = x + w / 2
+    local cy = y + h / 2
+    p.W:SetAlignmentInViewport({ X = 0.5, Y = 0.5 })
+    p.W:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
+    p.W:SetPositionInViewport({ X = cx, Y = cy }, false)
+    p.W:SetDesiredSizeInViewport({ X = 512, Y = 512 })
+    if p.Boxes then
+        for _, box in ipairs(p.Boxes) do
+            pcall(function()
+                box.bOverride_Width = true
+                box.bOverride_Height = true
+                box:SetWidthOverride(512)
+                box:SetHeightOverride(512)
+            end)
+        end
+    end
+    if Valid(p.Img) then
+        pcall(function()
+            p.Img:SetBrushSize({ X = 512, Y = 512 })
+            if p.Img.Brush then
+                p.Img.Brush.ImageSize = { X = 512, Y = 512 }
+                p.Img.Brush.DrawAs = 1
+                p.Img.Brush.Margin = { Left = 0.08, Top = 0.08, Right = 0.08, Bottom = 0.08 }
+            end
+        end)
+    end
+    pcall(function()
+        p.W:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
+        p.W.RenderTransformPivot = { X = 0.5, Y = 0.5 }
+        p.W:SetRenderScale({ X = w / 512, Y = h / 512 })
+    end)
+    pcall(function() p.W:SetVisibility(VISIBLE) end)
 end
 
 local function BuildUI(pc)
     UI.Title = NewWidget(pc, LABEL_CLASS, 10050)
-    UI.Category = NewWidget(pc, LABEL_CLASS, 10050)   -- search hint
+    UI.Category = NewWidget(pc, LABEL_CLASS, 10050)   -- search hint / live search query
     UI.Header = NewWidget(pc, LABEL_CLASS, 10050)     -- selected category + page
     for i = 1, PER_PAGE do UI.Rows[i] = NewWidget(pc, BUTTON_CLASS, 10051) end
     UI.CatPrev = NewWidget(pc, BUTTON_CLASS, 10051)
     UI.CatNext = NewWidget(pc, BUTTON_CLASS, 10051)
+    UI.SearchBtn = NewWidget(pc, BUTTON_CLASS, 10051)
     UI.Prev = NewWidget(pc, BUTTON_CLASS, 10051)
     UI.Next = NewWidget(pc, BUTTON_CLASS, 10051)
     UI.Off = NewWidget(pc, BUTTON_CLASS, 10051)
@@ -1390,12 +2283,14 @@ local function Layout(pc)
     local lib = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
     local size, dpi = lib:GetViewportSize(pc), lib:GetViewportScale(pc)
     local vw, vh = size.X / dpi, size.Y / dpi
-    -- Like the build menu: categories on the left, the chosen one's tiles on the right.
-    local listW, rowH, h, gap = 360, 30, 44, 16
-    local gridW = TILE_COLS * (TILE_SIZE + 5)
-    local total = listW + gap + gridW
+    -- Compact, crisp layout that fits any screen: categories on left, tiles on right.
+    local listW, rowH, h, gap = 340, 28, 42, 16
+    local tileCols, tileSize = 8, 72
+    local gridW = tileCols * (tileSize + 4) -- 8 * 76 = 608
+    local total = listW + gap + gridW         -- 340 + 16 + 608 = 964
     local x = math.floor(vw / 2 - total / 2)
-    local y = math.max(30, math.floor(vh / 2 - 360))
+    local y = math.max(20, math.floor(vh / 2 - 350))
+    local startY = y
     local xr = x + listW + gap
     Place(UI.Title, x, y, total, h); y = y + h + 4
     Place(UI.Category, x, y, listW, h)
@@ -1404,26 +2299,59 @@ local function Layout(pc)
     local top = y
     for i = 1, PER_PAGE do Place(UI.Rows[i], x, top + (i - 1) * (rowH + 2), listW, rowH) end
     local listBottom = top + PER_PAGE * (rowH + 2) + 6
-    Place(UI.CatPrev, x, listBottom, listW / 2 - 2, h)
-    Place(UI.CatNext, x + listW / 2 + 2, listBottom, listW / 2 - 2, h)
+    local halfW = math.floor(listW / 2 - 2)
+    Place(UI.CatPrev, x, listBottom, halfW, h)
+    Place(UI.CatNext, x + halfW + 4, listBottom, halfW, h)
+    Place(UI.SearchBtn, x, listBottom + h + 4, listW, h)
     for i, t in ipairs(UI.Tiles) do
-        local col, row = (i - 1) % TILE_COLS, math.floor((i - 1) / TILE_COLS)
-        Place(t, xr + col * (TILE_SIZE + 5), top + row * (TILE_SIZE + 5), TILE_SIZE, TILE_SIZE)
+        local col, row = (i - 1) % tileCols, math.floor((i - 1) / tileCols)
+        Place(t, xr + col * (tileSize + 4), top + row * (tileSize + 4), tileSize, tileSize)
     end
-    local gy = top + TILE_ROWS * (TILE_SIZE + 5) + 10
+    local gy = top + TILE_ROWS * (tileSize + 4) + 10
     local third = math.floor((gridW - 8) / 3)
     Place(UI.Prev, xr, gy, third, h)
     Place(UI.Next, xr + third + 4, gy, third, h)
     Place(UI.Off, xr + 2 * (third + 4), gy, third, h)
     Place(UI.Import, xr, gy + h + 4, gridW, h)
     if Valid(UI.Backdrop) then
-        local top = math.max(30, math.floor(vh / 2 - 360))
-        local bw, bh = total + 80, (gy + 2 * h + 4) - top + 60
-        Place(UI.Backdrop, x - 40, top - 30, bw, bh)
-        if Valid(UI.BackdropBox) then
-            pcall(function() UI.BackdropBox:SetWidthOverride(bw); UI.BackdropBox:SetHeightOverride(bh) end)
+        local maxBottom = math.max(gy + 2 * h + 8, listBottom + 2 * h + 12)
+        local targetLeft = x - 20
+        local targetTop = startY - 14
+        local bw = total + 40
+        local bh = maxBottom - targetTop + 20
+        local centerX = targetLeft + bw / 2
+        local centerY = targetTop + bh / 2
+        -- Center-anchored placement: alignment (0.5, 0.5) at (centerX, centerY)
+        -- Scales symmetrically around center so it covers from targetLeft to targetLeft+bw
+        UI.Backdrop:SetAlignmentInViewport({ X = 0.5, Y = 0.5 })
+        UI.Backdrop:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
+        UI.Backdrop:SetPositionInViewport({ X = centerX, Y = centerY }, false)
+        UI.Backdrop:SetDesiredSizeInViewport({ X = 512, Y = 512 })
+        if UI.BackdropBoxes then
+            for _, box in ipairs(UI.BackdropBoxes) do
+                pcall(function()
+                    box.bOverride_Width = true
+                    box.bOverride_Height = true
+                    box:SetWidthOverride(512)
+                    box:SetHeightOverride(512)
+                end)
+            end
         end
-        if Valid(UI.BackdropImg) then pcall(function() UI.BackdropImg:SetDesiredSizeOverride({ X = bw, Y = bh }) end) end
+        if Valid(UI.BackdropImg) then
+            pcall(function() UI.BackdropImg:SetBrushSize({ X = 512, Y = 512 }) end)
+            pcall(function()
+                if UI.BackdropImg.Brush then
+                    UI.BackdropImg.Brush.ImageSize = { X = 512, Y = 512 }
+                    UI.BackdropImg.Brush.DrawAs = 1 -- Box (9-slice)
+                    UI.BackdropImg.Brush.Margin = { Left = 0.08, Top = 0.08, Right = 0.08, Bottom = 0.08 }
+                end
+            end)
+        end
+        pcall(function()
+            UI.Backdrop:SetRenderTransformPivot({ X = 0.5, Y = 0.5 })
+            UI.Backdrop.RenderTransformPivot = { X = 0.5, Y = 0.5 }
+            UI.Backdrop:SetRenderScale({ X = bw / 512, Y = bh / 512 })
+        end)
     end
 end
 
@@ -1507,7 +2435,14 @@ local function Refresh()
         Log(string.format("[DISCOVERY] model window: %d tile widgets", #UI.Tiles))
     end
     Label(UI.Title, "CUSTOM MODELS")
-    Label(UI.Category, "SEARCH: F10  cb find <words>")
+    if UI.ActiveFilterName then
+        Label(UI.Category, string.format("FILTER: %s (%d) | F10: cb find", UI.ActiveFilterName:gsub("^★ ", ""), #SearchResults))
+    elseif UI.Search then
+        Label(UI.Category, string.format("SEARCH: %s (%d) | F10: cb find", UI.Search:upper(), #SearchResults))
+    else
+        local total = #Models + #AllModels
+        Label(UI.Category, string.format("%d MODELS | F10: cb find <word>", total))
+    end
 
     -- Left: categories, a page at a time.
     local cpages = math.max(1, math.ceil(#groups / PER_PAGE))
@@ -1528,12 +2463,19 @@ local function Refresh()
     end
     Label(UI.CatPrev, "< CATEGORIES")
     Label(UI.CatNext, string.format("%d/%d  CATEGORIES >", UI.CatPage, cpages))
+    if UI.ActiveFilterName then
+        Label(UI.SearchBtn, string.format("CYCLE: %s >", UI.ActiveFilterName:gsub("^★ ", "")))
+    elseif UI.Search then
+        Label(UI.SearchBtn, "FILTER: CLICK TO CYCLE")
+    else
+        Label(UI.SearchBtn, "FILTER: BONES, ROCKS... (CLICK)")
+    end
 
     -- Right: the chosen category's models as build-menu tiles.
     local items = UI.Group and ModelsIn(UI.Group) or {}
     local pages = math.max(1, math.ceil(#items / TILES_PER_PAGE))
     UI.Page = math.max(1, math.min(UI.Page, pages))
-    local name = UI.Group == "SEARCH RESULTS" and ("SEARCH: " .. (UI.Search or "")) or (UI.Group or "")
+    local name = UI.Group == SEARCH and ("SEARCH: " .. (UI.Search or "")) or (UI.Group or "")
     UI.HeaderText = string.format("%s   %d/%d", name:upper(), UI.Page, pages)
     Label(UI.Header, UI.HeaderText)
     UI.TileModel = {}
@@ -1585,7 +2527,7 @@ local function ShowUI()
     if not UI.Built then BuildUI(pc) end
     pcall(EnsureBackdrop, pc)
     -- By name, not a list literal: a missing widget must not stop the others showing.
-    for _, key in ipairs({ "Title", "Category", "Header", "CatPrev", "CatNext", "Prev", "Next", "Off", "Import" }) do
+    for _, key in ipairs({ "Title", "Category", "Header", "CatPrev", "CatNext", "SearchBtn", "Prev", "Next", "Off", "Import" }) do
         local w = UI[key]
         if Valid(w) then w:SetVisibility(VISIBLE) end
     end
@@ -1638,6 +2580,7 @@ end
 local function Pick(m)
     if not LoadMesh(m.Mesh) then Log("Mesh not found for " .. m.Name); return end
     Skin = m
+    AddRecent(m)
     StartGhost()
     Log("Picked " .. m.Name)
     Placer.Yaw, Placer.Nudge = 0, nil
@@ -1713,12 +2656,21 @@ end)
 
 pcall(function()
     RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
-        if not UI.Visible then return end
+        if not UI.Visible and not InDialogue then return end
         local ok, button = pcall(function() return context:get() end)
         if not ok or not Valid(button) then return end
         local addr = button:GetAddress()
         local function is(w) return Valid(w) and w:GetAddress() == addr end
         ExecuteInGameThread(function()
+            if InDialogue and DialogueUI and DialogueUI.Buttons then
+                for i, btn in ipairs(DialogueUI.Buttons) do
+                    if is(btn) then
+                        if SafeSelectChoice then SafeSelectChoice(i) elseif SelectDialogueChoice then pcall(SelectDialogueChoice, i) end
+                        return
+                    end
+                end
+            end
+            if not UI.Visible then return end
             if is(UI.Prev) then
                 UI.Page = math.max(1, UI.Page - 1); Refresh()
             elseif is(UI.Next) then
@@ -1735,6 +2687,23 @@ pcall(function()
                 Label(UI.Import, msg:upper())
                 Refresh()
                 Label(UI.Import, msg:upper())
+            elseif is(UI.SearchBtn) then
+                ActiveFilterIdx = (ActiveFilterIdx % (#QUICK_FILTERS + 1)) + 1
+                if ActiveFilterIdx > #QUICK_FILTERS then
+                    ActiveFilterIdx = 0
+                    UI.ActiveFilterName = nil
+                    UI.Search = nil
+                    UI.Group = FAVOURITES
+                    UI.Page = 1
+                else
+                    local f = QUICK_FILTERS[ActiveFilterIdx]
+                    UI.ActiveFilterName = f.Name
+                    SearchResults = ModelsForFilter(f.Query)
+                    UI.Search = f.Query
+                    UI.Group = f.Name
+                    UI.Page = 1
+                end
+                Refresh()
             else
                 for i, tile in ipairs(UI.Tiles) do
                     if is(tile) and UI.TileModel[i] then Pick(UI.TileModel[i]); return end
@@ -1743,6 +2712,11 @@ pcall(function()
                     local item = UI.RowModel[i]
                     if is(row) and item then
                         UI.Group, UI.Page = item.Name, 1
+                        if item.FilterQuery then
+                            UI.ActiveFilterName = item.Name
+                            SearchResults = ModelsForFilter(item.FilterQuery)
+                            UI.Search = item.FilterQuery
+                        end
                         Refresh()
                         break
                     end
@@ -1756,7 +2730,10 @@ end)
 -- Console
 -- =========================================================================
 local TestProps = {}
-OnWorldChange[#OnWorldChange + 1] = function() TestProps = {} end
+OnWorldChange[#OnWorldChange + 1] = function()
+    TestProps = {}
+    pcall(function() if HideAllQuestMarkers then HideAllQuestMarkers() end end)
+end
 
 local function Probe(say)
     local _, pawn = Pawn()
@@ -1799,9 +2776,9 @@ local function HintText()
     local o = OrientFor(Skin.Mesh)
     local nd = Placer.Nudge
     local moved = nd and (nd.F ~= 0 or nd.R ~= 0 or nd.U ~= 0)
-    return string.format("%s%s     TURN %d   TILT %d   ROLL %d   SIZE %.2f   SNAP %s%s\n"
+    return string.format("%s%s     TURN %g   TILT %g   ROLL %g   SIZE %.2f   SNAP %s%s\n"
         .. "LEFT CLICK place     RIGHT CLICK / ESC stop     N models     BACKSPACE undo     DEL delete     INS move\n"
-        .. "LEFT/RIGHT turn   UP/DOWN tilt   CTRL+UP/DOWN roll   SHIFT = 90   +/- size   ALT+ARROWS, ALT +/- nudge   END snap   HOME reset",
+        .. "LEFT/RIGHT turn (Ctrl: 1°, Ctrl+Shift: 0.1°)   UP/DOWN tilt   CTRL+UP/DOWN roll   SHIFT = 90   +/- size   ALT(+Shift) nudge   END snap   HOME reset",
         Moving and "MOVING: " or "", Skin.Name:upper(), Placer.Yaw, o.Pitch, o.Roll, o.Scale,
         SNAP_MODES[Placer.Snap], moved and "   NUDGED" or "")
 end
@@ -1845,6 +2822,12 @@ HideHint = function()
     if Hint.Backdrop and Valid(Hint.Backdrop.W) then pcall(function() Hint.Backdrop.W:SetVisibility(COLLAPSED) end) end
 end
 
+local function RoundRot(v)
+    local m = v % 360
+    if m < 0 then m = m + 360 end
+    return math.floor(m * 100 + 0.5) / 100
+end
+
 local function Adjust(dYaw, dPitch, dRoll, scaleMul, reset)
     if not Skin then return end
     local o = OrientFor(Skin.Mesh)
@@ -1853,9 +2836,9 @@ local function Adjust(dYaw, dPitch, dRoll, scaleMul, reset)
         Placer.Yaw = 0
         Placer.Nudge = nil
     else
-        Placer.Yaw = (Placer.Yaw + dYaw) % 360
-        o.Pitch = (o.Pitch + dPitch) % 360
-        o.Roll = (o.Roll + dRoll) % 360
+        Placer.Yaw = RoundRot(Placer.Yaw + dYaw)
+        o.Pitch = RoundRot(o.Pitch + dPitch)
+        o.Roll = RoundRot(o.Roll + dRoll)
         o.Scale = math.max(0.05, math.min(20, o.Scale * scaleMul))
     end
     -- Tilt, roll and size become this model's default for next time.
@@ -1885,22 +2868,33 @@ local function Bind(key, mods, fn)
 end
 
 local SHIFT, CTRL = { ModifierKey.SHIFT }, { ModifierKey.CONTROL }
+local CTRL_SHIFT = { ModifierKey.CONTROL, ModifierKey.SHIFT }
 Bind(Key.LEFT_ARROW, nil, function() Adjust(-15, 0, 0, 1) end)
 Bind(Key.RIGHT_ARROW, nil, function() Adjust(15, 0, 0, 1) end)
 Bind(Key.LEFT_ARROW, SHIFT, function() Adjust(-90, 0, 0, 1) end)
 Bind(Key.RIGHT_ARROW, SHIFT, function() Adjust(90, 0, 0, 1) end)
+Bind(Key.LEFT_ARROW, CTRL, function() Adjust(-1, 0, 0, 1) end)
+Bind(Key.RIGHT_ARROW, CTRL, function() Adjust(1, 0, 0, 1) end)
+Bind(Key.LEFT_ARROW, CTRL_SHIFT, function() Adjust(-0.1, 0, 0, 1) end)
+Bind(Key.RIGHT_ARROW, CTRL_SHIFT, function() Adjust(0.1, 0, 0, 1) end)
+
 Bind(Key.UP_ARROW, nil, function() Adjust(0, 15, 0, 1) end)
 Bind(Key.DOWN_ARROW, nil, function() Adjust(0, -15, 0, 1) end)
 Bind(Key.UP_ARROW, SHIFT, function() Adjust(0, 90, 0, 1) end)
 Bind(Key.DOWN_ARROW, SHIFT, function() Adjust(0, -90, 0, 1) end)
 Bind(Key.UP_ARROW, CTRL, function() Adjust(0, 0, 90, 1) end)
 Bind(Key.DOWN_ARROW, CTRL, function() Adjust(0, 0, -90, 1) end)
+Bind(Key.UP_ARROW, CTRL_SHIFT, function() Adjust(0, 1, 0, 1) end)
+Bind(Key.DOWN_ARROW, CTRL_SHIFT, function() Adjust(0, -1, 0, 1) end)
+
 Bind(Key.OEM_PLUS, nil, function() Adjust(0, 0, 0, 1.25) end)
 Bind(Key.OEM_MINUS, nil, function() Adjust(0, 0, 0, 0.8) end)
 Bind(Key.HOME, nil, function() Adjust(0, 0, 0, 1, true) end)
 -- Nudge the model 10 cm at a time: Alt + Up/Down = away/towards you, Alt + Left/Right =
 -- left/right, Alt + '+'/'-' = up/down. Home clears it.
+-- Alt + Shift nudges 1 cm (0.01 m) at a time for fine placement.
 local ALT = { ModifierKey.ALT }
+local ALT_SHIFT = { ModifierKey.ALT, ModifierKey.SHIFT }
 local function Nudge(f, r, u)
     if not Skin then return end
     local n = Placer.Nudge or { F = 0, R = 0, U = 0 }
@@ -1914,6 +2908,12 @@ Bind(Key.RIGHT_ARROW, ALT, function() Nudge(0, 10, 0) end)
 Bind(Key.LEFT_ARROW, ALT, function() Nudge(0, -10, 0) end)
 Bind(Key.OEM_PLUS, ALT, function() Nudge(0, 0, 10) end)
 Bind(Key.OEM_MINUS, ALT, function() Nudge(0, 0, -10) end)
+Bind(Key.UP_ARROW, ALT_SHIFT, function() Nudge(1, 0, 0) end)
+Bind(Key.DOWN_ARROW, ALT_SHIFT, function() Nudge(-1, 0, 0) end)
+Bind(Key.RIGHT_ARROW, ALT_SHIFT, function() Nudge(0, 1, 0) end)
+Bind(Key.LEFT_ARROW, ALT_SHIFT, function() Nudge(0, -1, 0) end)
+Bind(Key.OEM_PLUS, ALT_SHIFT, function() Nudge(0, 0, 1) end)
+Bind(Key.OEM_MINUS, ALT_SHIFT, function() Nudge(0, 0, -1) end)
 
 -- End cycles snapping: edges of your models / grid of the nearest building / free.
 Bind(Key.END, nil, function()
@@ -1989,6 +2989,7 @@ end)
 Bind(Key.RIGHT_MOUSE_BUTTON, nil, function() StopPlacing() end)
 -- Esc only does something while the browser is open or a model is being placed.
 Bind(Key.ESCAPE, nil, function()
+    if InDialogue and HideDialogue then HideDialogue(); return end
     if UI.Visible then HideUI() elseif Skin then StopPlacing() end
 end)
 
@@ -2025,6 +3026,1352 @@ end
 Bind(Key.INS, nil, MoveLookedAt)
 Bind(Key.N, nil, function()
     if UI.Visible then HideUI() else ShowUI() end
+end)
+
+-- =========================================================================
+-- Custom Quests & Interactive Dialogue Engine
+-- =========================================================================
+Quests = {}             -- Loaded from quests.json
+QuestStates = {}        -- [questId] = { state = "unstarted"|"active"|"completed", progress = 0 }
+ActiveQuestId = nil     -- Active tracked quest id
+InDialogue = false      -- True while dialogue box is open
+CurrentDialogue = nil   -- { Quest, Choices = {} }
+DialogueUI = { Built = false, Panel = nil, Speaker = nil, Text = nil, Buttons = {} }
+TrackerUI = { Built = false, Panel = nil, Title = nil, Sub = nil }
+
+function JsonDecode(str)
+    if not str or str == "" then return nil end
+    local pos = 1
+    local len = #str
+
+    local function skipWhitespace()
+        while pos <= len do
+            local c = str:sub(pos, pos)
+            if c == ' ' or c == '\t' or c == '\n' or c == '\r' then
+                pos = pos + 1
+            else
+                break
+            end
+        end
+    end
+
+    local parseValue
+
+    local function parseString()
+        pos = pos + 1
+        local buf = {}
+        while pos <= len do
+            local c = str:sub(pos, pos)
+            if c == '"' then
+                pos = pos + 1
+                return table.concat(buf)
+            elseif c == '\\' then
+                pos = pos + 1
+                local esc = str:sub(pos, pos)
+                if esc == 'n' then buf[#buf + 1] = '\n'
+                elseif esc == 'r' then buf[#buf + 1] = '\r'
+                elseif esc == 't' then buf[#buf + 1] = '\t'
+                else buf[#buf + 1] = esc end
+                pos = pos + 1
+            else
+                buf[#buf + 1] = c
+                pos = pos + 1
+            end
+        end
+        return table.concat(buf)
+    end
+
+    local function parseNumber()
+        local s, e, num = str:find("^([%-]?%d+%.?%d*[eE]?[%+%-]?%d*)", pos)
+        if s then
+            pos = e + 1
+            return tonumber(num)
+        end
+        return nil
+    end
+
+    local function parseObject()
+        pos = pos + 1
+        local obj = {}
+        skipWhitespace()
+        if str:sub(pos, pos) == '}' then
+            pos = pos + 1
+            return obj
+        end
+        while pos <= len do
+            skipWhitespace()
+            if str:sub(pos, pos) ~= '"' then break end
+            local key = parseString()
+            skipWhitespace()
+            if str:sub(pos, pos) == ':' then pos = pos + 1 end
+            local val = parseValue()
+            obj[key] = val
+            skipWhitespace()
+            local c = str:sub(pos, pos)
+            if c == ',' then
+                pos = pos + 1
+            elseif c == '}' then
+                pos = pos + 1
+                break
+            else
+                break
+            end
+        end
+        return obj
+    end
+
+    local function parseArray()
+        pos = pos + 1
+        local arr = {}
+        skipWhitespace()
+        if str:sub(pos, pos) == ']' then
+            pos = pos + 1
+            return arr
+        end
+        while pos <= len do
+            local val = parseValue()
+            arr[#arr + 1] = val
+            skipWhitespace()
+            local c = str:sub(pos, pos)
+            if c == ',' then
+                pos = pos + 1
+            elseif c == ']' then
+                pos = pos + 1
+                break
+            else
+                break
+            end
+        end
+        return arr
+    end
+
+    parseValue = function()
+        skipWhitespace()
+        if pos > len then return nil end
+        local c = str:sub(pos, pos)
+        if c == '{' then
+            return parseObject()
+        elseif c == '[' then
+            return parseArray()
+        elseif c == '"' then
+            return parseString()
+        elseif c == 't' and str:sub(pos, pos + 3) == "true" then
+            pos = pos + 4; return true
+        elseif c == 'f' and str:sub(pos, pos + 4) == "false" then
+            pos = pos + 5; return false
+        elseif c == 'n' and str:sub(pos, pos + 3) == "null" then
+            pos = pos + 4; return nil
+        else
+            return parseNumber()
+        end
+    end
+
+    local ok, res = pcall(parseValue)
+    return ok and res or nil
+end
+
+function SaveQuestsState()
+    local path = ModDir .. "save_quests.txt"
+    if io.open(ModDir .. "save_quests.json", "rb") then
+        path = ModDir .. "save_quests.json"
+    end
+    local f = io.open(path, "wb")
+    if not f then return end
+    local lines = { "{" }
+    local first = true
+    for qid, s in pairs(QuestStates) do
+        local comma = first and "" or ","
+        first = false
+        if s.completedAt then
+            lines[#lines + 1] = string.format('  %s"%s": { "state": "%s", "progress": %d, "completedAt": %d }',
+                comma, qid, s.state or "unstarted", s.progress or 0, math.floor(s.completedAt))
+        else
+            lines[#lines + 1] = string.format('  %s"%s": { "state": "%s", "progress": %d }',
+                comma, qid, s.state or "unstarted", s.progress or 0)
+        end
+    end
+    lines[#lines + 1] = "}\n"
+    f:write(table.concat(lines, "\n"))
+    f:close()
+end
+
+function CheckDailyReset(quest)
+    if not quest or quest.repeatable ~= "daily" then return false end
+    local s = QuestStates[quest.id]
+    if not s or s.state ~= "completed" or not s.completedAt then return false end
+    local now = os.time()
+    local cDate = os.date("!*t", s.completedAt)
+    local nDate = os.date("!*t", now)
+    local isNewDay = (nDate.year > cDate.year)
+        or (nDate.year == cDate.year and nDate.yday > cDate.yday)
+        or (now - s.completedAt >= 86400)
+    if isNewDay then
+        Log(string.format("[QUESTS] Daily reset triggered for '%s' (completed at %s, now %s)",
+            quest.id, os.date("!%Y-%m-%d %H:%M:%S", s.completedAt), os.date("!%Y-%m-%d %H:%M:%S", now)))
+        s.state = "unstarted"
+        s.progress = 0
+        s.completedAt = nil
+        QuestStates[quest.id] = s
+        pcall(SaveQuestsState)
+        pcall(UpdateTrackerUI)
+        return true
+    end
+    return false
+end
+
+function CheckAllDailyQuests()
+    for _, q in ipairs(Quests or {}) do
+        pcall(CheckDailyReset, q)
+    end
+end
+
+LastQuestsText = nil
+function LoadQuests()
+    local text = ReadFile(ModDir .. "quests.txt")
+    if not text or text == "" then text = ReadFile(ModDir .. "quests.json") end
+    if text and text ~= "" and text ~= LastQuestsText then
+        LastQuestsText = text
+        local data = JsonDecode(text)
+        if data and data.quests then
+            Quests = data.quests
+            Log(string.format("[QUESTS] Loaded %d custom quests", #Quests))
+        end
+    end
+    local saveText = ReadFile(ModDir .. "save_quests.txt")
+    if not saveText or saveText == "" then saveText = ReadFile(ModDir .. "save_quests.json") end
+    if saveText and saveText ~= "" then
+        local save = JsonDecode(saveText)
+        if save then QuestStates = save end
+    end
+    pcall(CheckAllDailyQuests)
+    ActiveQuestId = nil
+    for qid, s in pairs(QuestStates) do
+        if s.state == "active" then
+            ActiveQuestId = qid
+            break
+        end
+    end
+end
+
+function QuestForNPC(npc)
+    if not npc or not Quests or #Quests == 0 then return nil end
+    local npcKey = (npc.Key or ""):lower()
+    local npcName = (npc.Name or ""):lower()
+    local npcMesh = (npc.Mesh or ""):lower()
+
+    for _, q in ipairs(Quests) do
+        local qNpc = (q.npc or ""):lower()
+        local qName = (q.npcName or ""):lower()
+        if qNpc ~= "" and (npcKey:find(qNpc, 1, true) or npcMesh:find(qNpc, 1, true)) then
+            return q
+        elseif qName ~= "" and (npcName:find(qName, 1, true) or npcKey:find(qName, 1, true)) then
+            return q
+        end
+    end
+    return nil
+end
+
+function GetPlayerInventory()
+    local pc = GetPC()
+    if not Valid(pc) then return nil end
+    local inv = nil
+    pcall(function() inv = pc.BP_Components_Inventory end)
+    if Valid(inv) then return inv end
+    pcall(function() inv = pc.Inventory end)
+    if Valid(inv) then return inv end
+
+    local pawn = nil
+    pcall(function() pawn = pc.Pawn or pc.AcknowledgedPawn end)
+    if Valid(pawn) then
+        pcall(function() inv = pawn.BP_Components_Inventory end)
+        if Valid(inv) then return inv end
+        pcall(function() inv = pawn.Inventory end)
+        if Valid(inv) then return inv end
+    end
+    return nil
+end
+
+function ItemMatchesTarget(itemName, targetName)
+    if not itemName or not targetName then return false end
+    local iname = tostring(itemName):lower():gsub("[^%w%s]", " ")
+    local tname = tostring(targetName):lower():gsub("[^%w%s]", " ")
+
+    local ic = iname:gsub("%s+", "")
+    local tc = tname:gsub("%s+", "")
+    if ic == tc then return true end
+    if ic:find(tc, 1, true) or tc:find(ic, 1, true) then return true end
+
+    -- Check if all words from target are in candidate name (e.g. "Iron Ore" -> "iron" and "ore" in "da item ore iron")
+    local allWordsMatch = true
+    local wordCount = 0
+    for word in tname:gmatch("%S+") do
+        wordCount = wordCount + 1
+        if not iname:find(word, 1, true) then
+            allWordsMatch = false
+            break
+        end
+    end
+    if wordCount > 0 and allWordsMatch then return true end
+    return false
+end
+
+function CountPlayerItems(targetItemName)
+    if not targetItemName or targetItemName == "" then return 0 end
+    local inv = GetPlayerInventory()
+    if not Valid(inv) then return 0 end
+
+    local numSlots = 0
+    pcall(function() numSlots = inv.ItemSlots:GetArrayNum() end)
+    if numSlots <= 0 then return 0 end
+
+    local total = 0
+
+    for i = 1, numSlots do
+        local item = nil
+        pcall(function() item = inv.ItemSlots[i] end)
+        if item and Valid(item) then
+            local count = 0
+            pcall(function() count = item:GetStackSize() end)
+            if not count or count <= 0 then count = 1 end
+
+            local matched = false
+            local namesToCheck = {}
+
+            pcall(function()
+                local facing = item:GetPlayerFacingName()
+                if facing and facing.ToString then namesToCheck[#namesToCheck + 1] = facing:ToString() end
+            end)
+            pcall(function()
+                if item.ItemData and Valid(item.ItemData) then
+                    namesToCheck[#namesToCheck + 1] = item.ItemData:GetFName():ToString()
+                    namesToCheck[#namesToCheck + 1] = item.ItemData:GetFullName()
+                end
+            end)
+            pcall(function() namesToCheck[#namesToCheck + 1] = item:GetFName():ToString() end)
+
+            for _, n in ipairs(namesToCheck) do
+                if ItemMatchesTarget(n, targetItemName) then
+                    matched = true
+                    break
+                end
+            end
+
+            if matched then
+                total = total + count
+            end
+        end
+    end
+    return total
+end
+
+function DeductPlayerItems(targetItemName, amountToDeduct)
+    if not targetItemName or not amountToDeduct or amountToDeduct <= 0 then return end
+    local inv = GetPlayerInventory()
+    if not Valid(inv) then return end
+    local pc = GetPC()
+
+    local numSlots = 0
+    pcall(function() numSlots = inv.ItemSlots:GetArrayNum() end)
+    if numSlots <= 0 then return end
+
+    local remaining = amountToDeduct
+
+    for i = 1, numSlots do
+        if remaining <= 0 then break end
+        local item = nil
+        pcall(function() item = inv.ItemSlots[i] end)
+        if item and Valid(item) then
+            local matched = false
+            local namesToCheck = {}
+
+            pcall(function()
+                local facing = item:GetPlayerFacingName()
+                if facing and facing.ToString then namesToCheck[#namesToCheck + 1] = facing:ToString() end
+            end)
+            pcall(function()
+                if item.ItemData and Valid(item.ItemData) then
+                    namesToCheck[#namesToCheck + 1] = item.ItemData:GetFName():ToString()
+                    namesToCheck[#namesToCheck + 1] = item.ItemData:GetFullName()
+                end
+            end)
+            pcall(function() namesToCheck[#namesToCheck + 1] = item:GetFName():ToString() end)
+
+            for _, n in ipairs(namesToCheck) do
+                if ItemMatchesTarget(n, targetItemName) then
+                    matched = true
+                    break
+                end
+            end
+
+            if matched then
+                local count = 0
+                pcall(function() count = item:GetStackSize() end)
+                if not count or count <= 0 then count = 1 end
+
+                local take = math.min(count, remaining)
+                local slotZero = i - 1
+                local didRemove = false
+
+                -- Method 1: RemoveItem if taking whole stack
+                if take >= count then
+                    pcall(function()
+                        local res = inv:RemoveItem(item)
+                        if res ~= false then didRemove = true end
+                    end)
+                end
+
+                -- Method 2: RemoveItemByData
+                if not didRemove and item.ItemData and Valid(item.ItemData) then
+                    pcall(function()
+                        local res = inv:RemoveItemByData(item.ItemData, take)
+                        if res ~= false then didRemove = true end
+                    end)
+                end
+
+                -- Method 3: RemoveFromSlot
+                if not didRemove then
+                    pcall(function()
+                        local res = inv:RemoveFromSlot(slotZero, take, pc)
+                        if res ~= false then didRemove = true end
+                    end)
+                end
+
+                -- Method 4: Stack reduction fallback
+                if not didRemove then
+                    if take < count then
+                        pcall(function() item:SetStackSize(count - take); didRemove = true end)
+                    else
+                        pcall(function() item:SetStackSize(0); inv:RemoveItem(item); didRemove = true end)
+                    end
+                end
+
+                remaining = remaining - take
+                Log(string.format("[QUEST] Deducted %d of '%s' from slot %d (remaining to deduct: %d)", take, namesToCheck[1] or targetItemName, i, remaining))
+            end
+        end
+    end
+end
+
+function FindItemData(searchName)
+    if not searchName or searchName == "" then return nil end
+    local inv = GetPlayerInventory()
+
+    -- 1. Scan player inventory slots
+    if Valid(inv) then
+        local numSlots = 0
+        pcall(function() numSlots = inv.ItemSlots:GetArrayNum() end)
+        for i = 1, numSlots do
+            local item = nil
+            pcall(function() item = inv.ItemSlots[i] end)
+            if item and Valid(item) and Valid(item.ItemData) then
+                local d = item.ItemData
+                local n1 = d:GetFName():ToString()
+                local n2 = d:GetFullName()
+                if ItemMatchesTarget(n1, searchName) or ItemMatchesTarget(n2, searchName) then
+                    return d
+                end
+            end
+        end
+    end
+
+    -- 2. Scan RecipeData items (consumed or created)
+    local okRecipes, recipes = pcall(FindAllOf, "RecipeData")
+    if okRecipes and recipes then
+        for _, r in ipairs(recipes) do
+            if Valid(r) then
+                for _, containerArr in ipairs({ r.ItemsCreated, r.ItemsConsumed }) do
+                    if containerArr then
+                        local n = 0
+                        pcall(function() n = containerArr:GetArrayNum() end)
+                        for i = 1, n do
+                            pcall(function()
+                                local e = containerArr[i]
+                                local d = e and e.ItemData
+                                if Valid(d) then
+                                    local n1 = d:GetFName():ToString()
+                                    local n2 = d:GetFullName()
+                                    if ItemMatchesTarget(n1, searchName) or ItemMatchesTarget(n2, searchName) then
+                                        return d
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 3. Scan loaded ItemData UObjects
+    local classes = { "ItemData", "DominionItemData", "ConsumableItemData", "ResourceItemData", "EquipmentItemData" }
+    for _, clsName in ipairs(classes) do
+        local ok, objs = pcall(FindAllOf, clsName)
+        if ok and objs then
+            for _, obj in ipairs(objs) do
+                if Valid(obj) then
+                    local n1 = obj:GetFName():ToString()
+                    local n2 = obj:GetFullName()
+                    if ItemMatchesTarget(n1, searchName) or ItemMatchesTarget(n2, searchName) then
+                        return obj
+                    end
+                end
+            end
+        end
+    end
+
+    -- 4. Direct known paths & alias mapping
+    local knownPaths = {
+        zamorak = "/Game/Gameplay/Items/Consumables/Misc/ITEM_Consumable_Pack_Zamorak_Mage.ITEM_Consumable_Pack_Zamorak_Mage",
+        zamorakian = "/Game/Gameplay/Items/Consumables/Misc/ITEM_Consumable_Pack_Zamorak_Mage.ITEM_Consumable_Pack_Zamorak_Mage",
+        zamorak_warrior = "/Game/Gameplay/Items/Consumables/Misc/ITEM_Consumable_Pack_Zamorak_Warrior.ITEM_Consumable_Pack_Zamorak_Warrior",
+        shrimp = "/Fishing/Gameplay/Items/Fishes/Shrimp/ITEM_Resources_Fish_Raw_Shrimp.ITEM_Resources_Fish_Raw_Shrimp",
+        raw_shrimp = "/Fishing/Gameplay/Items/Fishes/Shrimp/ITEM_Resources_Fish_Raw_Shrimp.ITEM_Resources_Fish_Raw_Shrimp",
+        garou = "/Game/Gameplay/Items/Consumables/DA_ITEM_Consumable_GarouPack.DA_ITEM_Consumable_GarouPack",
+        iron_ore = "/Game/Gameplay/Items/Resources/DA_Item_Ore_Iron.DA_Item_Ore_Iron",
+        iron_ingot = "/Game/Art/Item/Resources/Ingots/DA_Item_Ingot_Iron.DA_Item_Ingot_Iron"
+    }
+
+    local sLower = tostring(searchName):lower()
+    for alias, p in pairs(knownPaths) do
+        if sLower:find(alias, 1, true) or ItemMatchesTarget(alias, searchName) then
+            local obj = StaticFindObject(p)
+            if not Valid(obj) and LoadAsset then
+                pcall(LoadAsset, p)
+                obj = StaticFindObject(p)
+            end
+            if Valid(obj) then return obj end
+        end
+    end
+
+    -- If searchName looks like a full asset path directly
+    if searchName:find("^/") then
+        local obj = StaticFindObject(searchName)
+        if not Valid(obj) and LoadAsset then
+            pcall(LoadAsset, searchName)
+            obj = StaticFindObject(searchName)
+        end
+        if Valid(obj) then return obj end
+    end
+
+    return nil
+end
+
+function GivePlayerItem(itemDataOrName, count)
+    local inv = GetPlayerInventory()
+    if not Valid(inv) then return false, "No inventory component" end
+
+    local itemData = itemDataOrName
+    if type(itemDataOrName) == "string" then
+        itemData = FindItemData(itemDataOrName)
+    end
+    if not Valid(itemData) then
+        return false, "ItemData not found for: " .. tostring(itemDataOrName)
+    end
+
+    -- Preload UI skill icons if granting tomes (prevents UQuickAccessBarBase FindObject null-deref crash)
+    pcall(function()
+        local fullName = itemData:GetFullName()
+        if fullName:find("Tome", 1, true) and LoadAsset then
+            local skill = fullName:match("Tome_Tier%d+_([%w_]+)") or fullName:match("Tome_([%w_]+)")
+            if skill then
+                pcall(LoadAsset, "/Game/Art/UI/Icons/Skill_Tomes_Concept_Art/T_Icon_Skill_Tome_" .. skill .. ".T_Icon_Skill_Tome_" .. skill)
+                pcall(LoadAsset, "/Game/Art/UI/Skills/Icons/Tags/T_Icon_Tag_Skill_" .. skill .. ".T_Icon_Tag_Skill_" .. skill)
+                pcall(LoadAsset, "/Fishing/Art/UI/Icons/Fishing_Skill_Icons/T_Icon_Skill_Tome_Fishing.T_Icon_Skill_Tome_Fishing")
+                pcall(LoadAsset, "/Fishing/Art/UI/Icons/Fishing_Skill_Icons/T_Icon_Tag_Skill_Fishing.T_Icon_Tag_Skill_Fishing")
+            end
+        end
+    end)
+
+    local added = 0
+    local targetCount = count or 1
+    pcall(function()
+        local maxStack = 20
+        pcall(function() maxStack = itemData:GetMaxStackSize() end)
+        if not maxStack or maxStack <= 0 then maxStack = 20 end
+
+        while added < targetCount do
+            local chunk = math.min(targetCount - added, maxStack)
+
+            -- Check inventory capacity before attempting AddItemByData
+            local canAdd = true
+            pcall(function()
+                if inv.CanAddItemByData then
+                    canAdd = inv:CanAddItemByData(itemData, chunk)
+                end
+            end)
+            if not canAdd then
+                Log("[REWARD] Player inventory full; cannot add " .. tostring(chunk) .. " items")
+                break
+            end
+
+            -- Pass nil for FGameplayTagContainer to ensure zero-initialization in UE4SS
+            local ok = false
+            pcall(function()
+                ok = inv:AddItemByData(itemData, chunk, 1.0, nil)
+            end)
+            if not ok then break end
+            added = added + chunk
+        end
+    end)
+
+    if added > 0 then
+        Log(string.format("[REWARD] Given %d x %s to player inventory", added, itemData:GetFName():ToString()))
+        return true, added
+    else
+        return false, "AddItemByData failed or inventory full"
+    end
+end
+
+function DeliverQuestReward(quest)
+    if not quest or not quest.rewards then return end
+    local r = quest.rewards
+    local itemName = r.item
+    local count = r.count or 1
+    if not itemName or itemName == "" then return end
+
+    local ok, res = GivePlayerItem(itemName, count)
+    if ok then
+        Say(string.format("Received Reward: %d x %s!", count, itemName))
+    else
+        Log(string.format("[REWARD] Could not spawn item: %s (%s)", tostring(itemName), tostring(res)))
+        Say(string.format("Quest Complete! Reward: %s", r.text or (count .. "x " .. itemName)))
+    end
+end
+
+
+
+function CheckQuestObjective(quest)
+    if not quest or not quest.objective then return true end
+    local obj = quest.objective
+    local qid = quest.id
+    local state = QuestStates[qid] or {}
+    local target = obj.count or 1
+
+    if obj.type == "item" then
+        local invCount = CountPlayerItems(obj.item)
+        state.progress = invCount
+        QuestStates[qid] = state
+        return invCount >= target
+    end
+
+    local prog = state.progress or 0
+    return prog >= target
+end
+
+UpdateTrackerUI = nil -- forward decl
+
+function BuildDialogueUI(pc)
+    if DialogueUI.Built and Valid(DialogueUI.Speaker) then return true end
+    local ok, panel = pcall(MakePanel, pc, 10080)
+    DialogueUI.Panel = ok and panel or nil
+    DialogueUI.Speaker = NewWidget(pc, LABEL_CLASS, 10082)
+    DialogueUI.Text = NewWidget(pc, LABEL_CLASS, 10082)
+    DialogueUI.Buttons = {}
+    for i = 1, 4 do
+        DialogueUI.Buttons[i] = NewWidget(pc, BUTTON_CLASS, 10082)
+    end
+    DialogueUI.Built = true
+    return true
+end
+
+function HideDialogue()
+    InDialogue = false
+    CurrentDialogue = nil
+    if DialogueUI.Panel and Valid(DialogueUI.Panel.W) then
+        pcall(function() DialogueUI.Panel.W:SetVisibility(COLLAPSED) end)
+    end
+    if Valid(DialogueUI.Speaker) then pcall(function() DialogueUI.Speaker:SetVisibility(COLLAPSED) end) end
+    if Valid(DialogueUI.Text) then pcall(function() DialogueUI.Text:SetVisibility(COLLAPSED) end) end
+    for i = 1, 4 do
+        if Valid(DialogueUI.Buttons[i]) then pcall(function() DialogueUI.Buttons[i]:SetVisibility(COLLAPSED) end) end
+    end
+end
+
+function ShowDialogueNode(quest, speakerName, text, choices)
+    local pc = GetPC()
+    if not Valid(pc) then return end
+    if not BuildDialogueUI(pc) then return end
+
+    InDialogue = true
+    CurrentDialogue = {
+        Quest = quest,
+        Choices = choices or {}
+    }
+
+    local lay = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = lay:GetViewportSize(pc), lay:GetViewportScale(pc)
+    local vw, vh = size.X / dpi, size.Y / dpi
+
+    -- Large, immersive dialog box dimensions
+    local pw = math.min(960, math.floor(vw - 80))
+    local numChoices = choices and #choices or 0
+    local ph = math.max(260, 160 + numChoices * 30)
+    local px = math.floor((vw - pw) / 2)
+    -- Position safely above the player health/action bars (sitting at ~vh - 90 to vh - 20)
+    local py = math.floor(vh - ph - 110)
+
+    if DialogueUI.Panel and Valid(DialogueUI.Panel.W) then
+        SizePanel(DialogueUI.Panel, px, py, pw, ph)
+        pcall(function() DialogueUI.Panel.W:SetVisibility(VISIBLE) end)
+    end
+
+    if Valid(DialogueUI.Speaker) then
+        Place(DialogueUI.Speaker, px + 35, py + 18, pw - 70, 32)
+        Label(DialogueUI.Speaker, string.format("[ %s ]", speakerName:upper()))
+        DialogueUI.Speaker:SetVisibility(VISIBLE)
+    end
+
+    if Valid(DialogueUI.Text) then
+        Place(DialogueUI.Text, px + 38, py + 56, pw - 76, 75)
+        Label(DialogueUI.Text, text)
+        pcall(function()
+            if DialogueUI.Text.LabelText then
+                DialogueUI.Text.LabelText:SetAutoWrapText(true)
+                DialogueUI.Text.LabelText:SetWrapTextAt(pw - 76)
+            end
+        end)
+        DialogueUI.Text:SetVisibility(VISIBLE)
+    end
+
+    for i = 1, 4 do
+        local btn = DialogueUI.Buttons[i]
+        if Valid(btn) then
+            if i <= numChoices then
+                local ch = choices[i]
+                local by = py + 144 + (i - 1) * 28
+                Place(btn, px + 38, by, pw - 76, 26)
+                Label(btn, string.format("[ %d ]  %s", i, ch.text))
+                btn:SetVisibility(VISIBLE)
+            else
+                btn:SetVisibility(COLLAPSED)
+            end
+        end
+    end
+end
+
+function SelectDialogueChoice(index)
+    if not InDialogue or not CurrentDialogue then return end
+    local choices = CurrentDialogue.Choices
+    if not choices or not choices[index] then return end
+    local ch = choices[index]
+    local quest = CurrentDialogue.Quest
+
+    if ch.action == "start_quest" then
+        QuestStates[quest.id] = { state = "active", progress = 0 }
+        ActiveQuestId = quest.id
+        pcall(SaveQuestsState)
+        pcall(UpdateTrackerUI)
+        pcall(Say, string.format("Quest Started: %s", quest.title))
+        pcall(HideDialogue)
+        return
+    elseif ch.action == "complete_quest" then
+        if quest.objective and quest.objective.type == "item" then
+            pcall(DeductPlayerItems, quest.objective.item, quest.objective.count or 1)
+        end
+        pcall(DeliverQuestReward, quest)
+        QuestStates[quest.id] = {
+            state = "completed",
+            progress = quest.objective and quest.objective.count or 1,
+            completedAt = os.time()
+        }
+        if ActiveQuestId == quest.id then ActiveQuestId = nil end
+        pcall(SaveQuestsState)
+        pcall(UpdateTrackerUI)
+        pcall(Say, string.format("Quest Completed: %s! Reward: %s", quest.title, quest.rewards and quest.rewards.text or "Glory"))
+        pcall(HideDialogue)
+        return
+    elseif ch.action == "close" then
+        pcall(HideDialogue)
+        return
+    end
+
+    if ch.target and quest.startDialogue and quest.startDialogue.branches and quest.startDialogue.branches[ch.target] then
+        local b = quest.startDialogue.branches[ch.target]
+        local speaker = b.speaker or quest.npcName or "NPC"
+        local bChoices = b.choices or { { text = "Continue", action = b.action or "close" } }
+        ShowDialogueNode(quest, speaker, b.text, bChoices)
+        return
+    end
+
+    pcall(HideDialogue)
+end
+
+UpdateTrackerUI = function()
+    ExecuteInGameThread(function()
+        local ok, err = pcall(function()
+            local pc = GetPC()
+            if not Valid(pc) then return end
+            if not ActiveQuestId then
+                if TrackerUI and TrackerUI.Panel and Valid(TrackerUI.Panel.W) then
+                    pcall(function() TrackerUI.Panel.W:SetVisibility(COLLAPSED) end)
+                end
+                if TrackerUI and Valid(TrackerUI.Title) then pcall(function() TrackerUI.Title:SetVisibility(COLLAPSED) end) end
+                if TrackerUI and Valid(TrackerUI.Sub) then pcall(function() TrackerUI.Sub:SetVisibility(COLLAPSED) end) end
+                return
+            end
+
+            local quest = nil
+            for _, q in ipairs(Quests or {}) do
+                if q.id == ActiveQuestId then quest = q; break end
+            end
+            if not quest then return end
+
+            if not TrackerUI.Built or not Valid(TrackerUI.Title) then
+                local okP, panel = pcall(MakePanel, pc, 10050)
+                TrackerUI.Panel = okP and panel or nil
+                local okT, t = pcall(NewWidget, pc, LABEL_CLASS, 10051)
+                TrackerUI.Title = okT and t or nil
+                local okS, s = pcall(NewWidget, pc, LABEL_CLASS, 10051)
+                TrackerUI.Sub = okS and s or nil
+                TrackerUI.Built = true
+            end
+
+            local lay = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+            if not Valid(lay) then return end
+            local size, dpi = lay:GetViewportSize(pc), lay:GetViewportScale(pc)
+            if not size or not dpi or dpi <= 0 then return end
+            local vw, vh = size.X / dpi, size.Y / dpi
+
+            local tw, th = 360, 76
+            local tx, ty = vw - tw - 24, 75
+
+            if TrackerUI.Panel and Valid(TrackerUI.Panel.W) then
+                SizePanel(TrackerUI.Panel, tx, ty, tw, th)
+                pcall(function() TrackerUI.Panel.W:SetVisibility(VISIBLE) end)
+            end
+
+            if Valid(TrackerUI.Title) then
+                Place(TrackerUI.Title, tx + 16, ty + 10, tw - 32, 24)
+                Label(TrackerUI.Title, string.format("[QUEST] %s", quest.title))
+                pcall(function() TrackerUI.Title:SetVisibility(VISIBLE) end)
+            end
+
+            local qstate = QuestStates[ActiveQuestId] or {}
+            local obj = quest.objective or {}
+            local cur = qstate.progress or 0
+            if obj.type == "item" then
+                local invCount = CountPlayerItems(obj.item)
+                cur = invCount
+                qstate.progress = invCount
+                QuestStates[ActiveQuestId] = qstate
+            end
+            local target = obj.count or 1
+            local objText = obj.hudText or obj.trackerText or quest.description or "Objective"
+
+            if Valid(TrackerUI.Sub) then
+                Place(TrackerUI.Sub, tx + 18, ty + 38, tw - 36, 24)
+                Label(TrackerUI.Sub, string.format("> %s: %d / %d", objText, cur, target))
+                pcall(function() TrackerUI.Sub:SetVisibility(VISIBLE) end)
+            end
+        end)
+        if not ok then Log("[TRACKER] Update error: " .. tostring(err)) end
+    end)
+end
+
+function HandleCompanionInteraction(npc)
+    if not npc then return false end
+    local quest = QuestForNPC(npc)
+    if not quest then return false end
+
+    pcall(CheckDailyReset, quest)
+
+    local qid = quest.id
+    local state = QuestStates[qid] and QuestStates[qid].state or "unstarted"
+
+    if state == "unstarted" then
+        local sd = quest.startDialogue or {}
+        local speaker = sd.speaker or quest.npcName or npc.Name or "NPC"
+        local choices = sd.choices or { { text = "Understood", action = "close" } }
+        ShowDialogueNode(quest, speaker, sd.text or "Greetings!", choices)
+        return true
+    elseif state == "active" then
+        if CheckQuestObjective(quest) then
+            local td = quest.turnInDialogue or {}
+            local speaker = td.speaker or quest.npcName or npc.Name or "NPC"
+            local choices = td.choices or { { text = "Complete Quest", action = "complete_quest" } }
+            ShowDialogueNode(quest, speaker, td.text or "You completed it!", choices)
+            return true
+        else
+            local pd = quest.progressDialogue or {}
+            local speaker = pd.speaker or quest.npcName or npc.Name or "NPC"
+            local choices = pd.choices or { { text = "I'm on it.", action = "close" } }
+            ShowDialogueNode(quest, speaker, pd.text or "Still working on it?", choices)
+            return true
+        end
+    elseif state == "completed" then
+        local cd = quest.completedDialogue or {}
+        if cd.text then
+            local speaker = cd.speaker or quest.npcName or npc.Name or "NPC"
+            ShowDialogueNode(quest, speaker, cd.text, { { text = "See you around.", action = "close" } })
+            return true
+        end
+    end
+    return false
+end
+
+-- =========================================================================
+-- Quest Markers (3D Overhead Bobbing & Minimap Icons)
+-- =========================================================================
+QuestMarkerUI = { Markers = {}, Built = false }
+CompanionMinimapIcons = {}
+RegisteredMinimapIcons = {}
+CachedQuestTextures = {}
+DefaultUMGMat = nil
+MapIconCompClass = nil
+LastDailyCheckTime = 0
+LastMinimapCheckTime = 0
+LastCompanionScanTime = 0
+LastObjectiveCheckTime = 0
+LastObjectiveResult = {}
+CachedWorldCompanions = {}
+
+OnWorldChange[#OnWorldChange + 1] = function()
+    for _, m in pairs(QuestMarkerUI.Markers or {}) do
+        if m and Valid(m.Widget) then
+            pcall(function() m.Widget:RemoveFromViewport() end)
+        end
+    end
+    QuestMarkerUI.Markers = {}
+    CompanionMinimapIcons = {}
+    RegisteredMinimapIcons = {}
+    LastObjectiveResult = {}
+    CachedWorldCompanions = {}
+    LastCompanionScanTime = 0
+end
+
+function GetQuestTexture(path)
+    if not path or path == "" then return nil end
+    if CachedQuestTextures[path] and Valid(CachedQuestTextures[path]) then
+        return CachedQuestTextures[path]
+    end
+    local tex = StaticFindObject(path)
+    if not Valid(tex) and StaticLoadObject then
+        pcall(function()
+            local texClass = StaticFindObject("/Script/Engine.Texture2D")
+            tex = StaticLoadObject(texClass, nil, path)
+        end)
+    end
+    if Valid(tex) then CachedQuestTextures[path] = tex end
+    return tex
+end
+
+function GetMapIconMaterial()
+    if Valid(DefaultUMGMat) then return DefaultUMGMat end
+    local path = "/MinimapPlugin/Materials/Icons/M_UMG_MapIcon.M_UMG_MapIcon"
+    local mat = StaticFindObject(path)
+    if not Valid(mat) and StaticLoadObject then
+        pcall(function()
+            local matClass = StaticFindObject("/Script/Engine.Material")
+            mat = StaticLoadObject(matClass, nil, path)
+        end)
+    end
+    if Valid(mat) then DefaultUMGMat = mat end
+    return mat
+end
+
+function EnsureCompanionMinimapIcon(actor, quest, markerState)
+    if not Valid(actor) then return nil end
+    local addr = nil
+    pcall(function() addr = actor:GetAddress() end)
+    if not addr then return nil end
+
+    if not MapIconCompClass or not Valid(MapIconCompClass) then
+        MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent")
+    end
+    if not MapIconCompClass or not Valid(MapIconCompClass) then return nil end
+
+    local comp = CompanionMinimapIcons[addr]
+    if not Valid(comp) then
+        if actor.GetComponentByClass then
+            pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
+        end
+    end
+
+    local transform = {
+        Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+        Translation = { X = 0, Y = 0, Z = 120.0 },
+        Scale3D = { X = 1, Y = 1, Z = 1 }
+    }
+
+    if not Valid(comp) then
+        local ok, res = pcall(function()
+            return actor:AddComponentByClass(MapIconCompClass, false, transform, false)
+        end)
+        if ok and Valid(res) then
+            comp = res
+            CompanionMinimapIcons[addr] = comp
+        end
+    end
+    if not Valid(comp) then return nil end
+
+    local tex = GetQuestTexture("/Game/Art/UI/Map/T_Map_Primary_Quest_Icon_NPC.T_Map_Primary_Quest_Icon_NPC")
+        or GetQuestTexture("/Game/Art/UI/NavIcons/T_NavIcons_QuestMarker.T_NavIcons_QuestMarker")
+        or GetQuestTexture("/MinimapPlugin/Textures/Icons/T_Icon_Placeholder.T_Icon_Placeholder")
+
+    local umgMat = GetMapIconMaterial()
+
+    pcall(function()
+        if Valid(umgMat) then
+            comp.IconMaterial_UMG = umgMat
+            comp.InitialIconMaterial_UMG = umgMat
+            if comp.SetIconMaterialForUMG then comp:SetIconMaterialForUMG(umgMat) end
+        end
+        if Valid(tex) and comp.SetIconTexture then comp:SetIconTexture(tex) end
+
+        local color = { R = 1.0, G = 0.85, B = 0.15, A = 1.0 }
+        local size = 26.0
+        local visible = (markerState ~= nil)
+
+        if markerState == "available" then
+            color = { R = 1.0, G = 0.85, B = 0.15, A = 1.0 }
+            size = 28.0
+        elseif markerState == "active" then
+            color = { R = 0.7, G = 0.85, B = 1.0, A = 1.0 }
+            size = 24.0
+        elseif markerState == "turnin" then
+            color = { R = 1.0, G = 0.95, B = 0.1, A = 1.0 }
+            size = 32.0
+        end
+
+        if comp.SetIconDrawColor then comp:SetIconDrawColor(color) end
+        if comp.SetIconSize then comp:SetIconSize(size, 0) end
+        if comp.SetIconZOrder then comp:SetIconZOrder(160) end
+        if comp.SetIconVisible then comp:SetIconVisible(visible) end
+        if comp.SetObjectiveArrowEnabled then comp:SetObjectiveArrowEnabled(visible) end
+
+        local arrowTex = GetQuestTexture("/MinimapPlugin/Textures/Icons/T_Icon_ObjectiveArrow.T_Icon_ObjectiveArrow")
+        if Valid(arrowTex) and comp.SetObjectiveArrowTexture then
+            comp:SetObjectiveArrowTexture(arrowTex)
+        end
+    end)
+
+    if not RegisteredMinimapIcons[addr] then
+        RegisteredMinimapIcons[addr] = true
+        pcall(function()
+            local maps = FindAllOf("WBP_DominionMinimap_C") or {}
+            for _, m in ipairs(maps) do
+                if Valid(m) and m.AddMapIcon then
+                    m:AddMapIcon(comp)
+                end
+            end
+        end)
+    end
+
+    return comp
+end
+
+function NewQuestMarkerWidget(pc)
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not Valid(lib) then return nil end
+    local cls = StaticFindObject(BUTTON_CLASS)
+    if not Valid(cls) and LoadAsset then
+        pcall(LoadAsset, BUTTON_CLASS)
+        cls = StaticFindObject(BUTTON_CLASS)
+    end
+    if not Valid(cls) then
+        cls = StaticFindObject(LABEL_CLASS)
+        if not Valid(cls) and LoadAsset then
+            pcall(LoadAsset, LABEL_CLASS)
+            cls = StaticFindObject(LABEL_CLASS)
+        end
+    end
+    if not Valid(cls) then return nil end
+    local w = lib:Create(pc, cls, pc)
+    if not Valid(w) then return nil end
+    w:SetIsFocusable(false)
+    w:SetVisibility(1) -- COLLAPSED
+    w:AddToViewport(10095)
+    return w
+end
+
+function EnsureQuestMarkerWidget(addr, pc)
+    if QuestMarkerUI.Markers[addr] and Valid(QuestMarkerUI.Markers[addr].Widget) then
+        return QuestMarkerUI.Markers[addr]
+    end
+    local w = NewQuestMarkerWidget(pc)
+    if not Valid(w) then return nil end
+
+    local m = {
+        Widget = w,
+        Visible = false
+    }
+    QuestMarkerUI.Markers[addr] = m
+    return m
+end
+
+function HideAllQuestMarkers()
+    for _, m in pairs(QuestMarkerUI.Markers or {}) do
+        if m and Valid(m.Widget) then
+            pcall(function() m.Widget:SetVisibility(1) end)
+        end
+        if m then m.Visible = false end
+    end
+end
+
+function UpdateQuestWorldMarkers()
+    local pc = GetPC()
+    if not Valid(pc) then
+        HideAllQuestMarkers()
+        return
+    end
+
+    local _, pawn = Pawn()
+    if not Valid(pawn) then
+        HideAllQuestMarkers()
+        return
+    end
+
+    local pLoc = nil
+    local okLoc, locRes = pcall(function() return pawn:K2_GetActorLocation() end)
+    if okLoc and locRes then pLoc = locRes end
+    if not pLoc then return end
+
+    local nowClock = os.clock()
+    if nowClock - LastDailyCheckTime > 5.0 then
+        LastDailyCheckTime = nowClock
+        pcall(CheckAllDailyQuests)
+    end
+
+    local updateMinimap = false
+    if nowClock - LastMinimapCheckTime > 1.0 then
+        LastMinimapCheckTime = nowClock
+        updateMinimap = true
+    end
+
+    local checkObjectives = false
+    if nowClock - LastObjectiveCheckTime > 0.5 then
+        LastObjectiveCheckTime = nowClock
+        checkObjectives = true
+    end
+
+    local companions = {}
+    for _, info in pairs(BaseNPCs or {}) do
+        if info and Valid(info.Actor) then companions[#companions + 1] = info end
+    end
+    if #companions == 0 then
+        if nowClock - LastCompanionScanTime > 5.0 then
+            LastCompanionScanTime = nowClock
+            CachedWorldCompanions = FindAllCompanions()
+        end
+        for _, a in ipairs(CachedWorldCompanions or {}) do
+            if Valid(a) then
+                companions[#companions + 1] = { Actor = a, Name = "Doric", Key = "doric" }
+            end
+        end
+    end
+
+    local seenMarkers = {}
+    local timeSec = os.clock()
+
+    for _, info in ipairs(companions) do
+        local actor = info.Actor
+        if Valid(actor) then
+            local addr = nil
+            pcall(function() addr = actor:GetAddress() end)
+            if addr then
+                local quest = QuestForNPC(info)
+                if quest then
+                    local qid = quest.id
+                    local st = QuestStates[qid] and QuestStates[qid].state or "unstarted"
+                    local markerType = nil
+
+                    if st == "unstarted" then
+                        markerType = "available"
+                    elseif st == "active" then
+                        if checkObjectives or LastObjectiveResult[qid] == nil then
+                            LastObjectiveResult[qid] = CheckQuestObjective(quest)
+                        end
+                        if LastObjectiveResult[qid] then
+                            markerType = "turnin"
+                        else
+                            markerType = "active"
+                        end
+                    end
+
+                    if updateMinimap then
+                        pcall(EnsureCompanionMinimapIcon, actor, quest, markerType)
+                    end
+
+                    local m = EnsureQuestMarkerWidget(addr, pc)
+                    if m and markerType then
+                        seenMarkers[addr] = true
+                        local aLoc = nil
+                        pcall(function() aLoc = actor:K2_GetActorLocation() end)
+
+                        if aLoc then
+                            local dist = Dist(aLoc, pLoc)
+                            if dist <= 3500 then
+                                local bob = math.sin(timeSec * 3.8) * 7.0
+                                local offsetZ = 85.0
+                                pcall(function()
+                                    if Valid(actor.CapsuleComponent) then
+                                        local hh = actor.CapsuleComponent:GetScaledCapsuleHalfHeight()
+                                        if hh and hh > 30.0 then offsetZ = hh + 25.0 end
+                                    end
+                                end)
+                                local headLoc = { X = aLoc.X, Y = aLoc.Y, Z = aLoc.Z + offsetZ + bob }
+
+                                local okP, retP, scrPos = pcall(function()
+                                    return pc:ProjectWorldLocationToScreen(headLoc, false)
+                                end)
+
+                                if okP and retP == true and scrPos and scrPos.X and scrPos.Y then
+                                    local lay = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+                                    local dpi = 1.0
+                                    if Valid(lay) then
+                                        local s = lay:GetViewportScale(pc)
+                                        if s and s > 0 then dpi = s end
+                                    end
+                                    local sx = scrPos.X / dpi
+                                    local sy = scrPos.Y / dpi
+
+                                    local scale = math.max(0.8, math.min(1.2, 1.25 - (dist / 3500) * 0.45))
+                                    local bw = math.floor(52 * scale)
+                                    local bh = math.floor(48 * scale)
+
+                                    local w = m.Widget
+                                    if Valid(w) then
+                                        w:SetAlignmentInViewport({ X = 0.5, Y = 1.0 })
+                                        w:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
+                                        w:SetPositionInViewport({ X = sx, Y = sy }, false)
+                                        w:SetDesiredSizeInViewport({ X = bw, Y = bh })
+
+                                        local symbol = "!"
+                                        if markerType == "available" then
+                                            symbol = "!"
+                                        elseif markerType == "active" then
+                                            symbol = "?"
+                                        elseif markerType == "turnin" then
+                                            symbol = "?"
+                                        end
+
+                                        pcall(function()
+                                            if Valid(w.LabelText) then
+                                                w.LabelText:SetText(Text(symbol))
+                                            elseif Valid(w.ButtonLabel) then
+                                                w.ButtonLabel:SetText(Text(symbol))
+                                            else
+                                                w:SetLabelText(Text(symbol))
+                                            end
+                                        end)
+
+                                        pcall(function()
+                                            local txt = Valid(w.LabelText) and w.LabelText or (Valid(w.ButtonLabel) and w.ButtonLabel or nil)
+                                            if Valid(txt) then
+                                                local col = { R = 1.0, G = 0.85, B = 0.15, A = 1.0 }
+                                                if markerType == "active" then
+                                                    col = { R = 0.75, G = 0.8, B = 0.85, A = 0.95 }
+                                                elseif markerType == "turnin" then
+                                                    local pulse = 0.8 + 0.2 * math.sin(timeSec * 6.0)
+                                                    col = { R = 1.0, G = pulse, B = 0.1, A = 1.0 }
+                                                end
+                                                txt:SetColorAndOpacity({ SpecifiedColor = col, ColorUseRule = 0 })
+                                            end
+                                        end)
+
+                                        pcall(function() w:SetVisibility(0) end) -- VISIBLE
+                                        m.Visible = true
+                                    end
+                                else
+                                    if Valid(m.Widget) then pcall(function() m.Widget:SetVisibility(1) end) end
+                                    m.Visible = false
+                                end
+                            else
+                                if Valid(m.Widget) then pcall(function() m.Widget:SetVisibility(1) end) end
+                                m.Visible = false
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    for addr, m in pairs(QuestMarkerUI.Markers) do
+        if not seenMarkers[addr] and m.Visible then
+            if Valid(m.Widget) then pcall(function() m.Widget:SetVisibility(1) end) end
+            m.Visible = false
+        end
+    end
+end
+
+-- Key bindings for dialogue choices
+function SafeBind(k, fn)
+    if k then pcall(Bind, k, nil, fn) end
+end
+function SafeSelectChoice(index)
+    ExecuteInGameThread(function()
+        local ok, err = pcall(SelectDialogueChoice, index)
+        if not ok then
+            Log("SelectDialogueChoice error: " .. tostring(err))
+            pcall(HideDialogue)
+        end
+    end)
+end
+SafeBind(Key.ONE, function() if InDialogue then SafeSelectChoice(1) end end)
+SafeBind(Key.TWO, function() if InDialogue then SafeSelectChoice(2) end end)
+SafeBind(Key.THREE, function() if InDialogue then SafeSelectChoice(3) end end)
+SafeBind(Key.FOUR, function() if InDialogue then SafeSelectChoice(4) end end)
+SafeBind(Key.SPACE_BAR, function() if InDialogue then SafeSelectChoice(1) end end)
+SafeBind(Key.ESCAPE, function() if InDialogue then HideDialogue() end end)
+SafeBind(Key.NUM_ONE, function() if InDialogue then SafeSelectChoice(1) end end)
+SafeBind(Key.NUM_TWO, function() if InDialogue then SafeSelectChoice(2) end end)
+SafeBind(Key.NUM_THREE, function() if InDialogue then SafeSelectChoice(3) end end)
+SafeBind(Key.NUM_FOUR, function() if InDialogue then SafeSelectChoice(4) end end)
+
+-- =========================================================================
+-- Base Companion Interaction (E)
+-- =========================================================================
+function TriggerCompanionBark(npc)
+    if not npc then return end
+    local k = npc.Key or "npc"
+    local barks = NPCBarks[k]
+    if not barks then
+        for barkKey, list in pairs(NPCBarks) do
+            if k:find(barkKey, 1, true) then barks = list; break end
+        end
+    end
+    if not barks then
+        barks = {
+            string.format("%s: Hello there, builder!", npc.Name or "Companion"),
+            string.format("%s: A peaceful day in your base.", npc.Name or "Companion")
+        }
+    end
+    local bark = barks[math.random(#barks)]
+    Say(bark)
+end
+
+Bind(Key.E, nil, function()
+    if UI.Visible or Skin then return end
+    local _, pawn = Pawn()
+    if not pawn then return end
+    -- 1. Check if aiming directly at a companion (within 350cm)
+    local lookedId = FindLookedAt(350)
+    local a = lookedId and Props[lookedId]
+    if Valid(a) and BaseNPCs[a:GetAddress()] then
+        local npc = BaseNPCs[a:GetAddress()]
+        if HandleCompanionInteraction(npc) then return end
+        TriggerCompanionBark(npc)
+        return
+    end
+    -- 2. Check closest companion within 250 cm
+    local p = pawn:K2_GetActorLocation()
+    local bestNpc, bestD = nil, 62500 -- 250cm squared
+    for addr, n in pairs(BaseNPCs) do
+        if Valid(n.Actor) then
+            local l = n.Actor:K2_GetActorLocation()
+            local dx, dy, dz = l.X - p.X, l.Y - p.Y, l.Z - p.Z
+            local d2 = dx*dx + dy*dy + dz*dz
+            if d2 < bestD then
+                bestNpc = n
+                bestD = d2
+            end
+        end
+    end
+    if bestNpc then
+        if HandleCompanionInteraction(bestNpc) then return end
+        TriggerCompanionBark(bestNpc)
+    end
 end)
 
 -- Hovering one of our tiles shows the model's name in the panel title.
@@ -2162,6 +4509,7 @@ local function SetAnchor()
     local yaw = rot and rot.Yaw or 0
     WriteText("anchor.txt", string.format("# CustomBuilds anchor: x|y|z|yaw (cm, degrees). Written by cb anchor.\n%.2f|%.2f|%.2f|%.2f\n",
         p.X, p.Y, p.Z, yaw))
+    WriteText("player.txt", string.format("%.2f|%.2f|%.2f|%.2f\n", p.X, p.Y, p.Z, yaw))
     -- The normal building pieces around it, as a reference for the website.
     local m = Manager()
     local names = PieceNames()
@@ -2186,10 +4534,7 @@ local function SetAnchor()
 end
 
 RegisterConsoleCommandHandler("cb", function(full, params, out)
-    local function Say(msg)
-        Log(msg)
-        pcall(function() out:Log(ModName .. ": " .. msg) end)
-    end
+    LastConsoleOut = out
     CheckWorld()
     local cmd = params[1] and params[1]:lower() or ""
     local ok, err = pcall(function()
@@ -2242,9 +4587,199 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
         elseif cmd == "clear" then
             for _, a in ipairs(TestProps) do if Valid(a) then pcall(function() a:K2_DestroyActor() end) end end
             TestProps = {}
-            Say("Test props removed")
+            local d, _ = CleanupCompanions(false)
+            Say(string.format("Test props and %d companion(s) removed", d))
+        elseif cmd == "npcs" then
+            Say("Available NPCs: doric, wise, vannaka, zanik, cook, death, pete, chicken, cow, garou, chin, pet_chin, dummy, mannequin, guard, zilyana")
+            Say("Usage: cb npc <name>, cb npc clean (removes duplicates), cb npc clear (removes all)")
+        elseif cmd == "npc" then
+            local which = params[2] and params[2]:lower() or "doric"
+            if which == "clean" then
+                local d, k = CleanupCompanions(true)
+                Say(string.format("Cleaned duplicates: removed %d, kept %d companion(s)", d, k))
+                return
+            elseif which == "clear" or which == "purge" or which == "reset" then
+                local d, _ = CleanupCompanions(false)
+                local removedPlaced = 0
+                for id, r in pairs(Placed or {}) do
+                    if ResolveNPCBlueprint(r.Mesh) then
+                        DestroyProp(id)
+                        Placed[id] = nil
+                        removedPlaced = removedPlaced + 1
+                    end
+                end
+                if removedPlaced > 0 then SavePlaced() end
+                BaseNPCs = {}
+                Say(string.format("Cleared all companions (%d actors removed, %d placed records cleared). Clean slate!", d, removedPlaced))
+                return
+            end
+            local npcMap = {
+                doric = "/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C",
+                wise = "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C",
+                wiseoldman = "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C",
+                vannaka = "/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C",
+                zanik = "/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C",
+                cook = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Cook.BP_NPC_Cook_C",
+                death = "/Game/Gameplay/NPCs/BP_NPC_Death.BP_NPC_Death_C",
+                pete = "/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C",
+                chicken = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Chicken.BP_NPC_Quest_Chicken_C",
+                cow = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Cow.BP_NPC_Quest_Cow_C",
+                garou = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+                chin = "/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+                pet_chin = "/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+                dummy = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_TrainingDummy.BP_BaseBuilding_TrainingDummy_C",
+                mannequin = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_ArmourMannequin.BP_BaseBuilding_ArmourMannequin_C",
+                guard = "/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
+                zilyana = "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C",
+            }
+            local bpPath = npcMap[which] or ResolveNPCBlueprint(which) or which
+            local _, pawn = Pawn()
+            if not pawn then Say("Not in world"); return end
+            local loc = pawn:K2_GetActorLocation()
+            local fwd = pawn:GetActorForwardVector()
+            local rot = pawn:K2_GetActorRotation()
+            local r = {
+                X = loc.X + fwd.X * 250,
+                Y = loc.Y + fwd.Y * 250,
+                Z = loc.Z - 40,
+                Yaw = (rot.Yaw or 0) + 180,
+                Pitch = 0,
+                Roll = 0,
+                Scale = 1
+            }
+            local a, why = SpawnNPC(bpPath, r, false)
+            if Valid(a) then
+                TestProps[#TestProps + 1] = a
+                Say("Spawned Companion: " .. which .. "! Walk up and press E to chat. Use cb clear to remove.")
+            else
+                Say("Failed to spawn " .. which .. ": " .. tostring(why))
+            end
+        elseif cmd == "quest" or cmd == "quests" then
+            local sub = params[2] and params[2]:lower() or ""
+            if sub == "reload" then
+                LoadQuests()
+                UpdateTrackerUI()
+                Say("Reloaded quests from quests.json")
+            elseif sub == "reset" then
+                QuestStates = {}
+                SaveQuestsState()
+                ActiveQuestId = nil
+                LoadQuests()
+                UpdateTrackerUI()
+                Say("Reset all quest progression!")
+            elseif sub == "daily" then
+                CheckAllDailyQuests()
+                Say("Checked daily reset for repeatable quests.")
+            elseif sub == "step" then
+                if ActiveQuestId then
+                    local q = nil
+                    for _, quest in ipairs(Quests or {}) do
+                        if quest.id == ActiveQuestId then q = quest; break end
+                    end
+                    local st = QuestStates[ActiveQuestId] or { state = "active", progress = 0 }
+                    st.progress = (st.progress or 0) + 1
+                    QuestStates[ActiveQuestId] = st
+                    SaveQuestsState()
+                    UpdateTrackerUI()
+                    Say(string.format("Quest '%s' stepped: %d/%d", (q and q.title or ActiveQuestId), st.progress, (q and q.objective and q.objective.count or 1)))
+                else
+                    Say("No active quest to advance.")
+                end
+            elseif sub == "check" then
+                if ActiveQuestId then
+                    local q = nil
+                    for _, quest in ipairs(Quests or {}) do
+                        if quest.id == ActiveQuestId then q = quest; break end
+                    end
+                    if q and q.objective and q.objective.type == "item" then
+                        local c = CountPlayerItems(q.objective.item)
+                        Say(string.format("Quest '%s': Found %d/%d '%s' in inventory", q.title, c, q.objective.count or 1, q.objective.item))
+                    else
+                        Say(string.format("Active quest '%s' is not an item collection objective.", q and q.title or ActiveQuestId))
+                    end
+                else
+                    Say("No active quest to check.")
+                end
+            elseif sub == "complete" then
+                if ActiveQuestId then
+                    local q = nil
+                    for _, quest in ipairs(Quests or {}) do
+                        if quest.id == ActiveQuestId then q = quest; break end
+                    end
+                    local st = QuestStates[ActiveQuestId] or { state = "completed", progress = 1 }
+                    st.state = "completed"
+                    QuestStates[ActiveQuestId] = st
+                    ActiveQuestId = nil
+                    SaveQuestsState()
+                    UpdateTrackerUI()
+                    Say(string.format("Quest '%s' marked completed!", (q and q.title or "Quest")))
+                else
+                    Say("No active quest to complete.")
+                end
+            else
+                Say("Quest commands: cb quest reload, cb quest reset, cb quest step, cb quest check, cb quest complete")
+                local count = 0
+                for _, q in ipairs(Quests or {}) do
+                    count = count + 1
+                    local st = QuestStates[q.id] and QuestStates[q.id].state or "unstarted"
+                    local prog = QuestStates[q.id] and QuestStates[q.id].progress or 0
+                    Say(string.format(" - [%s] %s (%s, %d/%d)", q.id, q.title or "Untitled", st, prog, (q.objective and q.objective.count or 1)))
+                end
+                if count == 0 then Say("No quests currently loaded. Check quests.json!") end
+            end
+        elseif cmd == "inv" then
+            local inv = GetPlayerInventory()
+            if not Valid(inv) then
+                Say("Player inventory component not found.")
+            else
+                local numSlots = 0
+                pcall(function() numSlots = inv.ItemSlots:GetArrayNum() end)
+                local found = 0
+                for i = 1, numSlots do
+                    local item = nil
+                    pcall(function() item = inv.ItemSlots[i] end)
+                    if item and Valid(item) then
+                        local count = 0
+                        pcall(function() count = item:GetStackSize() end)
+                        local name = nil
+                        pcall(function()
+                            local facing = item:GetPlayerFacingName()
+                            if facing and facing.ToString then name = facing:ToString() end
+                        end)
+                        if not name or name == "" then
+                            pcall(function() if item.ItemData then name = item.ItemData:GetFName():ToString() end end)
+                        end
+                        if name then
+                            found = found + 1
+                            Say(string.format("Slot %d: %s x%d", i, name, count or 1))
+                        end
+                    end
+                end
+                if found == 0 then Say("Player inventory is empty.") end
+            end
+        elseif cmd == "clean" then
+            local d, k = CleanupCompanions(true)
+            Say(string.format("Cleaned duplicates: removed %d, kept %d companion(s)", d, k))
+        elseif cmd == "reward" then
+            local item = params[2] or "GarouPack"
+            local count = tonumber(params[3]) or 10
+            local ok, res = GivePlayerItem(item, count)
+            if ok then
+                Say(string.format("Gave player %d x %s!", count, item))
+            else
+                Say(string.format("Reward test failed: %s", tostring(res)))
+            end
+        elseif cmd == "portals" then
+            local count = 0
+            for id, r in pairs(Placed) do
+                if r.Portal and r.Portal ~= "" then
+                    count = count + 1
+                    Say(string.format("Portal '%s' (id %s) -> Target '%s' at (%.0f, %.0f, %.0f)", r.Portal, id, r.Target or "none", r.X, r.Y, r.Z))
+                end
+            end
+            if count == 0 then Say("No portals configured in placed.txt") end
         else
-            Say("Commands: cb, cb <n>, cb off, cb undo, cb restore, cb probe, cb spawn <n>, cb clear")
+            Say("Commands: cb, cb <n>, cb off, cb undo, cb restore, cb probe, cb spawn <n>, cb npcs, cb npc <name>, cb clean, cb quest, cb portals, cb inv, cb reward, cb clear")
         end
     end)
     if not ok then Say("Error: " .. tostring(err)) end
@@ -2255,6 +4790,7 @@ Log("Mod folder: " .. tostring(ModDir))
 LoadModels()
 LoadPlaced()
 LoadOrient()
+pcall(LoadQuests)
 Log("Ready. F10 console: cb")
 ModReady = true
 
@@ -2264,6 +4800,7 @@ ExecuteInGameThread(function()
     if WorldKey() then
         CheckWorld()
         pcall(Restore)
+        pcall(function() CleanupCompanions(true) end)
         StartHideTimer()
     end
 end)

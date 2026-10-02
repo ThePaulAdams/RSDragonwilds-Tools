@@ -1,63 +1,140 @@
-# Custom Builds
+# Custom Builds: In-Game Building, Companions & Quest Engine
 
-Place any of the game's 3,600+ models in your world: temple and castle walls, statues, banners, trophies, rocks, props and more. Browse them with pictures, then place, turn, tilt, resize, snap and nudge them. Your placements are saved and come back every time you load.
+[![RSDragonwilds](https://img.shields.io/badge/Game-RuneScape%3A%20Dragonwilds-gold?style=for-the-badge)](https://store.steampowered.com)
+[![Framework](https://img.shields.io/badge/Framework-UE4SS%20v3.0%2B-green?style=for-the-badge)](https://github.com/UE4SS-RE/RE-UE4SS)
+[![BaseBuilder](https://img.shields.io/badge/Ecosystem-Ashenfallen%20Base--Builder-orange?style=for-the-badge)](https://ashenfallen.com)
 
-## Requirements
+**Custom Builds** is the flagship creative and storytelling engine for *RuneScape: Dragonwilds*. It enables unrestricted placement of over 3,600+ game models, powers interactive companion NPCs, and executes full branching quest storyboards created in the **Ashenfallen Base-Builder**.
 
-- **UE4SS experimental build** (the "experimental-latest" release from the RE-UE4SS GitHub, with UE 5.6 support). The v3.0.1 stable release does not support this game.
-- Single player.
+---
 
-## Install
+## 🏗️ Ashenfallen Base-Builder & Toolkit Ecosystem
 
-1. Install UE4SS for RuneScape: Dragonwilds (into `RSDragonwilds\Binaries\Win64`).
-2. Copy the `CustomBuilds` folder into `RSDragonwilds\Binaries\Win64\ue4ss\Mods\`.
-3. Start the game. The mod is on because `CustomBuilds\enabled.txt` is there; delete that file to turn it off.
+Does the **Ashenfallen Base-Builder** need this modpack installed?
+**YES!** 
 
-## How to use
+- **Ashenfallen Base-Builder** ([ashenfallen.com](https://ashenfallen.com) / local viewer) is the **external 3D visual planner & quest storyboard tool**. It allows you to freely inspect models, layout full bases, place NPCs, write branching dialogue trees, configure item collection/slaying objectives, and assign real rewards.
+- **Custom Builds (Modpack)** is the **in-game runtime executor**. Without this mod installed in your game, *RuneScape: Dragonwilds* has no native code to parse custom bases, spawn companion characters, trigger `E` key interactions, draw overhead `!` markers, track quest inventory, or award custom item deliveries.
 
-1. Press **N** to open the model browser. Pick a category on the left, then click a picture tile on the right (hover a tile to see its name).
-2. A see-through copy of the model follows your crosshair. Adjust it, then **left click** to place it. You can keep clicking to place more.
-3. **Right click** stops placing.
+### Data Flow
+```
+┌─────────────────────────────────┐
+│   Ashenfallen Base-Builder      │  Visual 3D scene designer & Quest Storyboarder
+│   (https://ashenfallen.com)     │  Exports: base.txt, placed.txt, quests.json
+└────────────────┬────────────────┘
+                 │ (Direct Folder Sync / File Download)
+                 ▼
+┌─────────────────────────────────┐
+│     CustomBuilds Mod            │  UE4SS Lua Runtime Engine
+│  (Dragonwilds Mod Directory)    │  • Materializes 3,600+ building pieces & decor
+└────────────────┬────────────────┘  • Spawns interactive companions (Doric, Cook...)
+                 │                   • Renders 3D overhead [ ! ] & [ ? ] markers
+                 ▼                   • Connects pins to OSRS Minimap
+┌─────────────────────────────────┐  • Manages dialogue trees (Press E, choices 1-4)
+│    RuneScape: Dragonwilds       │  • Evaluates inventory objectives & hands out rewards
+│      Live Game Session          │  • Automatically manages daily quest resets
+└─────────────────────────────────┘
+```
 
-Placed models are the mod's own objects: no building materials, no foundation rules. They have collision and stay visible at a distance.
+---
 
-## Keys
+## ✨ Key Features
 
-| While placing | |
-|---|---|
-| Left click | place |
-| Right click / Esc | stop placing |
-| Left / Right | turn 15° (hold Shift: 90°) |
-| Up / Down | tilt 15° (hold Shift: 90°) |
-| Ctrl + Up / Down | roll 90° |
-| + / - | bigger / smaller |
-| Alt + arrows | nudge away / towards you, left / right |
-| Alt + + / - | nudge up / down |
-| End | snap mode: EDGES (flush against your other models) / GRID (lined up with your base) / FREE |
-| Home | reset turn, tilt, roll, size and nudge |
+### 1. 3,600+ Model In-Game Browser & Placement (`[N]`)
+- **Visual Thumbnail Catalog**: Press **`N`** to browse every model extracted from the game (castle walls, towers, temple ruins, statues, furniture, lanterns, flora).
+- **Precise Transform Gizmos**: Rotate in 15° or 90° increments, tilt, roll, scale smoothly, or nudge by centimeters.
+- **Magnetic Snapping**: Press **`End`** to toggle between **EDGES** (flush against neighboring pieces), **GRID** (aligned with your base foundation grid), or **FREE** placement.
+- **Undo & Redo**: Press **`Backspace`** to undo recent placements, moves, or deletions.
+- **Persistent World Persistence**: Placements are stored in `placed.txt` and re-instantiated seamlessly whenever you load your world.
 
-| Any time | |
-|---|---|
-| N | open / close the model browser |
-| Delete | delete the custom model you're looking at |
-| Insert | pick up the custom model you're looking at and move it (left click puts it down, right click puts it back) |
-| Backspace | undo the last place, delete or move |
+### 2. Interactive Companion NPCs & Dialogue System (`[E]`)
+- **Living Characters**: Place iconic RuneScape characters directly in your sanctuary or castles (Doric the Dwarf, Wise Old Man, Cook, Zanik, Vannaka, Postie Pete, pet chinchompas, and more).
+- **Proximity Interaction**: Walk up to any placed companion and press **`E`** to initiate cinematic dialogue.
+- **Branching Decision Trees**: Select dialogue choices using number keys **`1`**, **`2`**, **`3`**, **`4`**, or press **`Esc`** / **`Space`** to exit.
+- **Duplicate Protection**: Automatically recognizes existing companion actors upon world restart, preventing duplicate spawns.
 
-Tilt, roll and size are remembered per model. For example, a castle entrance only needs standing up once.
+### 3. Full Quest Storyboard Engine
+- **Overhead 3D Animated Markers**:
+  - `[ ! ]` (Iconic RuneScape Gold): Floats and bobs over the NPC's head when a quest is available.
+  - `[ ? ]` (Silver / Blue): Appears overhead while a quest is active.
+  - `[ ? ]` (Pulsing Bright Gold): Flashes when quest requirements are met and ready for turn-in.
+- **Minimap Integration**: Pinned quest star icons automatically display on the **OSRS Minimap** plugin with distance scaling.
+- **Inventory Objective Evaluation**: Checks your inventory slots in real time for requested items (e.g. Iron Ore, logs, relics, herbs).
+- **Real Reward Delivery**: Grants actual items directly to your backpack (e.g. Garou Packs, coins, consumables, or custom resources) with audible turn-in chimes.
+- **Daily Repeatable Quests**: Supports `"repeatable": "daily"`. Quests reset automatically at midnight or upon calendar rollover, turning delivery quests into daily routines.
 
-**Search:** open the console (F10 with the usual UE4SS console setup) and type `cb find statue`. The results appear as a category in the browser.
+---
 
-## Files
+## 🎮 Master Controls
 
-- `models.txt`: your favourites (the FAVOURITES category). Add lines as `Name | /Game/...mesh path`.
-- `models-all.txt`: every model the browser lists.
-- `thumbs\`: the tile pictures.
-- `placed.txt`: your placed models, written by the mod (the previous version is kept as `placed.txt.bak`). Back it up if you care about your builds.
-- `orient.txt`: the remembered tilt, roll and size for each model.
+### Model Placing Mode (Activated from `[N]` Menu)
+| Keybind | Action |
+| :--- | :--- |
+| **Left Click** | Place active model preview |
+| **Right Click** or **`[Esc]`** | Cancel / exit placing mode |
+| **`[←]` / `[→]`** | Turn 15° (Hold **`Shift`** for 90°) |
+| **`[↑]` / `[↓]`** | Tilt 15° (Hold **`Shift`** for 90°) |
+| **`[Ctrl]` + `[↑]` / `[↓]`** | Roll 90° |
+| **`[+]` / `[-]`** | Scale model larger / smaller |
+| **`[Alt]` + Arrows** | Nudge position horizontally |
+| **`[Alt]` + `[+]` / `[-]`** | Nudge position vertically (up/down) |
+| **`[End]`** | Cycle snap modes: **EDGES** / **GRID** / **FREE** |
+| **`[Home]`** | Reset tilt, roll, and scale to defaults |
 
-## Good to know
+### General World Controls
+| Keybind | Action |
+| :--- | :--- |
+| **`[N]`** | Open / close the in-game model catalog browser |
+| **`[E]`** | Interact / talk to nearby NPC companions |
+| **`[1]`, `[2]`, `[3]`, `[4]`** | Select dialogue response during NPC chat |
+| **`[Delete]`** | Delete the custom model / NPC you are looking at |
+| **`[Insert]`** | Pick up and move an already placed piece |
+| **`[Backspace]`** | Undo last placement or deletion |
 
-- Placed models are saved by the mod, not in the game's save. If you remove the mod, they disappear from the world; reinstall it and they come back.
-- Left click also swings whatever you're holding, so put your tool or weapon away while placing.
-- Esc also opens the game's pause menu. Use N or right click to close or stop.
-- Don't update the mod while the game is running.
+---
+
+## 💻 Console Commands (`F10` / `~`)
+
+Open the UE4SS developer console in-game to run advanced commands:
+
+| Command | Description |
+| :--- | :--- |
+| `cb quest` | Displays current active quest, objectives, and progression state |
+| `cb quest reset` | Wipes completed quest progress and reloads `quests.json` for recording/testing |
+| `cb quest daily` | Triggers an immediate daily reset check on all repeatable quests |
+| `cb quest reload` | Hot-reloads `quests.json` from disk without restarting the game |
+| `cb quest step` | Advances active quest objective progress by +1 |
+| `cb clean` | Scans and cleans up any duplicate companion actors near your base |
+| `cb npc <name>` | Quickly spawns a test companion (`doric`, `wise`, `cook`, `zanik`, `vannaka`) |
+| `cb find <text>` | Searches all 3,600+ models by keyword and creates a search category in the `N` browser |
+| `cb base export` | Exports all native building pieces to `base.txt` for importing into Ashenfallen |
+
+---
+
+## 📁 File Structure
+
+```
+CustomBuilds/
+├── enabled.txt          # Mod activation flag (delete or rename to disable)
+├── quests.json          # Active quest definitions exported from Ashenfallen Base-Builder
+├── save_quests.json     # Player quest completion states, progress, and daily timestamps
+├── placed.txt           # Player's placed custom models and companion coordinates
+├── models-all.txt       # Master list of all 3,600+ placeable mesh paths
+├── models.txt           # Player favorites catalog
+├── orient.txt           # Saved model tilt/rotation calibrations
+├── scripts/
+│   └── main.lua         # Core runtime engine script
+├── thumbs/              # High-resolution thumbnail previews for the [N] menu
+└── ui/
+    └── panel.png        # RuneScape-themed Slate UI frame texture
+```
+
+---
+
+## 🚀 Installation
+
+1. Ensure **UE4SS** (experimental build with UE 5.6 support) is installed in:
+   `Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/`
+2. Copy the `CustomBuilds` folder into:
+   `...\Binaries\Win64\ue4ss\Mods\`
+3. Launch *RuneScape: Dragonwilds*!
