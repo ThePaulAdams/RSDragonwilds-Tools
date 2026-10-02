@@ -15,6 +15,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 
 | Tool | Category | Hotkeys | Description |
 | :--- | :--- | :--- | :--- |
+| [**CustomBuilds**](CustomBuilds/README.md) | Creative & Quests | `[N]`, `[E]`, `[1-4]` | Place any of 3,600+ game models, spawn living NPC companions (Doric, Wise Old Man, Cook...), and play custom branching quests with 3D overhead markers (`!`/`?`), OSRS minimap stars, and real inventory rewards. In-game runtime for the **Ashenfallen Base-Builder**. |
 | [**OSRSMinimap**](OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, and real-time resource tracking (ores, trees, essence, fishing). |
 | [**QuickStack**](QuickStack/README.md) | Quality of Life | `[G]`, `[Ctrl+G]`, `[Shift+G]` | Smart base inventory sorting into dedicated category chests, 48-slot chest auto-upgrades, 40m wild resource gathering & ground vacuum, and 150m Base Relocation Crate. |
 | [**EnhancedReticle**](EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
@@ -24,12 +25,25 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 
 ---
 
+## 🏗️ Ashenfallen Base-Builder & Toolkit Ecosystem
+
+Does the **Ashenfallen Base-Builder** ([ashenfallen.com](https://ashenfallen.com)) need this modpack installed?
+**YES!** 
+
+- **Ashenfallen Base-Builder** is the **external 3D visual scene & quest designer**: freely position 3,600+ extracted pieces, arrange temples, place NPC companions, storyboard multi-branch dialogue trees, define delivery/slay objectives, and set rewards.
+- **RSDragonwilds-Toolkit (CustomBuilds)** is the **in-game runtime execution engine**: it reads your exported `base.txt`, `placed.txt`, and `quests.json` files, materializes the structures in the UE5 game world, hooks the `E` interaction key, draws animated 3D overhead `!` and `?` markers, and rewards actual items directly into the player's backpack.
+
+---
+
 ## Master Controls Cheat-Sheet
 
 | Keybind | Tool | Action |
 | :--- | :--- | :--- |
 | **`[ESC]`** | **Pause Menu** | Pausing automatically displays the active Toolkit Mod Dashboard |
 | **`[Ctrl+F8]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay anytime |
+| **`[N]`** | **Custom Builds** | Open / close the in-game 3,600+ model catalog browser |
+| **`[E]`** | **Custom Builds** | Talk / interact with nearby NPC companions (Doric, Wise Old Man, Cook...) |
+| **`[1]`, `[2]`, `[3]`, `[4]`** | **Custom Builds** | Select dialogue response choices during companion conversations |
 | **`[Num Lock]`** | **AutoRun** | Toggle continuous camera-forward autorun on / off |
 | **`[G]` (Tap)** | **Quick Stack** | **At Base:** Auto-sort items into dedicated category chests & upgrade to 48 slots<br>**In Wild:** Instant harvest & ground magnetism for nearby plants/loot |
 | **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
