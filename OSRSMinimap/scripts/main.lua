@@ -49,6 +49,7 @@ local TrackedResourceActors = {}
 local TrackedAiActors = {}
 local NextResourceScanTick = 0
 local NextAiScanTick = 0
+local LastResourceScanLocation = nil
 local MapIconCompClass = nil
 local PurgeAllResourceComponents = nil
 
@@ -1658,36 +1659,50 @@ local function ScanAndRegisterResources()
     end
 
     -- Phase 2: Targeted Proximity Scan (Consolidated Parent Classes)
-    local classesToScan = {
-        "BP_AnimaVent_C",
-        "BP_OreNode_C",
-        "BP_MiningRock_Base_C",
-        "BP_DivineRockBase_C",
-        "BP_RuneEssenceGeyser_Base_C",
-        "BP_MiningRock_RuneEssence_Static_Base_C",
-        "BP_MiningRock_GeyserRuneEssence_C",
-        "BP_FishingNodeV2_C",
-        "BP_CatchableFish_C",
-        "BP_FellableTree_Base_C",
-        "BP_FellableTree_Oak_C",
-        "BP_FellableTree_Willow_C",
-        "BP_YewTree_01_C",
-        "BP_YewTree_02_C",
-        "BP_YewTree_03_C",
-        "BP_DR_Tree_Maple_01_C",
-        "BP_DR_Tree_Maple_02_C"
-    }
+    -- If player hasn't moved more than 5 meters since last resource scan, skip scanning all 17 classes (trees and rocks are static)
+    local shouldScanClasses = true
+    if LastResourceScanLocation then
+        local dx = playerLoc.X - LastResourceScanLocation.X
+        local dy = playerLoc.Y - LastResourceScanLocation.Y
+        local dz = playerLoc.Z - LastResourceScanLocation.Z
+        if (dx * dx + dy * dy + dz * dz) < 250000.0 then -- 5m = 500cm, 500^2 = 250,000
+            shouldScanClasses = false
+        end
+    end
 
     local newCount = 0
-    for _, className in ipairs(classesToScan) do
-        local ok, actors = pcall(function() return FindAllOf(className) end)
-        if ok and actors then
-            for _, actor in ipairs(actors) do
-                if IsValidResourceActor(actor, playerLoc, maxDistSq) then
-                    local resType = ClassifyResource(actor)
-                    if resType then
-                        if SetupResourceIcon(actor, resType) then
-                            newCount = newCount + 1
+    if shouldScanClasses then
+        LastResourceScanLocation = { X = playerLoc.X, Y = playerLoc.Y, Z = playerLoc.Z }
+        local classesToScan = {
+            "BP_AnimaVent_C",
+            "BP_OreNode_C",
+            "BP_MiningRock_Base_C",
+            "BP_DivineRockBase_C",
+            "BP_RuneEssenceGeyser_Base_C",
+            "BP_MiningRock_RuneEssence_Static_Base_C",
+            "BP_MiningRock_GeyserRuneEssence_C",
+            "BP_FishingNodeV2_C",
+            "BP_CatchableFish_C",
+            "BP_FellableTree_Base_C",
+            "BP_FellableTree_Oak_C",
+            "BP_FellableTree_Willow_C",
+            "BP_YewTree_01_C",
+            "BP_YewTree_02_C",
+            "BP_YewTree_03_C",
+            "BP_DR_Tree_Maple_01_C",
+            "BP_DR_Tree_Maple_02_C"
+        }
+
+        for _, className in ipairs(classesToScan) do
+            local ok, actors = pcall(function() return FindAllOf(className) end)
+            if ok and actors then
+                for _, actor in ipairs(actors) do
+                    if IsValidResourceActor(actor, playerLoc, maxDistSq) then
+                        local resType = ClassifyResource(actor)
+                        if resType then
+                            if SetupResourceIcon(actor, resType) then
+                                newCount = newCount + 1
+                            end
                         end
                     end
                 end
@@ -1700,9 +1715,12 @@ local function ScanAndRegisterResources()
     local prunedOfficial = official and official:IsValid() and PruneDeadIconWidgets(official) or 0
     local totalPruned = prunedMinimap + prunedOfficial
 
+    local activeResourceCount = 0
+    for _ in pairs(TrackedResourceActors) do activeResourceCount = activeResourceCount + 1 end
+
     if newCount > 0 or culledCount > 0 or totalPruned > 0 then
         Log(string.format("[RESOURCE SCAN] +%d new, -%d culled, -%d widgets pruned. Active tracked resources: %d",
-            newCount, culledCount, totalPruned, #TrackedResourceActors))
+            newCount, culledCount, totalPruned, activeResourceCount))
     end
 end
 
@@ -1796,12 +1814,29 @@ pcall(function()
     end)
 end)
 
+local GameplayStatics = nil
+local function IsGamePaused(pc)
+    if not pc or not pc:IsValid() then return false end
+    local ok1, paused = pcall(function() return pc:IsPaused() end)
+    if ok1 and paused then return true end
+
+    if not GameplayStatics or not GameplayStatics:IsValid() then
+        GameplayStatics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    end
+    if GameplayStatics and GameplayStatics:IsValid() then
+        local ok2, gPaused = pcall(function() return GameplayStatics:IsGamePaused(pc) end)
+        if ok2 and gPaused then return true end
+    end
+    return false
+end
+
 -- =========================================================================
 -- 8. Main Update Loop
 -- =========================================================================
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
-    local Pawn = PC and PC:IsValid() and PC.Pawn
+    if not PC or not PC:IsValid() or IsGamePaused(PC) then return end
+    local Pawn = PC.Pawn
     if not Pawn or not Pawn:IsValid() or not Pawn.MapView or not Pawn.MapView:IsValid() then
         ReadyPawnAddress = nil
         if MinimapWidget and MinimapWidget:IsValid() then
