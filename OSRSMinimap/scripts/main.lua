@@ -266,86 +266,40 @@ local function SetupMinimapFrame(Widget, PC)
     end
     ConfigureBorder(BorderInner, IsCircularMode, 1.5, 1.0, 0.88, 0.45, 0.70)
 
-    -- 4. OSRS Compass North Marker ("N")
+    -- 4. OSRS Compass North Indicator (Iconic Ruby Jewel at 12 o'clock)
     if not NorthIndicator or not NorthIndicator:IsValid() then
-        local textClass = StaticFindObject("/Script/UMG.TextBlock")
-        if textClass and textClass:IsValid() then
-            pcall(function()
-                NorthIndicator = StaticConstructObject(textClass, Widget)
-            end)
-            if NorthIndicator and NorthIndicator:IsValid() then
-                pcall(function()
-                    NorthIndicator:SetText("N")
-                    local font = NorthIndicator.Font
-                    if font then
-                        font.Size = 13.0
-                        NorthIndicator:SetFont(font)
-                    end
-                    NorthIndicator:SetColorAndOpacity({
-                        SpecifiedColor = { R = 0.95, G = 0.22, B = 0.22, A = 1.0 },
+        NorthIndicator = CreateBorderWidget(Widget, PC)
+        if NorthIndicator and NorthIndicator:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(NorthIndicator)
+            if slot and slot:IsValid() then
+                slot:SetAnchors({ Minimum = { X = 0.5, Y = 0.0 }, Maximum = { X = 0.5, Y = 0.0 } })
+                slot:SetAlignment({ X = 0.5, Y = 0.5 })
+                slot:SetPosition({ X = 0.0, Y = 5.0 })
+                slot:SetSize({ X = 10.0, Y = 10.0 })
+                slot:SetZOrder(95)
+            end
+        end
+    end
+    if NorthIndicator and NorthIndicator:IsValid() then
+        pcall(function()
+            NorthIndicator:SetBrushColor({ R = 0.95, G = 0.18, B = 0.18, A = 1.0 })
+            local brush = NorthIndicator.Background
+            if brush then
+                brush.DrawAs = 4 -- RoundedBox
+                local outline = brush.OutlineSettings
+                if outline then
+                    outline.RoundingType = 1 -- HalfRadius (circular jewel)
+                    outline.Width = 1.5
+                    outline.Color = {
+                        SpecifiedColor = { R = 0.84, G = 0.70, B = 0.32, A = 1.0 },
                         ColorUseRule = 0
-                    })
-                    local slot = rootCanvas:AddChildToCanvas(NorthIndicator)
-                    if slot and slot:IsValid() then
-                        slot:SetAnchors({ Minimum = { X = 0.5, Y = 0.0 }, Maximum = { X = 0.5, Y = 0.0 } })
-                        slot:SetAlignment({ X = 0.5, Y = 0.5 })
-                        slot:SetPosition({ X = 0.0, Y = 6.0 })
-                        slot:SetZOrder(95)
-                    end
-                end)
-            end
-        end
-    end
-
-    -- 5. Attach Live Day/Night Sundial Clock
-    pcall(function()
-        local hud = PC and PC.MyHUD
-        if hud and hud:IsValid() and hud.GetDayAndNightWidget then
-            local dn = hud:GetDayAndNightWidget()
-            if dn and dn:IsValid() and dn:GetFullName() ~= OwnedWidgetName then
-                local currentParent = nil
-                pcall(function() currentParent = dn:GetParent() end)
-                if currentParent and currentParent:IsValid() and currentParent:GetAddress() ~= rootCanvas:GetAddress() then
-                    dn:RemoveFromParent()
-                    local dnSlot = rootCanvas:AddChildToCanvas(dn)
-                    if dnSlot and dnSlot:IsValid() then
-                        dnSlot:SetPosition({ X = -12.0, Y = -12.0 })
-                        dnSlot:SetSize({ X = 86.0, Y = 86.0 })
-                        dnSlot:SetZOrder(90)
-                    end
-                    DayNightWidget = dn
-                    Log("[HUD] Reparented Day/Night Sundial to Minimap top-left bezel!")
+                    }
+                    outline.bUseBrushTransparency = true
                 end
+                NorthIndicator:SetBrush(brush)
             end
-        end
-    end)
-
-    -- 6. Circular Bezel Ring framing the Day/Night Sundial
-    if not DayNightBezel or not DayNightBezel:IsValid() then
-        DayNightBezel = CreateBorderWidget(Widget, PC)
-        if DayNightBezel and DayNightBezel:IsValid() then
-            local slot = rootCanvas:AddChildToCanvas(DayNightBezel)
-            if slot and slot:IsValid() then
-                slot:SetPosition({ X = -14.0, Y = -14.0 })
-                slot:SetSize({ X = 90.0, Y = 90.0 })
-                slot:SetZOrder(92)
-            end
-        end
+        end)
     end
-    ConfigureBorder(DayNightBezel, true, 3.5, 0.84, 0.70, 0.32, 1.0)
-
-    if not DayNightShadow or not DayNightShadow:IsValid() then
-        DayNightShadow = CreateBorderWidget(Widget, PC)
-        if DayNightShadow and DayNightShadow:IsValid() then
-            local slot = rootCanvas:AddChildToCanvas(DayNightShadow)
-            if slot and slot:IsValid() then
-                slot:SetPosition({ X = -16.0, Y = -16.0 })
-                slot:SetSize({ X = 94.0, Y = 94.0 })
-                slot:SetZOrder(91)
-            end
-        end
-    end
-    ConfigureBorder(DayNightShadow, true, 5.0, 0.12, 0.09, 0.05, 0.95)
 end
 
 local function UpdateMinimapShape(isCircular)
