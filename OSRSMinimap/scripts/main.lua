@@ -6,7 +6,7 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing OSRS Minimap (Zero Main Map Touch)...")
+Log("Initializing OSRS Minimap (Ornate RuneScape HUD v3)...")
 Log("==========================================")
 
 -- State
@@ -32,10 +32,23 @@ local LastTerrainOffsetX = nil
 local LastTerrainOffsetY = nil
 local LastTerrainZoom = nil
 
--- Resource tracking state (declared top-level so SetupMinimapWidget and InitMinimap have access)
+-- Visual Frame & Shape State
+local IsCircularMode = true
+local BorderOuter = nil
+local BorderGold = nil
+local BorderInner = nil
+local DayNightWidget = nil
+local DayNightBezel = nil
+local DayNightShadow = nil
+local NorthIndicator = nil
+
+-- Resource & AI Tracking State
 local ResourceIconsEnabled = true
+local AiRadarEnabled = true
 local TrackedResourceActors = {}
+local TrackedAiActors = {}
 local NextResourceScanTick = 0
+local NextAiScanTick = 0
 local MapIconCompClass = nil
 local PurgeAllResourceComponents = nil
 
@@ -158,11 +171,220 @@ local function GetMapIconWidgetCount(mapWidget)
     return count
 end
 
--- 3. Setup Standalone Minimap Widget (Never touching Official Map)
+-- =========================================================================
+-- 2. Ornate RuneScape Dual-Ring Frame & Sundial Bezel
+-- =========================================================================
+
+local function CreateBorderWidget(outer, PC)
+    local borderClass = StaticFindObject("/Script/UMG.Border")
+    if not borderClass or not borderClass:IsValid() then return nil end
+    local border = nil
+    pcall(function()
+        border = StaticConstructObject(borderClass, outer)
+    end)
+    if not border or not border:IsValid() then
+        local bplib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+        if bplib and bplib:IsValid() and bplib.Create then
+            pcall(function() border = bplib:Create(PC, borderClass, PC) end)
+        end
+    end
+    return border
+end
+
+local function ConfigureBorder(border, isCircular, strokeWidth, r, g, b, a)
+    if not border or not border:IsValid() then return end
+    pcall(function()
+        border:SetBrushColor({ R = 0.0, G = 0.0, B = 0.0, A = 0.0 })
+        local brush = border.Background
+        if brush then
+            brush.DrawAs = 4 -- ESlateBrushDrawType::RoundedBox
+            local outline = brush.OutlineSettings
+            if outline then
+                if isCircular then
+                    outline.RoundingType = 1 -- ESlateBrushRoundingType::HalfRadius (perfect circle)
+                    outline.CornerRadii = { X = 0.0, Y = 0.0, Z = 0.0, W = 0.0 }
+                else
+                    outline.RoundingType = 0 -- ESlateBrushRoundingType::FixedRadius
+                    outline.CornerRadii = { X = 8.0, Y = 8.0, Z = 8.0, W = 8.0 }
+                end
+                outline.Width = strokeWidth or 3.5
+                outline.Color = {
+                    SpecifiedColor = { R = r or 0.84, G = g or 0.70, B = b or 0.32, A = a or 1.0 },
+                    ColorUseRule = 0
+                }
+                outline.bUseBrushTransparency = true
+            end
+            border:SetBrush(brush)
+        end
+    end)
+end
+
+local function SetupMinimapFrame(Widget, PC)
+    if not Widget or not Widget:IsValid() then return end
+    local rootCanvas = Widget.WidgetTree and Widget.WidgetTree.RootWidget
+    if not rootCanvas or not rootCanvas:IsValid() or not rootCanvas.AddChildToCanvas then return end
+
+    -- 1. Outer Dark Bronze Bezel Rim (Deep antique contrast)
+    if not BorderOuter or not BorderOuter:IsValid() then
+        BorderOuter = CreateBorderWidget(Widget, PC)
+        if BorderOuter and BorderOuter:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(BorderOuter)
+            if slot and slot:IsValid() then
+                slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
+                slot:SetOffsets({ Left = -3.0, Top = -3.0, Right = -3.0, Bottom = -3.0 })
+                slot:SetZOrder(80)
+            end
+        end
+    end
+    ConfigureBorder(BorderOuter, IsCircularMode, 6.0, 0.12, 0.09, 0.05, 0.95)
+
+    -- 2. Main Ornate RuneScape Gold Stroke Ring
+    if not BorderGold or not BorderGold:IsValid() then
+        BorderGold = CreateBorderWidget(Widget, PC)
+        if BorderGold and BorderGold:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(BorderGold)
+            if slot and slot:IsValid() then
+                slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
+                slot:SetOffsets({ Left = 0.0, Top = 0.0, Right = 0.0, Bottom = 0.0 })
+                slot:SetZOrder(85)
+            end
+        end
+    end
+    ConfigureBorder(BorderGold, IsCircularMode, 3.5, 0.84, 0.70, 0.32, 1.0)
+
+    -- 3. Inner Warm Gold Highlight Bevel
+    if not BorderInner or not BorderInner:IsValid() then
+        BorderInner = CreateBorderWidget(Widget, PC)
+        if BorderInner and BorderInner:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(BorderInner)
+            if slot and slot:IsValid() then
+                slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
+                slot:SetOffsets({ Left = 2.5, Top = 2.5, Right = 2.5, Bottom = 2.5 })
+                slot:SetZOrder(86)
+            end
+        end
+    end
+    ConfigureBorder(BorderInner, IsCircularMode, 1.5, 1.0, 0.88, 0.45, 0.70)
+
+    -- 4. OSRS Compass North Marker ("N")
+    if not NorthIndicator or not NorthIndicator:IsValid() then
+        local textClass = StaticFindObject("/Script/UMG.TextBlock")
+        if textClass and textClass:IsValid() then
+            pcall(function()
+                NorthIndicator = StaticConstructObject(textClass, Widget)
+            end)
+            if NorthIndicator and NorthIndicator:IsValid() then
+                pcall(function()
+                    NorthIndicator:SetText("N")
+                    local font = NorthIndicator.Font
+                    if font then
+                        font.Size = 13.0
+                        NorthIndicator:SetFont(font)
+                    end
+                    NorthIndicator:SetColorAndOpacity({
+                        SpecifiedColor = { R = 0.95, G = 0.22, B = 0.22, A = 1.0 },
+                        ColorUseRule = 0
+                    })
+                    local slot = rootCanvas:AddChildToCanvas(NorthIndicator)
+                    if slot and slot:IsValid() then
+                        slot:SetAnchors({ Minimum = { X = 0.5, Y = 0.0 }, Maximum = { X = 0.5, Y = 0.0 } })
+                        slot:SetAlignment({ X = 0.5, Y = 0.5 })
+                        slot:SetPosition({ X = 0.0, Y = 6.0 })
+                        slot:SetZOrder(95)
+                    end
+                end)
+            end
+        end
+    end
+
+    -- 5. Attach Live Day/Night Sundial Clock
+    pcall(function()
+        local hud = PC and PC.MyHUD
+        if hud and hud:IsValid() and hud.GetDayAndNightWidget then
+            local dn = hud:GetDayAndNightWidget()
+            if dn and dn:IsValid() and dn:GetFullName() ~= OwnedWidgetName then
+                local currentParent = nil
+                pcall(function() currentParent = dn:GetParent() end)
+                if currentParent and currentParent:IsValid() and currentParent:GetAddress() ~= rootCanvas:GetAddress() then
+                    dn:RemoveFromParent()
+                    local dnSlot = rootCanvas:AddChildToCanvas(dn)
+                    if dnSlot and dnSlot:IsValid() then
+                        dnSlot:SetPosition({ X = -12.0, Y = -12.0 })
+                        dnSlot:SetSize({ X = 86.0, Y = 86.0 })
+                        dnSlot:SetZOrder(90)
+                    end
+                    DayNightWidget = dn
+                    Log("[HUD] Reparented Day/Night Sundial to Minimap top-left bezel!")
+                end
+            end
+        end
+    end)
+
+    -- 6. Circular Bezel Ring framing the Day/Night Sundial
+    if not DayNightBezel or not DayNightBezel:IsValid() then
+        DayNightBezel = CreateBorderWidget(Widget, PC)
+        if DayNightBezel and DayNightBezel:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(DayNightBezel)
+            if slot and slot:IsValid() then
+                slot:SetPosition({ X = -14.0, Y = -14.0 })
+                slot:SetSize({ X = 90.0, Y = 90.0 })
+                slot:SetZOrder(92)
+            end
+        end
+    end
+    ConfigureBorder(DayNightBezel, true, 3.5, 0.84, 0.70, 0.32, 1.0)
+
+    if not DayNightShadow or not DayNightShadow:IsValid() then
+        DayNightShadow = CreateBorderWidget(Widget, PC)
+        if DayNightShadow and DayNightShadow:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(DayNightShadow)
+            if slot and slot:IsValid() then
+                slot:SetPosition({ X = -16.0, Y = -16.0 })
+                slot:SetSize({ X = 94.0, Y = 94.0 })
+                slot:SetZOrder(91)
+            end
+        end
+    end
+    ConfigureBorder(DayNightShadow, true, 5.0, 0.12, 0.09, 0.05, 0.95)
+end
+
+local function UpdateMinimapShape(isCircular)
+    IsCircularMode = isCircular
+    if not MinimapWidget or not MinimapWidget:IsValid() then return end
+
+    pcall(function()
+        MinimapWidget.bIsCircular = IsCircularMode
+        if MinimapWidget.ReinitShape then
+            MinimapWidget:ReinitShape()
+        elseif MinimapWidget.InitShape then
+            MinimapWidget:InitShape()
+        end
+    end)
+
+    if BorderOuter and BorderOuter:IsValid() then
+        ConfigureBorder(BorderOuter, IsCircularMode, 6.0, 0.12, 0.09, 0.05, 0.95)
+    end
+    if BorderGold and BorderGold:IsValid() then
+        ConfigureBorder(BorderGold, IsCircularMode, 3.5, 0.84, 0.70, 0.32, 1.0)
+    end
+    if BorderInner and BorderInner:IsValid() then
+        ConfigureBorder(BorderInner, IsCircularMode, 1.5, 1.0, 0.88, 0.45, 0.70)
+    end
+
+    if NorthIndicator and NorthIndicator:IsValid() then
+        NorthIndicator:SetVisibility(IsCircularMode and 0 or 2)
+    end
+
+    Log("[SHAPE] Minimap shape updated to " .. (IsCircularMode and "CIRCULAR (Compass)" or "RECTANGULAR (Tablet)"))
+end
+
+-- =========================================================================
+-- 3. Setup Standalone Minimap Widget
+-- =========================================================================
 local function SetupMinimapWidget(Widget, PC)
     if not Widget or not Widget:IsValid() then return false end
 
-    -- Pre-initialize InitialMapSize to prevent any divide-by-zero during early Slate layout
+    -- Pre-initialize InitialMapSize to prevent divide-by-zero during early Slate layout
     pcall(function()
         local official = GetOfficialMap()
         if official and official:IsValid() and official.InitialMapSize and official.InitialMapSize.X > 0 and official.InitialMapSize.Y > 0 then
@@ -210,10 +432,14 @@ local function SetupMinimapWidget(Widget, PC)
         end
     end
 
-    -- Circular shape & player camera frustum
+    -- Circular shape (OSRS Compass mode by default) & player camera frustum
     pcall(function()
-        Widget.bIsCircular = false
-        if Widget.ReinitShape then Widget:ReinitShape() end
+        Widget.bIsCircular = IsCircularMode
+        if Widget.ReinitShape then
+            Widget:ReinitShape()
+        elseif Widget.InitShape then
+            Widget:InitShape()
+        end
     end)
     pcall(function()
         Widget.bDrawCamera = true
@@ -322,6 +548,9 @@ local function SetupMinimapWidget(Widget, PC)
         Log("[CONFIG ERROR] " .. tostring(cfgErr))
     end
 
+    -- Setup Ornate RuneScape Dual-Ring Frame & Sundial Bezel
+    SetupMinimapFrame(Widget, PC)
+
     OwnedWidgetName = Widget:GetFullName()
     if ModRef then ModRef:SetSharedVariable("OSRSMinimap.OwnedWidgetName", OwnedWidgetName) end
 
@@ -337,17 +566,26 @@ local function SetupMinimapWidget(Widget, PC)
                     repopCount = repopCount + 1
                 end
             end
+            for addr, data in pairs(TrackedAiActors) do
+                local comp = (type(data) == "table") and data.Comp or data
+                if comp and comp:IsValid() then
+                    Widget:AddMapIcon(comp)
+                    repopCount = repopCount + 1
+                end
+            end
             if repopCount > 0 then
-                Log(string.format("[REPOPULATE] Re-added %d resource icons to recreated Minimap.", repopCount))
+                Log(string.format("[REPOPULATE] Re-added %d icons to recreated Minimap.", repopCount))
             end
         end
     end)
 
-    Log("Minimap widget successfully configured and visible in viewport!")
+    Log("Minimap widget successfully configured with ornate frame and visible in viewport!")
     return true
 end
 
+-- =========================================================================
 -- 4. Spawn or Locate Minimap
+-- =========================================================================
 local function InitMinimap(ForceRecreate)
     local PC = UEHelpers.GetPlayerController()
     if not PC or not PC:IsValid() then return false end
@@ -372,6 +610,13 @@ local function InitMinimap(ForceRecreate)
     CleanupAllOrphans(nil)
     CachedBackgroundMID = nil
     CachedBackgroundChild = nil
+    BorderOuter = nil
+    BorderGold = nil
+    BorderInner = nil
+    DayNightBezel = nil
+    DayNightShadow = nil
+    NorthIndicator = nil
+
     local Class = GetMinimapClass()
     if Class and Class:IsValid() then
         local Created = nil
@@ -447,6 +692,21 @@ local function UpdateMinimapTerrain(PC)
         if math.abs(offsetX - LastTerrainOffsetX) < 0.05
             and math.abs(offsetY - LastTerrainOffsetY) < 0.05
             and math.abs(CurrentZoom - LastTerrainZoom) < 0.01 then
+            -- Still update dynamic player arrow & camera cone rotation smoothly
+            pcall(function()
+                if MinimapWidget.Widget_PlayerIcon and MinimapWidget.Widget_PlayerIcon:IsValid() then
+                    local pRot = Pawn:K2_GetActorRotation()
+                    if pRot and pRot.Yaw then
+                        MinimapWidget.Widget_PlayerIcon:SetRenderAngle(pRot.Yaw)
+                    end
+                end
+                if MinimapWidget.Widget_Camera and MinimapWidget.Widget_Camera:IsValid() then
+                    local cRot = PC:GetControlRotation()
+                    if cRot and cRot.Yaw then
+                        MinimapWidget.Widget_Camera:SetRenderAngle(cRot.Yaw)
+                    end
+                end
+            end)
             return
         end
     end
@@ -464,14 +724,21 @@ local function UpdateMinimapTerrain(PC)
             MinimapWidget.Canvas_Backgrounds:SetRenderAngle(0.0)
         end
         
-        -- Override Player Icon to always point UP
+        -- Rotate Player Icon to match player's actual facing direction (North-up GPS navigation)
         if MinimapWidget.Widget_PlayerIcon and MinimapWidget.Widget_PlayerIcon:IsValid() then
-            MinimapWidget.Widget_PlayerIcon:SetRenderAngle(0.0)
+            local pRot = Pawn:K2_GetActorRotation()
+            if pRot and pRot.Yaw then
+                MinimapWidget.Widget_PlayerIcon:SetRenderAngle(pRot.Yaw)
+            end
         end
         
-        -- Center the camera widget
+        -- Rotate Camera frustum to match player's camera view angle
         if MinimapWidget.Widget_Camera and MinimapWidget.Widget_Camera:IsValid() then
             MinimapWidget.Widget_Camera:SetRenderTranslation({ X = 0.0, Y = 0.0 })
+            local cRot = PC:GetControlRotation()
+            if cRot and cRot.Yaw then
+                MinimapWidget.Widget_Camera:SetRenderAngle(cRot.Yaw)
+            end
         end
     end)
 end
@@ -517,7 +784,7 @@ local function CheckMainMapVisibility()
 end
 
 -- =========================================================================
--- 6. Resource Map Icons System (Ores & Anima Vents)
+-- 5. Resource Map Icons System (Ores & Anima Vents)
 -- =========================================================================
 
 -- Texture Cache
@@ -1069,12 +1336,170 @@ local function SetupResourceIcon(actor, resType)
     return false
 end
 
-local function GetTrackedActorCount()
-    local count = 0
-    for _ in pairs(TrackedResourceActors) do
-        count = count + 1
+-- =========================================================================
+-- 6. Live OSRS Monster & NPC Radar Dots
+-- =========================================================================
+
+local function ScanAndRegisterAI()
+    if not AiRadarEnabled or not ResourceIconsEnabled then return end
+    local PC = UEHelpers.GetPlayerController()
+    local Pawn = PC and PC:IsValid() and PC.Pawn
+    if not Pawn or not Pawn:IsValid() then return end
+    local playerLoc = Pawn:K2_GetActorLocation()
+    if not playerLoc then return end
+
+    local maxDistSq = 12000.0 * 12000.0 -- 120m radar radius
+    local cullDistSq = 15000.0 * 15000.0 -- 150m cull buffer
+
+    -- 1. Cull dead or far AI
+    local culled = 0
+    for addr, data in pairs(TrackedAiActors) do
+        local actor = (type(data) == "table") and data.Actor or nil
+        local comp = (type(data) == "table") and data.Comp or data
+        local shouldCull = false
+        if not comp or not comp:IsValid() or not actor or not actor:IsValid() then
+            shouldCull = true
+        else
+            local dead = false
+            pcall(function()
+                if actor.IsActorBeingDestroyed and actor:IsActorBeingDestroyed() then dead = true end
+                if actor.HealthComponent and actor.HealthComponent:IsValid() then
+                    if actor.HealthComponent.IsDead and actor.HealthComponent:IsDead() then dead = true end
+                end
+            end)
+            if dead then
+                shouldCull = true
+            else
+                local loc = nil
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+                if loc then
+                    local dx = playerLoc.X - loc.X
+                    local dy = playerLoc.Y - loc.Y
+                    if (dx * dx + dy * dy) > cullDistSq then
+                        shouldCull = true
+                    end
+                else
+                    shouldCull = true
+                end
+            end
+        end
+
+        if shouldCull then
+            if comp and comp:IsValid() then
+                pcall(function()
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    comp:K2_DestroyComponent(comp)
+                end)
+            end
+            TrackedAiActors[addr] = nil
+            culled = culled + 1
+        end
     end
-    return count
+
+    -- 2. Scan nearby DominionAICharacter actors
+    local ok, aiList = pcall(function() return FindAllOf("BP_DominionAICharacter_C") end)
+    if not ok or not aiList then return end
+
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then
+        MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent")
+    end
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then return end
+
+    local dotTex = GetResourceTexture("/Game/Art/UI/Notifications/MilestoneMaterial/T_Diamond_Bg.T_Diamond_Bg")
+        or GetResourceTexture("/Game/Art/UI/NavIcons/T_Map_Icon_FriendDot.T_Map_Icon_FriendDot")
+        or GetResourceTexture("/Game/Art/UI/HUD/Reticle/T_HUD_Reticle_Point.T_HUD_Reticle_Point")
+
+    local umgMat = GetDefaultUMGMaterial()
+
+    for _, ai in ipairs(aiList) do
+        if IsValidResourceActor(ai, playerLoc, maxDistSq) then
+            local addr = ai:GetAddress()
+            if not TrackedAiActors[addr] then
+                -- Check hostility
+                local isHostile = false
+                pcall(function()
+                    if ai.MusicThreatLevel and ai.MusicThreatLevel > 0 then
+                        isHostile = true
+                    elseif ai.AiAttackComponent and ai.AiAttackComponent:IsValid() then
+                        isHostile = true
+                    end
+                end)
+
+                local comp = nil
+                local compTransform = {
+                    Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+                    Translation = { X = 0, Y = 0, Z = 120.0 },
+                    Scale3D = { X = 1, Y = 1, Z = 1 }
+                }
+                local okAdd, newComp = pcall(function()
+                    return ai:AddComponentByClass(MapIconCompClass, false, compTransform, true)
+                end)
+                if not okAdd or not newComp or not newComp:IsValid() then
+                    pcall(function()
+                        newComp = ai:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+                    end)
+                end
+
+                if newComp and newComp:IsValid() then
+                    pcall(function()
+                        if umgMat and umgMat:IsValid() then
+                            newComp.IconMaterial_UMG = umgMat
+                            newComp.InitialIconMaterial_UMG = umgMat
+                        end
+                        if dotTex and dotTex:IsValid() then
+                            newComp.IconTexture = dotTex
+                        end
+                        newComp.IconSize = isHostile and 12.0 or 10.0
+                        newComp.IconSizeUnit = 0
+                        local color = isHostile
+                            and { R = 1.0, G = 0.18, B = 0.18, A = 1.0 } -- Red (Hostile Monster)
+                            or  { R = 1.0, G = 0.88, B = 0.12, A = 1.0 } -- Yellow (Neutral / Wildlife)
+                        newComp.IconDrawColor = color
+                        newComp.bIconRotates = false
+                        newComp.IconZOrder = 15
+                        newComp.bHideOwnerInsideFog = false
+                        newComp.bIconVisible = ResourceIconsEnabled
+
+                        if ai.FinishAddComponent then
+                            pcall(function() ai:FinishAddComponent(newComp, false, compTransform) end)
+                        elseif newComp.RegisterComponent then
+                            newComp:RegisterComponent()
+                        end
+
+                        if newComp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
+                            newComp:SetIconMaterialForUMG(umgMat)
+                        end
+                        if dotTex and dotTex:IsValid() and newComp.SetIconTexture then
+                            newComp:SetIconTexture(dotTex)
+                        end
+                        if newComp.SetIconDrawColor then
+                            newComp:SetIconDrawColor(color)
+                        end
+                        if newComp.SetIconSize then
+                            newComp:SetIconSize(isHostile and 12.0 or 10.0, 0)
+                        end
+                        if newComp.SetIconVisible then
+                            newComp:SetIconVisible(ResourceIconsEnabled)
+                        end
+
+                        if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
+                            MinimapWidget:AddMapIcon(newComp)
+                        end
+                        local official = GetOfficialMap()
+                        if official and official:IsValid() and official.AddMapIcon then
+                            official:AddMapIcon(newComp)
+                        end
+                    end)
+
+                    TrackedAiActors[addr] = {
+                        Actor = ai,
+                        Comp = newComp,
+                        Hostile = isHostile
+                    }
+                end
+            end
+        end
+    end
 end
 
 PurgeAllResourceComponents = function()
@@ -1089,8 +1514,10 @@ PurgeAllResourceComponents = function()
                 if not owner or not owner:IsValid() then
                     shouldDestroy = true
                 else
-                    -- Only purge custom resource icons (IconZOrder == 10) that cannot be classified
+                    -- Purge custom resource icons (IconZOrder == 10) or custom AI radar dots (IconZOrder == 15)
                     if comp.IconZOrder == 10 and ClassifyResource(owner) == nil then
+                        shouldDestroy = true
+                    elseif comp.IconZOrder == 15 then
                         shouldDestroy = true
                     end
                 end
@@ -1114,7 +1541,7 @@ PurgeAllResourceComponents = function()
                 official:ForgetDestroyedIcons()
             end
         end)
-        Log(string.format("[PURGE] Destroyed %d unclassified resource icon components from world.", destroyed))
+        Log(string.format("[PURGE] Destroyed %d unclassified resource/radar icon components from world.", destroyed))
     end
 end
 
@@ -1125,6 +1552,15 @@ local function PruneDeadIconWidgets(Widget)
 
     local activeAddrs = {}
     for addr, data in pairs(TrackedResourceActors) do
+        local comp = (type(data) == "table") and data.Comp or data
+        if comp and comp:IsValid() then
+            pcall(function()
+                local cAddr = comp:GetAddress()
+                if cAddr then activeAddrs[cAddr] = true end
+            end)
+        end
+    end
+    for addr, data in pairs(TrackedAiActors) do
         local comp = (type(data) == "table") and data.Comp or data
         if comp and comp:IsValid() then
             pcall(function()
@@ -1152,13 +1588,18 @@ local function PruneDeadIconWidgets(Widget)
                         if not owner or not owner:IsValid() then
                             shouldRemove = true
                         else
-                            -- ONLY prune custom resource icons (ZOrder == 10) if they are no longer tracked or unclassified
                             if comp.IconZOrder == 10 then
                                 local cAddr = nil
                                 pcall(function() cAddr = comp:GetAddress() end)
                                 if not cAddr or not activeAddrs[cAddr] then
                                     shouldRemove = true
                                 elseif ClassifyResource(owner) == nil then
+                                    shouldRemove = true
+                                end
+                            elseif comp.IconZOrder == 15 then
+                                local cAddr = nil
+                                pcall(function() cAddr = comp:GetAddress() end)
+                                if not cAddr or not activeAddrs[cAddr] then
                                     shouldRemove = true
                                 end
                             end
@@ -1284,13 +1725,8 @@ local function ScanAndRegisterResources()
     }
 
     local newCount = 0
-    local debugCounts = {}
     for _, className in ipairs(classesToScan) do
         local ok, actors = pcall(function() return FindAllOf(className) end)
-        local rawCount = (ok and actors) and #actors or 0
-        if rawCount > 0 then
-            table.insert(debugCounts, string.format("%s:%d", className, rawCount))
-        end
         if ok and actors then
             for _, actor in ipairs(actors) do
                 if IsValidResourceActor(actor, playerLoc, maxDistSq) then
@@ -1311,12 +1747,14 @@ local function ScanAndRegisterResources()
     local totalPruned = prunedMinimap + prunedOfficial
 
     if newCount > 0 or culledCount > 0 or totalPruned > 0 then
-        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled, -%d widgets pruned. Active tracked: %d, Minimap icon widgets: %d",
-            newCount, culledCount, totalPruned, GetTrackedActorCount(), GetMapIconWidgetCount(MinimapWidget)))
+        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled, -%d widgets pruned. Active tracked resources: %d",
+            newCount, culledCount, totalPruned, #TrackedResourceActors))
     end
 end
 
--- 7. Keybinds
+-- =========================================================================
+-- 7. Keybinds & Controls
+-- =========================================================================
 pcall(function()
     -- F6: Toggle Minimap On/Off
     RegisterKeyBind(Key.F6, function()
@@ -1331,7 +1769,7 @@ pcall(function()
         end)
     end)
 
-    -- F7: Force Reload
+    -- F7: Force Reload Widget
     RegisterKeyBind(Key.F7, function()
         ExecuteInGameThread(function()
             Log("Manual reload requested via F7...")
@@ -1339,7 +1777,14 @@ pcall(function()
         end)
     end)
 
-    -- F9: Toggle Resource Icons On/Off
+    -- F8: Toggle Minimap Shape (Circular Compass vs Rectangular Tablet)
+    RegisterKeyBind(Key.F8, function()
+        ExecuteInGameThread(function()
+            UpdateMinimapShape(not IsCircularMode)
+        end)
+    end)
+
+    -- F9: Toggle Resource Icons & AI Radar Dots On/Off
     RegisterKeyBind(Key.F9, function()
         ExecuteInGameThread(function()
             ResourceIconsEnabled = not ResourceIconsEnabled
@@ -1349,28 +1794,40 @@ pcall(function()
                     pcall(function() comp:SetIconVisible(ResourceIconsEnabled) end)
                 end
             end
-            Log("Resource Icons toggled: " .. (ResourceIconsEnabled and "VISIBLE" or "HIDDEN"))
+            for addr, data in pairs(TrackedAiActors) do
+                local comp = (type(data) == "table") and data.Comp or data
+                if comp and comp:IsValid() and comp.SetIconVisible then
+                    pcall(function() comp:SetIconVisible(ResourceIconsEnabled) end)
+                end
+            end
+            Log("Resource Icons & AI Radar toggled: " .. (ResourceIconsEnabled and "VISIBLE" or "HIDDEN"))
             if ResourceIconsEnabled then
                 pcall(ScanAndRegisterResources)
+                pcall(ScanAndRegisterAI)
             end
         end)
     end)
 
-    -- PageUp / PageDown: Zoom
-    RegisterKeyBind(Key.PAGE_UP, function()
+    -- Zoom Controls: PageUp / PageDown / + / -
+    local function ZoomIn()
         ExecuteInGameThread(function()
             CurrentZoom = math.min(48.0, CurrentZoom + 1.0)
             Log(string.format("Minimap zoom: %.1fx", CurrentZoom))
         end)
-    end)
-    RegisterKeyBind(Key.PAGE_DOWN, function()
+    end
+    local function ZoomOut()
         ExecuteInGameThread(function()
             CurrentZoom = math.max(2.0, CurrentZoom - 1.0)
             Log(string.format("Minimap zoom: %.1fx", CurrentZoom))
         end)
-    end)
+    end
 
-    -- [ and ]: Size
+    RegisterKeyBind(Key.PAGE_UP, ZoomIn)
+    RegisterKeyBind(Key.PAGE_DOWN, ZoomOut)
+    pcall(function() RegisterKeyBind(Key.OEM_PLUS, ZoomIn) end)
+    pcall(function() RegisterKeyBind(Key.OEM_MINUS, ZoomOut) end)
+
+    -- [ and ]: Size Scale Controls
     RegisterKeyBind(Key.OEM_FOUR, function()
         ExecuteInGameThread(function()
             CurrentScale = math.max(0.08, CurrentScale - 0.02)
@@ -1385,7 +1842,9 @@ pcall(function()
     end)
 end)
 
--- 8. Queue at most one game-thread update; retry expensive setup once a second.
+-- =========================================================================
+-- 8. Main Update Loop
+-- =========================================================================
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
     local Pawn = PC and PC:IsValid() and PC.Pawn
@@ -1412,8 +1871,19 @@ local function UpdateMinimap()
                 end)
             end
         end
+        for _, data in pairs(TrackedAiActors) do
+            local comp = (type(data) == "table") and data.Comp or data
+            if comp and comp:IsValid() then
+                pcall(function()
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    comp:K2_DestroyComponent(comp)
+                end)
+            end
+        end
         TrackedResourceActors = {}
-        NextResourceScanTick = ReadyAfterTick + 100 -- 10s delay (5s after minimap spawns)
+        TrackedAiActors = {}
+        NextResourceScanTick = ReadyAfterTick + 100
+        NextAiScanTick = ReadyAfterTick + 60
     end
     if UpdateTick < ReadyAfterTick then return end
 
@@ -1463,6 +1933,12 @@ local function UpdateMinimap()
     CheckMainMapVisibility()
     UpdateMinimapTerrain(PC)
 
+    -- Live AI Monster / NPC Radar Scan every 2 seconds
+    if AiRadarEnabled and ResourceIconsEnabled and UpdateTick >= NextAiScanTick then
+        NextAiScanTick = UpdateTick + 40
+        pcall(ScanAndRegisterAI)
+    end
+
     -- Background Resource Scan every 5 seconds (local proximity only, CDOs filtered)
     if ResourceIconsEnabled and UpdateTick >= NextResourceScanTick then
         NextResourceScanTick = UpdateTick + 100
@@ -1499,9 +1975,9 @@ LoopAsync(50, function()
     return false
 end)
 
-Log("OSRS Minimap viewport repair v2 ready. F6: toggle, F7: recreate widget, F9: resource icons, PageUp/Down: zoom, [/]: size.")
+Log("OSRS Minimap Ornate HUD v3 ready. F6: toggle, F7: reload, F8: circle/tablet shape, F9: resources/radar, PageUp/Down: zoom, [/]: size.")
 
--- One-time startup purge of any legacy ash/generic tree icon components lingering in world
+-- One-time startup purge of any legacy icon components lingering in world
 ExecuteInGameThread(function()
     if PurgeAllResourceComponents then
         pcall(PurgeAllResourceComponents)
