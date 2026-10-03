@@ -192,6 +192,10 @@ local function Statuses()
 end
 
 local function ActivePause(pc)
+    if Valid(PauseScreen) and Same(PauseScreen:GetOwningPlayer(), pc)
+        and PauseScreen:IsVisible() and PauseScreen:IsActivated() then
+        return PauseScreen
+    end
     for _, screen in ipairs(FindAllOf("WBP_PauseMenuScreen_C") or {}) do
         if Valid(screen) and Same(screen:GetOwningPlayer(), pc)
             and screen:IsVisible() and screen:IsActivated() then return screen end
@@ -360,8 +364,10 @@ local function Update()
         ToolkitButton:SetLabelText(FText("TOOLKIT"))
         ToolkitButton:SetIsFocusable(false)
         Log("Toolkit menu button attached")
+        Layout(pc)
+    elseif Visible then
+        Layout(pc)
     end
-    Layout(pc)
     ToolkitButton:SetVisibility(Visible and COLLAPSED or VISIBLE)
     -- Opening Pause must NEVER call Show: page creation requires user activation.
 end
