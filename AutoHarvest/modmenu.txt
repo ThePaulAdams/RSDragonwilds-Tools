@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "id": "AutoHarvest",
+  "name": "Auto Harvest",
+  "author": "Antigravity",
+  "version": "1.3.0",
+  "description": "Automatically harvests eligible food bushes, flax, crops, and gatherable plant nodes when walking near them.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "AutoHarvest Enabled",
+      "default": true,
+      "tooltip": "Toggle automatic harvesting of nearby plants and food bushes."
+    },
+    {
+      "type": "header",
+      "label": "Radius & Timing"
+    },
+    {
+      "key": "RadiusCm",
+      "type": "slider",
+      "label": "Harvest Proximity Radius (cm)",
+      "min": 150,
+      "max": 800,
+      "step": 25,
+      "decimals": 0,
+      "default": 350,
+      "suffix": " cm",
+      "tooltip": "Distance in centimeters from player pawn to harvest resources (default 350cm = 3.5m)."
+    },
+    {
+      "key": "ScanIntervalMs",
+      "type": "slider",
+      "label": "Scan Interval (ms)",
+      "min": 200,
+      "max": 2000,
+      "step": 50,
+      "decimals": 0,
+      "default": 500,
+      "suffix": " ms",
+      "tooltip": "Delay between proximity checks in milliseconds."
+    },
+    {
+      "type": "header",
+      "label": "Item Filtering"
+    },
+    {
+      "key": "HarvestFood",
+      "type": "toggle",
+      "label": "Harvest Food & Berries",
+      "default": true,
+      "tooltip": "Harvest berry bushes, vegetables, and food items (Item.Food category)."
+    },
+    {
+      "key": "GatherMaterials",
+      "type": "toggle",
+      "label": "Gather Plant Materials (Flax)",
+      "default": true,
+      "tooltip": "Harvest lightweight plant materials like flax and fiber."
+    },
+    {
+      "key": "MaxItemWeight",
+      "type": "slider",
+      "label": "Maximum Item Weight (kg)",
+      "min": 0.05,
+      "max": 2.0,
+      "step": 0.05,
+      "decimals": 2,
+      "default": 0.2,
+      "suffix": " kg",
+      "tooltip": "Ignore heavier objects to avoid over-encumbering your inventory."
+    },
+    {
+      "type": "header",
+      "label": "Controls"
+    },
+    {
+      "key": "ToggleKey",
+      "type": "key",
+      "label": "Toggle Hotkey",
+      "default": "F6",
+      "tooltip": "Hotkey to quickly enable or disable AutoHarvest."
+    }
+  ]
+}

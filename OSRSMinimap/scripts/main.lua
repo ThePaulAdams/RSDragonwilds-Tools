@@ -37,6 +37,7 @@ local IsCircularMode = true
 local BorderOuter = nil
 local BorderGold = nil
 local BorderInner = nil
+local CircularBezelImage = nil
 local DayNightWidget = nil
 local DayNightBezel = nil
 local DayNightShadow = nil
@@ -45,10 +46,13 @@ local NorthIndicator = nil
 -- Resource & AI Tracking State
 local ResourceIconsEnabled = true
 local AiRadarEnabled = true
+local LandmarkIconsEnabled = true
 local TrackedResourceActors = {}
 local TrackedAiActors = {}
+local TrackedLandmarkActors = {}
 local NextResourceScanTick = 0
 local NextAiScanTick = 0
+local NextLandmarkScanTick = 0
 local LastResourceScanLocation = nil
 local MapIconCompClass = nil
 local PurgeAllResourceComponents = nil
@@ -176,45 +180,51 @@ end
 -- 2. Ornate RuneScape Dual-Ring Frame & Sundial Bezel
 -- =========================================================================
 
-local function CreateBorderWidget(outer, PC)
+local function CreateBorderWidget(outer, PC, widgetName)
     local borderClass = StaticFindObject("/Script/UMG.Border")
     if not borderClass or not borderClass:IsValid() then return nil end
     local border = nil
-    pcall(function()
-        border = StaticConstructObject(borderClass, outer)
-    end)
-    if not border or not border:IsValid() then
-        local bplib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
-        if bplib and bplib:IsValid() and bplib.Create then
-            pcall(function() border = bplib:Create(PC, borderClass, PC) end)
-        end
+    local ok, res = pcall(function() return StaticConstructObject(borderClass, outer) end)
+    if ok and type(res) == "userdata" and res.IsValid and res:IsValid() then
+        border = res
     end
     return border
 end
 
-local function ConfigureBorder(border, isCircular, strokeWidth, r, g, b, a)
+local function CreateImageWidget(outer, widgetName)
+    local imageClass = StaticFindObject("/Script/UMG.Image")
+    if not imageClass or not imageClass:IsValid() then return nil end
+    local image = nil
+    local ok, res = pcall(function() return StaticConstructObject(imageClass, outer) end)
+    if ok and type(res) == "userdata" and res.IsValid and res:IsValid() then
+        image = res
+    end
+    return image
+end
+
+local function ConfigureSolidBezel(border, isCircular, r, g, b, a)
     if not border or not border:IsValid() then return end
     pcall(function()
-        border:SetBrushColor({ R = 0.0, G = 0.0, B = 0.0, A = 0.0 })
+        border:SetVisibility(3) -- HitTestInvisible (visible to render, does not block mouse clicks)
+        border:SetBrushColor({ R = r, G = g, B = b, A = a })
         local brush = border.Background
         if brush then
             brush.DrawAs = 4 -- ESlateBrushDrawType::RoundedBox
-            local outline = brush.OutlineSettings
-            if outline then
-                if isCircular then
-                    outline.RoundingType = 1 -- ESlateBrushRoundingType::HalfRadius (perfect circle)
-                    outline.CornerRadii = { X = 0.0, Y = 0.0, Z = 0.0, W = 0.0 }
-                else
-                    outline.RoundingType = 0 -- ESlateBrushRoundingType::FixedRadius
-                    outline.CornerRadii = { X = 8.0, Y = 8.0, Z = 8.0, W = 8.0 }
-                end
-                outline.Width = strokeWidth or 3.5
-                outline.Color = {
-                    SpecifiedColor = { R = r or 0.84, G = g or 0.70, B = b or 0.32, A = a or 1.0 },
-                    ColorUseRule = 0
-                }
-                outline.bUseBrushTransparency = true
+            brush.TintColor = {
+                SpecifiedColor = { R = r, G = g, B = b, A = a },
+                ColorUseRule = 0
+            }
+            local outline = brush.OutlineSettings or {}
+            if isCircular then
+                outline.RoundingType = 1 -- ESlateBrushRoundingType::HalfRadius (perfect circle)
+                outline.CornerRadii = { X = 0.0, Y = 0.0, Z = 0.0, W = 0.0 }
+            else
+                outline.RoundingType = 0 -- ESlateBrushRoundingType::FixedRadius
+                outline.CornerRadii = { X = 12.0, Y = 12.0, Z = 12.0, W = 12.0 }
             end
+            outline.Width = 0.0
+            outline.bUseBrushTransparency = false
+            brush.OutlineSettings = outline
             border:SetBrush(brush)
         end
     end)
@@ -225,80 +235,101 @@ local function SetupMinimapFrame(Widget, PC)
     local rootCanvas = Widget.WidgetTree and Widget.WidgetTree.RootWidget
     if not rootCanvas or not rootCanvas:IsValid() or not rootCanvas.AddChildToCanvas then return end
 
-    -- 1. Outer Dark Bronze Bezel Rim (Deep antique contrast)
+    -- Ensure RetainerBox_Minimap sits at ZOrder 10
+    if rootCanvas.GetChildrenCount then
+        for i = 0, rootCanvas:GetChildrenCount() - 1 do
+            local c = rootCanvas:GetChildAt(i)
+            if c and c:IsValid() and c:GetFullName():match("RetainerBox") then
+                if c.Slot and c.Slot:IsValid() and c.Slot.SetZOrder then
+                    c.Slot:SetZOrder(10)
+                end
+                break
+            end
+        end
+    end
+
+    -- 1. Outer Antique Bronze Shadow Rim (ZOrder 0, sticks out 8px beyond map)
     if not BorderOuter or not BorderOuter:IsValid() then
-        BorderOuter = CreateBorderWidget(Widget, PC)
+        BorderOuter = CreateBorderWidget(Widget, PC, "OSRSBorderOuter")
         if BorderOuter and BorderOuter:IsValid() then
             local slot = rootCanvas:AddChildToCanvas(BorderOuter)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
-                slot:SetOffsets({ Left = -3.0, Top = -3.0, Right = -3.0, Bottom = -3.0 })
-                slot:SetZOrder(80)
+                slot:SetOffsets({ Left = -8.0, Top = -8.0, Right = -8.0, Bottom = -8.0 })
+                slot:SetZOrder(0)
             end
         end
     end
-    ConfigureBorder(BorderOuter, IsCircularMode, 6.0, 0.12, 0.09, 0.05, 0.95)
+    ConfigureSolidBezel(BorderOuter, IsCircularMode, 0.05, 0.04, 0.02, 0.95)
 
-    -- 2. Main Ornate RuneScape Gold Stroke Ring
+    -- 2. Circular Ornate RuneScape Golden Bezel Image (ZOrder 50, directly overlaying minimap perimeter)
+    if not CircularBezelImage or not CircularBezelImage:IsValid() then
+        CircularBezelImage = CreateImageWidget(Widget, "OSRSMinimapBezelImage")
+        if CircularBezelImage and CircularBezelImage:IsValid() then
+            local slot = rootCanvas:AddChildToCanvas(CircularBezelImage)
+            if slot and slot:IsValid() then
+                slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
+                slot:SetOffsets({ Left = -6.0, Top = -6.0, Right = -6.0, Bottom = -6.0 })
+                slot:SetZOrder(50)
+            end
+        end
+    end
+    if CircularBezelImage and CircularBezelImage:IsValid() then
+        pcall(function()
+            CircularBezelImage:SetVisibility(IsCircularMode and 3 or 2)
+            local ringTex = StaticFindObject("/Game/Art/UI/Craft/T_Craft_CircleTrim.T_Craft_CircleTrim")
+                or StaticFindObject("/Game/Art/UI/Enchantment/T_Enchantment_Ring_Yellow.T_Enchantment_Ring_Yellow")
+                or StaticFindObject("/Game/Art/UI/Craft/Runecrafting/T_Runecrafting_Ring.T_Runecrafting_Ring")
+            if ringTex and ringTex:IsValid() then
+                CircularBezelImage:SetBrushFromTexture(ringTex, false)
+                Log("[BEZEL] Applied authentic RuneScape ring texture: " .. ringTex:GetFullName())
+            end
+            CircularBezelImage:SetColorAndOpacity({ R = 1.0, G = 0.84, B = 0.30, A = 1.0 })
+        end)
+    end
+
+    -- 3. Rectangular Gold Frame for Tablet Mode (ZOrder 5, active when IsCircularMode == false)
     if not BorderGold or not BorderGold:IsValid() then
-        BorderGold = CreateBorderWidget(Widget, PC)
+        BorderGold = CreateBorderWidget(Widget, PC, "OSRSBorderGold")
         if BorderGold and BorderGold:IsValid() then
             local slot = rootCanvas:AddChildToCanvas(BorderGold)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
-                slot:SetOffsets({ Left = 0.0, Top = 0.0, Right = 0.0, Bottom = 0.0 })
-                slot:SetZOrder(85)
+                slot:SetOffsets({ Left = -4.0, Top = -4.0, Right = -4.0, Bottom = -4.0 })
+                slot:SetZOrder(5)
             end
         end
     end
-    ConfigureBorder(BorderGold, IsCircularMode, 3.5, 0.84, 0.70, 0.32, 1.0)
-
-    -- 3. Inner Warm Gold Highlight Bevel
-    if not BorderInner or not BorderInner:IsValid() then
-        BorderInner = CreateBorderWidget(Widget, PC)
-        if BorderInner and BorderInner:IsValid() then
-            local slot = rootCanvas:AddChildToCanvas(BorderInner)
-            if slot and slot:IsValid() then
-                slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
-                slot:SetOffsets({ Left = 2.5, Top = 2.5, Right = 2.5, Bottom = 2.5 })
-                slot:SetZOrder(86)
-            end
+    if BorderGold and BorderGold:IsValid() then
+        BorderGold:SetVisibility(IsCircularMode and 2 or 3)
+        if not IsCircularMode then
+            ConfigureSolidBezel(BorderGold, false, 0.96, 0.80, 0.25, 1.0)
         end
     end
-    ConfigureBorder(BorderInner, IsCircularMode, 1.5, 1.0, 0.88, 0.45, 0.70)
 
-    -- 4. OSRS Compass North Indicator (Iconic Ruby Jewel at 12 o'clock)
+    -- 4. Top-layer Compass North Indicator (ZOrder 100, at 12 o'clock)
     if not NorthIndicator or not NorthIndicator:IsValid() then
-        NorthIndicator = CreateBorderWidget(Widget, PC)
+        NorthIndicator = CreateImageWidget(Widget, "OSRSNorthIndicator")
         if NorthIndicator and NorthIndicator:IsValid() then
             local slot = rootCanvas:AddChildToCanvas(NorthIndicator)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.5, Y = 0.0 }, Maximum = { X = 0.5, Y = 0.0 } })
                 slot:SetAlignment({ X = 0.5, Y = 0.5 })
-                slot:SetPosition({ X = 0.0, Y = 5.0 })
-                slot:SetSize({ X = 10.0, Y = 10.0 })
-                slot:SetZOrder(95)
+                slot:SetPosition({ X = 0.0, Y = -4.0 })
+                slot:SetSize({ X = 22.0, Y = 22.0 })
+                slot:SetZOrder(100)
             end
         end
     end
     if NorthIndicator and NorthIndicator:IsValid() then
         pcall(function()
-            NorthIndicator:SetBrushColor({ R = 0.95, G = 0.18, B = 0.18, A = 1.0 })
-            local brush = NorthIndicator.Background
-            if brush then
-                brush.DrawAs = 4 -- RoundedBox
-                local outline = brush.OutlineSettings
-                if outline then
-                    outline.RoundingType = 1 -- HalfRadius (circular jewel)
-                    outline.Width = 1.5
-                    outline.Color = {
-                        SpecifiedColor = { R = 0.84, G = 0.70, B = 0.32, A = 1.0 },
-                        ColorUseRule = 0
-                    }
-                    outline.bUseBrushTransparency = true
-                end
-                NorthIndicator:SetBrush(brush)
+            NorthIndicator:SetVisibility(IsCircularMode and 3 or 2)
+            local markerTex = StaticFindObject("/Game/Art/UI/Compass/2025/T_Compass_DirectionMarker.T_Compass_DirectionMarker")
+                or StaticFindObject("/Game/Art/UI/NavIcons/T_Map_Icon_Pin.T_Map_Icon_Pin")
+            if markerTex and markerTex:IsValid() then
+                NorthIndicator:SetBrushFromTexture(markerTex, false)
             end
+            NorthIndicator:SetColorAndOpacity({ R = 0.98, G = 0.20, B = 0.20, A = 1.0 })
         end)
     end
 end
@@ -316,18 +347,20 @@ local function UpdateMinimapShape(isCircular)
         end
     end)
 
-    if BorderOuter and BorderOuter:IsValid() then
-        ConfigureBorder(BorderOuter, IsCircularMode, 6.0, 0.12, 0.09, 0.05, 0.95)
+    if CircularBezelImage and CircularBezelImage:IsValid() then
+        CircularBezelImage:SetVisibility(IsCircularMode and 3 or 2)
     end
     if BorderGold and BorderGold:IsValid() then
-        ConfigureBorder(BorderGold, IsCircularMode, 3.5, 0.84, 0.70, 0.32, 1.0)
+        BorderGold:SetVisibility(IsCircularMode and 2 or 3)
+        if not IsCircularMode then
+            ConfigureSolidBezel(BorderGold, false, 0.96, 0.80, 0.25, 1.0)
+        end
     end
-    if BorderInner and BorderInner:IsValid() then
-        ConfigureBorder(BorderInner, IsCircularMode, 1.5, 1.0, 0.88, 0.45, 0.70)
+    if BorderOuter and BorderOuter:IsValid() then
+        ConfigureSolidBezel(BorderOuter, IsCircularMode, 0.05, 0.04, 0.02, 0.95)
     end
-
     if NorthIndicator and NorthIndicator:IsValid() then
-        NorthIndicator:SetVisibility(IsCircularMode and 0 or 2)
+        NorthIndicator:SetVisibility(IsCircularMode and 3 or 2)
     end
 
     Log("[SHAPE] Minimap shape updated to " .. (IsCircularMode and "CIRCULAR (Compass)" or "RECTANGULAR (Tablet)"))
@@ -568,6 +601,7 @@ local function InitMinimap(ForceRecreate)
     BorderOuter = nil
     BorderGold = nil
     BorderInner = nil
+    CircularBezelImage = nil
     DayNightBezel = nil
     DayNightShadow = nil
     NorthIndicator = nil
@@ -1457,6 +1491,134 @@ local function ScanAndRegisterAI()
     end
 end
 
+local function ScanAndRegisterLandmarks()
+    if not LandmarkIconsEnabled then return end
+    local pc = CurrentPlayerController or UEHelpers.GetPlayerController()
+    if not pc or not pc:IsValid() then return end
+    local pawn = pc.Pawn or (CurrentPawn and CurrentPawn:IsValid() and CurrentPawn)
+    if not pawn or not pawn:IsValid() then return end
+
+    local playerLoc = pawn:K2_GetActorLocation()
+    if not playerLoc then return end
+
+    -- 1. Cull invalid or destroyed landmarks
+    for addr, data in pairs(TrackedLandmarkActors) do
+        local actor = (type(data) == "table") and data.Actor or nil
+        local comp = (type(data) == "table") and data.Comp or data
+        if not comp or not comp:IsValid() or not actor or not actor:IsValid() then
+            if comp and comp:IsValid() then
+                pcall(function()
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    comp:K2_DestroyComponent(comp)
+                end)
+            end
+            TrackedLandmarkActors[addr] = nil
+        end
+    end
+
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then
+        pcall(function() MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent") end)
+    end
+    if not MapIconCompClass or not MapIconCompClass:IsValid() then return end
+
+    local umgMat = GetDefaultUMGMaterial()
+    local dotTex = GetResourceTexture("/Game/Art/UI/Notifications/MilestoneMaterial/T_Diamond_Bg.T_Diamond_Bg")
+        or GetResourceTexture("/Game/Art/UI/NavIcons/T_Map_Icon_FriendDot.T_Map_Icon_FriendDot")
+
+    local function registerLandmarkActor(actor, isGravestone)
+        if not actor or not actor:IsValid() then return end
+        local addr = actor:GetAddress()
+        if TrackedLandmarkActors[addr] then return end
+
+        local compTransform = {
+            Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+            Translation = { X = 0, Y = 0, Z = 150.0 },
+            Scale3D = { X = 1, Y = 1, Z = 1 }
+        }
+        local okAdd, newComp = pcall(function()
+            return actor:AddComponentByClass(MapIconCompClass, false, compTransform, true)
+        end)
+        if not okAdd or not newComp or not newComp:IsValid() then
+            pcall(function()
+                newComp = actor:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+            end)
+        end
+        if newComp and newComp:IsValid() then
+            pcall(function()
+                if umgMat and umgMat:IsValid() then
+                    newComp.IconMaterial_UMG = umgMat
+                    newComp.InitialIconMaterial_UMG = umgMat
+                end
+                if dotTex and dotTex:IsValid() then
+                    newComp.IconTexture = dotTex
+                end
+                newComp.IconSize = isGravestone and 16.0 or 14.0
+                newComp.IconSizeUnit = 0
+                local color = isGravestone
+                    and { R = 1.0, G = 0.15, B = 0.25, A = 1.0 } -- Crimson (Death point)
+                    or  { R = 0.2, G = 0.75, B = 1.0, A = 1.0 }  -- Cyan (Lodestone teleport)
+                newComp.IconDrawColor = color
+                newComp.bIconRotates = false
+                newComp.IconZOrder = isGravestone and 25 or 20
+                newComp.bHideOwnerInsideFog = false
+                newComp.bIconVisible = LandmarkIconsEnabled
+
+                if actor.FinishAddComponent then
+                    pcall(function() actor:FinishAddComponent(newComp, false, compTransform) end)
+                elseif newComp.RegisterComponent then
+                    newComp:RegisterComponent()
+                end
+
+                if newComp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
+                    newComp:SetIconMaterialForUMG(umgMat)
+                end
+                if dotTex and dotTex:IsValid() and newComp.SetIconTexture then
+                    newComp:SetIconTexture(dotTex)
+                end
+                if newComp.SetIconDrawColor then
+                    newComp:SetIconDrawColor(color)
+                end
+                if newComp.SetIconSize then
+                    newComp:SetIconSize(isGravestone and 16.0 or 14.0, 0)
+                end
+                if newComp.SetIconVisible then
+                    newComp:SetIconVisible(LandmarkIconsEnabled)
+                end
+
+                if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
+                    MinimapWidget:AddMapIcon(newComp)
+                end
+            end)
+
+            TrackedLandmarkActors[addr] = {
+                Actor = actor,
+                Comp = newComp,
+                IsGravestone = isGravestone
+            }
+        end
+    end
+
+    -- Scan Lodestones (Teleport crystals)
+    local okL, lodestones = pcall(FindAllOf, "Lodestone")
+    if okL and lodestones then
+        for _, obj in ipairs(lodestones) do
+            if obj and obj:IsValid() and not obj:HasAnyFlags(0x00000010 + 0x00000020) then
+                registerLandmarkActor(obj, false)
+            end
+        end
+    end
+
+    -- Scan Gravestones (Player death marker)
+    local okG, gravestones = pcall(FindAllOf, "Gravestone")
+    if okG and gravestones then
+        for _, obj in ipairs(gravestones) do
+            if obj and obj:IsValid() and not obj:HasAnyFlags(0x00000010 + 0x00000020) then
+                registerLandmarkActor(obj, true)
+            end
+        end
+    end
+end
+
 PurgeAllResourceComponents = function()
     local ok, allComps = pcall(function() return FindAllOf("MapIconComponent") end)
     if not ok or not allComps then return end
@@ -1815,29 +1977,66 @@ pcall(function()
 end)
 
 local GameplayStatics = nil
+local LastPauseCheckTime = 0
+local LastPauseState = false
 local function IsGamePaused(pc)
     if not pc or not pc:IsValid() then return false end
+    local now = os.clock()
+    if now - LastPauseCheckTime < 0.25 then
+        return LastPauseState
+    end
+    LastPauseCheckTime = now
+
     local ok1, paused = pcall(function() return pc:IsPaused() end)
-    if ok1 and paused then return true end
+    if ok1 and paused then
+        LastPauseState = true
+        return true
+    end
 
     if not GameplayStatics or not GameplayStatics:IsValid() then
         GameplayStatics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
     end
     if GameplayStatics and GameplayStatics:IsValid() then
         local ok2, gPaused = pcall(function() return GameplayStatics:IsGamePaused(pc) end)
-        if ok2 and gPaused then return true end
+        if ok2 and gPaused then
+            LastPauseState = true
+            return true
+        end
     end
+    LastPauseState = false
     return false
 end
 
 -- =========================================================================
 -- 8. Main Update Loop
 -- =========================================================================
+local WasPaused = false
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
-    if not PC or not PC:IsValid() or IsGamePaused(PC) then return end
+    local paused = PC and IsGamePaused(PC)
+    if UpdateTick % 40 == 0 then
+        Log(string.format("[HEARTBEAT] PC=%s, Paused=%s, Widget=%s",
+            tostring(PC and PC:IsValid()),
+            tostring(paused),
+            tostring(MinimapWidget and MinimapWidget:IsValid())))
+    end
+    if not PC or not PC:IsValid() then return end
+
+    if paused then
+        WasPaused = true
+        return
+    end
+
+    if WasPaused then
+        WasPaused = false
+        NextAiScanTick = UpdateTick + 30
+        NextResourceScanTick = UpdateTick + 50
+        NextLandmarkScanTick = UpdateTick + 70
+        Log("[PAUSE] Resumed from pause cleanly. Staggered background scans.")
+    end
+
     local Pawn = PC.Pawn
-    if not Pawn or not Pawn:IsValid() or not Pawn.MapView or not Pawn.MapView:IsValid() then
+    if not Pawn or not Pawn:IsValid() then
         ReadyPawnAddress = nil
         if MinimapWidget and MinimapWidget:IsValid() then
             MinimapWidget:SetVisibility(2)
@@ -1933,6 +2132,12 @@ local function UpdateMinimap()
         NextResourceScanTick = UpdateTick + 100
         pcall(ScanAndRegisterResources)
     end
+
+    -- Live Landmark Scan (Lodestones & Gravestones) every 5 seconds
+    if LandmarkIconsEnabled and UpdateTick >= NextLandmarkScanTick then
+        NextLandmarkScanTick = UpdateTick + 100
+        pcall(ScanAndRegisterLandmarks)
+    end
 end
 
 LoopAsync(50, function()
@@ -1971,4 +2176,17 @@ ExecuteInGameThread(function()
     if PurgeAllResourceComponents then
         pcall(PurgeAllResourceComponents)
     end
+end)
+
+-- Immediate reaction to network replication of Lodestones and Gravestones
+pcall(RegisterHook, "/Script/Dominion.GameplayObjectRegistry:OnRep_Lodestones", function()
+    ExecuteInGameThread(function()
+        if ScanAndRegisterLandmarks then pcall(ScanAndRegisterLandmarks) end
+    end)
+end)
+
+pcall(RegisterHook, "/Script/Dominion.GameplayObjectRegistry:OnRep_Gravestones", function()
+    ExecuteInGameThread(function()
+        if ScanAndRegisterLandmarks then pcall(ScanAndRegisterLandmarks) end
+    end)
 end)

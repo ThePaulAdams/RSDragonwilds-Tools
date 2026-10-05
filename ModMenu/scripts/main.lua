@@ -354,10 +354,13 @@ local function Update()
     Owner = pc
     local pause = ActivePause(pc)
     if not pause then
-        if #Owned > 0 then Destroy() end
+        if Visible then Hide() end
+        if Valid(ToolkitButton) and ToolkitButton:GetVisibility() ~= COLLAPSED then
+            ToolkitButton:SetVisibility(COLLAPSED)
+        end
+        PauseScreen = nil
         return
     end
-    if PauseScreen and not Same(PauseScreen, pause) then Destroy(); Owner = pc end
     PauseScreen = pause
     if not Valid(ToolkitButton) then
         ToolkitButton = CreateWidget(pc, BUTTON, 10000)
