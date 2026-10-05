@@ -63,14 +63,22 @@ if ModRef then
     pcall(function() OwnedWidgetName = ModRef:GetSharedVariable("OSRSMinimap.OwnedWidgetName") end)
 end
 local function CleanupAllOrphans(keepWidget)
-    if not OwnedWidgetName then return end
     local all = FindAllOf("WBP_DominionMinimap_C") or {}
     for _, w in ipairs(all) do
-        if w:IsValid() and w:GetFullName() == OwnedWidgetName
-            and (not keepWidget or w:GetAddress() ~= keepWidget:GetAddress()) then
-            pcall(function() w:DeactivateWidget() end)
-            w:RemoveFromParent()
-            w:SetVisibility(2)
+        if w and w:IsValid() then
+            local isKeep = keepWidget and (w:GetAddress() == keepWidget:GetAddress())
+            if not isKeep then
+                local parentOk, parent = pcall(function() return w:GetParent() end)
+                local hasParent = parentOk and parent and parent:IsValid()
+                -- Standalone viewport minimaps have NO parent. The official map is part of the HUD tree and HAS a parent.
+                if not hasParent then
+                    Log("[ORPHAN] Removing orphan standalone minimap widget: " .. w:GetFullName())
+                    pcall(function() w:DeactivateWidget() end)
+                    pcall(function() w:RemoveFromParent() end)
+                    pcall(function() w:RemoveFromViewport() end)
+                    pcall(function() w:SetVisibility(2) end)
+                end
+            end
         end
     end
 end
@@ -2190,6 +2198,7 @@ Log("OSRS Minimap Ornate HUD v3 ready. F6: toggle, F7: reload, F8: circle/tablet
 
 -- One-time startup purge of any legacy icon components lingering in world
 ExecuteInGameThread(function()
+    pcall(function() CleanupAllOrphans(MinimapWidget) end)
     if PurgeAllResourceComponents then
         pcall(PurgeAllResourceComponents)
     end
