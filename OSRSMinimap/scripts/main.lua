@@ -235,32 +235,46 @@ local function SetupMinimapFrame(Widget, PC)
     local rootCanvas = Widget.WidgetTree and Widget.WidgetTree.RootWidget
     if not rootCanvas or not rootCanvas:IsValid() or not rootCanvas.AddChildToCanvas then return end
 
-    -- Ensure RetainerBox_Minimap sits at ZOrder 10
+    -- Inspect rootCanvas children: prioritize RetainerBox and collapse native square backgrounds
     if rootCanvas.GetChildrenCount then
         for i = 0, rootCanvas:GetChildrenCount() - 1 do
             local c = rootCanvas:GetChildAt(i)
-            if c and c:IsValid() and c:GetFullName():match("RetainerBox") then
-                if c.Slot and c.Slot:IsValid() and c.Slot.SetZOrder then
-                    c.Slot:SetZOrder(10)
+            if c and c:IsValid() then
+                local name = c:GetFullName()
+                if name:match("RetainerBox") then
+                    if c.Slot and c.Slot:IsValid() and c.Slot.SetZOrder then
+                        c.Slot:SetZOrder(10)
+                    end
+                elseif name:match("OpaqueBackground") or name:match("Image_Opaque") then
+                    pcall(function() c:SetVisibility(2) end)
+                    Log("[FRAME] Collapsed square background: " .. name)
                 end
-                break
             end
         end
     end
 
-    -- 1. Outer Antique Bronze Shadow Rim (ZOrder 0, sticks out 8px beyond map)
+    if Widget.Image_OpaqueBackground and Widget.Image_OpaqueBackground:IsValid() then
+        pcall(function() Widget.Image_OpaqueBackground:SetVisibility(2) end)
+    end
+
+    -- 1. Outer Antique Bronze Shadow Rim (ZOrder 0, for Tablet/Rectangular Mode ONLY)
     if not BorderOuter or not BorderOuter:IsValid() then
         BorderOuter = CreateBorderWidget(Widget, PC, "OSRSBorderOuter")
         if BorderOuter and BorderOuter:IsValid() then
             local slot = rootCanvas:AddChildToCanvas(BorderOuter)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
-                slot:SetOffsets({ Left = -8.0, Top = -8.0, Right = -8.0, Bottom = -8.0 })
+                slot:SetOffsets({ Left = -6.0, Top = -6.0, Right = -6.0, Bottom = -6.0 })
                 slot:SetZOrder(0)
             end
         end
     end
-    ConfigureSolidBezel(BorderOuter, IsCircularMode, 0.05, 0.04, 0.02, 0.95)
+    if BorderOuter and BorderOuter:IsValid() then
+        BorderOuter:SetVisibility(IsCircularMode and 2 or 3)
+        if not IsCircularMode then
+            ConfigureSolidBezel(BorderOuter, false, 0.05, 0.04, 0.02, 0.95)
+        end
+    end
 
     -- 2. Circular Ornate RuneScape Golden Bezel Image (ZOrder 50, directly overlaying minimap perimeter)
     if not CircularBezelImage or not CircularBezelImage:IsValid() then
@@ -269,7 +283,7 @@ local function SetupMinimapFrame(Widget, PC)
             local slot = rootCanvas:AddChildToCanvas(CircularBezelImage)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
-                slot:SetOffsets({ Left = -6.0, Top = -6.0, Right = -6.0, Bottom = -6.0 })
+                slot:SetOffsets({ Left = -3.0, Top = -3.0, Right = -3.0, Bottom = -3.0 })
                 slot:SetZOrder(50)
             end
         end
@@ -295,7 +309,7 @@ local function SetupMinimapFrame(Widget, PC)
             local slot = rootCanvas:AddChildToCanvas(BorderGold)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 1.0 } })
-                slot:SetOffsets({ Left = -4.0, Top = -4.0, Right = -4.0, Bottom = -4.0 })
+                slot:SetOffsets({ Left = -3.0, Top = -3.0, Right = -3.0, Bottom = -3.0 })
                 slot:SetZOrder(5)
             end
         end
@@ -315,8 +329,8 @@ local function SetupMinimapFrame(Widget, PC)
             if slot and slot:IsValid() then
                 slot:SetAnchors({ Minimum = { X = 0.5, Y = 0.0 }, Maximum = { X = 0.5, Y = 0.0 } })
                 slot:SetAlignment({ X = 0.5, Y = 0.5 })
-                slot:SetPosition({ X = 0.0, Y = -4.0 })
-                slot:SetSize({ X = 22.0, Y = 22.0 })
+                slot:SetPosition({ X = 0.0, Y = 0.0 })
+                slot:SetSize({ X = 20.0, Y = 20.0 })
                 slot:SetZOrder(100)
             end
         end
@@ -357,7 +371,10 @@ local function UpdateMinimapShape(isCircular)
         end
     end
     if BorderOuter and BorderOuter:IsValid() then
-        ConfigureSolidBezel(BorderOuter, IsCircularMode, 0.05, 0.04, 0.02, 0.95)
+        BorderOuter:SetVisibility(IsCircularMode and 2 or 3)
+        if not IsCircularMode then
+            ConfigureSolidBezel(BorderOuter, false, 0.05, 0.04, 0.02, 0.95)
+        end
     end
     if NorthIndicator and NorthIndicator:IsValid() then
         NorthIndicator:SetVisibility(IsCircularMode and 3 or 2)
