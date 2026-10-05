@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "PauseGuard",
+  "name": "Pause Guard",
+  "author": "Antigravity",
+  "version": "1.0.0",
+  "description": "Anti-freeze, performance optimization mod that halts background world-partition cache bloat during AFK/pause and coordinates mod hibernation.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "PauseGuard Active",
+      "default": true,
+      "tooltip": "Prevents SPUD persistence cache accumulation while paused."
+    }
+  ]
+}

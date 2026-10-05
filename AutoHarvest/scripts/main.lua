@@ -141,12 +141,18 @@ local function HarvestNearby()
 end
 
 local function ScanLoop()
-    ExecuteWithDelay(Config.ScanIntervalMs, function()
+    local interval = Config.ScanIntervalMs
+    if _G.PauseGuard_IsPaused then
+        interval = 2000
+    end
+    ExecuteWithDelay(interval, function()
         ExecuteInGameThread(ScanLoop)
     end)
-    local ok, err = pcall(HarvestNearby)
-    if not ok then
-        Log("Scan error: " .. tostring(err))
+    if not _G.PauseGuard_IsPaused then
+        local ok, err = pcall(HarvestNearby)
+        if not ok then
+            Log("Scan error: " .. tostring(err))
+        end
     end
 end
 

@@ -6,7 +6,7 @@ local function Log(msg)
 end
 
 Log("==========================================")
-Log("Initializing OSRS Minimap (Ornate RuneScape HUD v3)...")
+Log("Initializing OSRS Minimap (Ornate RuneScape HUD v3.0.1)...")
 Log("==========================================")
 
 -- State
@@ -33,7 +33,7 @@ local LastTerrainOffsetY = nil
 local LastTerrainZoom = nil
 
 -- Visual Frame & Shape State
-local IsCircularMode = true
+local IsCircularMode = false
 local BorderOuter = nil
 local BorderGold = nil
 local BorderInner = nil
@@ -567,30 +567,13 @@ local function SetupMinimapWidget(Widget, PC)
     OwnedWidgetName = Widget:GetFullName()
     if ModRef then ModRef:SetSharedVariable("OSRSMinimap.OwnedWidgetName", OwnedWidgetName) end
 
-    -- Repopulate existing tracked resource icons if this minimap was recreated
-    pcall(function()
-        if Widget.AddMapIcon then
-            local repopCount = 0
-            for addr, data in pairs(TrackedResourceActors) do
-                local comp = (type(data) == "table") and data.Comp or data
-                if comp and comp:IsValid() then
-                    local countBefore = GetMapIconWidgetCount(Widget)
-                    Widget:AddMapIcon(comp)
-                    repopCount = repopCount + 1
-                end
-            end
-            for addr, data in pairs(TrackedAiActors) do
-                local comp = (type(data) == "table") and data.Comp or data
-                if comp and comp:IsValid() then
-                    Widget:AddMapIcon(comp)
-                    repopCount = repopCount + 1
-                end
-            end
-            if repopCount > 0 then
-                Log(string.format("[REPOPULATE] Re-added %d icons to recreated Minimap.", repopCount))
-            end
-        end
-    end)
+    -- Reset scan trackers so recreated minimap cleanly discovers live world icons on next tick
+    TrackedResourceActors = {}
+    TrackedAiActors = {}
+    TrackedLandmarkActors = {}
+    NextResourceScanTick = 0
+    NextAiScanTick = 0
+    NextLandmarkScanTick = 0
 
     Log("Minimap widget successfully configured with ornate frame and visible in viewport!")
     return true
@@ -1210,11 +1193,7 @@ local function SetupResourceIcon(actor, resType)
     if not actor or not actor:IsValid() then return false end
     local addr = actor:GetAddress()
     if TrackedResourceActors[addr] then
-        local existing = TrackedResourceActors[addr]
-        local existingComp = (type(existing) == "table") and existing.Comp or existing
-        if existingComp and existingComp:IsValid() then
-            return false
-        end
+        return false
     end
 
     if not MapIconCompClass or not MapIconCompClass:IsValid() then
@@ -1341,9 +1320,8 @@ local function SetupResourceIcon(actor, resType)
         local loc = nil
         pcall(function() loc = actor:K2_GetActorLocation() end)
         TrackedResourceActors[addr] = {
-            Actor = actor,
-            Comp = comp,
-            Location = loc
+            Location = loc and { X = loc.X, Y = loc.Y, Z = loc.Z } or { X = 0, Y = 0, Z = 0 },
+            Type = resType
         }
         return true
     end
@@ -1363,54 +1341,8 @@ local function ScanAndRegisterAI()
     if not playerLoc then return end
 
     local maxDistSq = 12000.0 * 12000.0 -- 120m radar radius
-    local cullDistSq = 15000.0 * 15000.0 -- 150m cull buffer
 
-    -- 1. Cull dead or far AI
-    local culled = 0
-    for addr, data in pairs(TrackedAiActors) do
-        local actor = (type(data) == "table") and data.Actor or nil
-        local comp = (type(data) == "table") and data.Comp or data
-        local shouldCull = false
-        if not comp or not comp:IsValid() or not actor or not actor:IsValid() then
-            shouldCull = true
-        else
-            local dead = false
-            pcall(function()
-                if actor.IsActorBeingDestroyed and actor:IsActorBeingDestroyed() then dead = true end
-                if actor.HealthComponent and actor.HealthComponent:IsValid() then
-                    if actor.HealthComponent.IsDead and actor.HealthComponent:IsDead() then dead = true end
-                end
-            end)
-            if dead then
-                shouldCull = true
-            else
-                local loc = nil
-                pcall(function() loc = actor:K2_GetActorLocation() end)
-                if loc then
-                    local dx = playerLoc.X - loc.X
-                    local dy = playerLoc.Y - loc.Y
-                    if (dx * dx + dy * dy) > cullDistSq then
-                        shouldCull = true
-                    end
-                else
-                    shouldCull = true
-                end
-            end
-        end
-
-        if shouldCull then
-            if comp and comp:IsValid() then
-                pcall(function()
-                    if comp.SetIconVisible then comp:SetIconVisible(false) end
-                    comp:K2_DestroyComponent(comp)
-                end)
-            end
-            TrackedAiActors[addr] = nil
-            culled = culled + 1
-        end
-    end
-
-    -- 2. Scan nearby DominionAICharacter actors
+    -- 1. Scan nearby DominionAICharacter actors directly from GUObjectArray (guaranteed live objects)
     local ok, aiList = pcall(function() return FindAllOf("BP_DominionAICharacter_C") end)
     if not ok or not aiList then return end
 
@@ -1424,10 +1356,27 @@ local function ScanAndRegisterAI()
         or GetResourceTexture("/Game/Art/UI/HUD/Reticle/T_HUD_Reticle_Point.T_HUD_Reticle_Point")
 
     local umgMat = GetDefaultUMGMaterial()
+    local liveAiAddrs = {}
 
     for _, ai in ipairs(aiList) do
-        if IsValidResourceActor(ai, playerLoc, maxDistSq) then
+        local isAlive = false
+        pcall(function()
+            if IsValidResourceActor(ai, playerLoc, maxDistSq) then
+                local dead = false
+                if ai.IsActorBeingDestroyed and ai:IsActorBeingDestroyed() then dead = true end
+                if ai.HealthComponent and ai.HealthComponent:IsValid() then
+                    if ai.HealthComponent.IsDead and ai.HealthComponent:IsDead() then dead = true end
+                end
+                if not dead then
+                    isAlive = true
+                end
+            end
+        end)
+
+        if isAlive then
             local addr = ai:GetAddress()
+            liveAiAddrs[addr] = true
+
             if not TrackedAiActors[addr] then
                 -- Check hostility
                 local isHostile = false
@@ -1440,79 +1389,110 @@ local function ScanAndRegisterAI()
                 end)
 
                 local comp = nil
+                if ai.GetComponentByClass then
+                    pcall(function() comp = ai:GetComponentByClass(MapIconCompClass) end)
+                end
+
+                local isNew = false
                 local compTransform = {
                     Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
                     Translation = { X = 0, Y = 0, Z = 120.0 },
                     Scale3D = { X = 1, Y = 1, Z = 1 }
                 }
-                local okAdd, newComp = pcall(function()
-                    return ai:AddComponentByClass(MapIconCompClass, false, compTransform, true)
-                end)
-                if not okAdd or not newComp or not newComp:IsValid() then
-                    pcall(function()
-                        newComp = ai:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+
+                if not comp or not comp:IsValid() then
+                    local okAdd, newComp = pcall(function()
+                        return ai:AddComponentByClass(MapIconCompClass, false, compTransform, true)
                     end)
+                    if not okAdd or not newComp or not newComp:IsValid() then
+                        pcall(function()
+                            newComp = ai:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+                        end)
+                    end
+                    comp = newComp
+                    isNew = true
                 end
 
-                if newComp and newComp:IsValid() then
+                if comp and comp:IsValid() then
                     pcall(function()
                         if umgMat and umgMat:IsValid() then
-                            newComp.IconMaterial_UMG = umgMat
-                            newComp.InitialIconMaterial_UMG = umgMat
+                            comp.IconMaterial_UMG = umgMat
+                            comp.InitialIconMaterial_UMG = umgMat
                         end
                         if dotTex and dotTex:IsValid() then
-                            newComp.IconTexture = dotTex
+                            comp.IconTexture = dotTex
                         end
-                        newComp.IconSize = isHostile and 12.0 or 10.0
-                        newComp.IconSizeUnit = 0
+                        comp.IconSize = isHostile and 12.0 or 10.0
+                        comp.IconSizeUnit = 0
                         local color = isHostile
                             and { R = 1.0, G = 0.18, B = 0.18, A = 1.0 } -- Red (Hostile Monster)
                             or  { R = 1.0, G = 0.88, B = 0.12, A = 1.0 } -- Yellow (Neutral / Wildlife)
-                        newComp.IconDrawColor = color
-                        newComp.bIconRotates = false
-                        newComp.IconZOrder = 15
-                        newComp.bHideOwnerInsideFog = false
-                        newComp.bIconVisible = ResourceIconsEnabled
+                        comp.IconDrawColor = color
+                        comp.bIconRotates = false
+                        comp.IconZOrder = 15
+                        comp.bHideOwnerInsideFog = false
+                        comp.bIconVisible = ResourceIconsEnabled
 
-                        if ai.FinishAddComponent then
-                            pcall(function() ai:FinishAddComponent(newComp, false, compTransform) end)
-                        elseif newComp.RegisterComponent then
-                            newComp:RegisterComponent()
+                        if isNew then
+                            if ai.FinishAddComponent then
+                                pcall(function() ai:FinishAddComponent(comp, false, compTransform) end)
+                            elseif comp.RegisterComponent then
+                                comp:RegisterComponent()
+                            end
+                        elseif comp.RegisterComponent then
+                            comp:RegisterComponent()
                         end
 
-                        if newComp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
-                            newComp:SetIconMaterialForUMG(umgMat)
+                        if comp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
+                            comp:SetIconMaterialForUMG(umgMat)
                         end
-                        if dotTex and dotTex:IsValid() and newComp.SetIconTexture then
-                            newComp:SetIconTexture(dotTex)
+                        if dotTex and dotTex:IsValid() and comp.SetIconTexture then
+                            comp:SetIconTexture(dotTex)
                         end
-                        if newComp.SetIconDrawColor then
-                            newComp:SetIconDrawColor(color)
+                        if comp.SetIconDrawColor then
+                            comp:SetIconDrawColor(color)
                         end
-                        if newComp.SetIconSize then
-                            newComp:SetIconSize(isHostile and 12.0 or 10.0, 0)
+                        if comp.SetIconSize then
+                            comp:SetIconSize(isHostile and 12.0 or 10.0, 0)
                         end
-                        if newComp.SetIconVisible then
-                            newComp:SetIconVisible(ResourceIconsEnabled)
+                        if comp.SetIconVisible then
+                            comp:SetIconVisible(ResourceIconsEnabled)
                         end
 
                         if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
-                            MinimapWidget:AddMapIcon(newComp)
+                            MinimapWidget:AddMapIcon(comp)
                         end
                         local official = GetOfficialMap()
                         if official and official:IsValid() and official.AddMapIcon then
-                            official:AddMapIcon(newComp)
+                            official:AddMapIcon(comp)
                         end
                     end)
 
+                    local loc = nil
+                    pcall(function() loc = ai:K2_GetActorLocation() end)
                     TrackedAiActors[addr] = {
-                        Actor = ai,
-                        Comp = newComp,
+                        Location = loc and { X = loc.X, Y = loc.Y, Z = loc.Z } or { X = 0, Y = 0, Z = 0 },
                         Hostile = isHostile
                     }
                 end
             end
         end
+    end
+
+    -- 2. Prune dead or out-of-range AI from tracking table (pure Lua table cleanup, zero UObject dereferencing)
+    for addr in pairs(TrackedAiActors) do
+        if not liveAiAddrs[addr] then
+            TrackedAiActors[addr] = nil
+        end
+    end
+
+    -- 3. Ask Minimap widgets to drop any destroyed icons internally in C++
+    if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+        pcall(function() MinimapWidget:ForgetDestroyedIcons() end)
+    end
+    local official = GetOfficialMap()
+    if official and official:IsValid() and official.ForgetDestroyedIcons then
+        pcall(function() official:ForgetDestroyedIcons() end)
     end
 end
 
@@ -1522,24 +1502,6 @@ local function ScanAndRegisterLandmarks()
     if not pc or not pc:IsValid() then return end
     local pawn = pc.Pawn or (CurrentPawn and CurrentPawn:IsValid() and CurrentPawn)
     if not pawn or not pawn:IsValid() then return end
-
-    local playerLoc = pawn:K2_GetActorLocation()
-    if not playerLoc then return end
-
-    -- 1. Cull invalid or destroyed landmarks
-    for addr, data in pairs(TrackedLandmarkActors) do
-        local actor = (type(data) == "table") and data.Actor or nil
-        local comp = (type(data) == "table") and data.Comp or data
-        if not comp or not comp:IsValid() or not actor or not actor:IsValid() then
-            if comp and comp:IsValid() then
-                pcall(function()
-                    if comp.SetIconVisible then comp:SetIconVisible(false) end
-                    comp:K2_DestroyComponent(comp)
-                end)
-            end
-            TrackedLandmarkActors[addr] = nil
-        end
-    end
 
     if not MapIconCompClass or not MapIconCompClass:IsValid() then
         pcall(function() MapIconCompClass = StaticFindObject("/Script/MinimapPlugin.MapIconComponent") end)
@@ -1555,79 +1517,95 @@ local function ScanAndRegisterLandmarks()
         local addr = actor:GetAddress()
         if TrackedLandmarkActors[addr] then return end
 
+        local comp = nil
+        if actor.GetComponentByClass then
+            pcall(function() comp = actor:GetComponentByClass(MapIconCompClass) end)
+        end
+        local isNew = false
         local compTransform = {
             Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
             Translation = { X = 0, Y = 0, Z = 150.0 },
             Scale3D = { X = 1, Y = 1, Z = 1 }
         }
-        local okAdd, newComp = pcall(function()
-            return actor:AddComponentByClass(MapIconCompClass, false, compTransform, true)
-        end)
-        if not okAdd or not newComp or not newComp:IsValid() then
-            pcall(function()
-                newComp = actor:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+        if not comp or not comp:IsValid() then
+            local okAdd, newComp = pcall(function()
+                return actor:AddComponentByClass(MapIconCompClass, false, compTransform, true)
             end)
+            if not okAdd or not newComp or not newComp:IsValid() then
+                pcall(function()
+                    newComp = actor:AddComponentByClass(MapIconCompClass, false, compTransform, false)
+                end)
+            end
+            comp = newComp
+            isNew = true
         end
-        if newComp and newComp:IsValid() then
+
+        if comp and comp:IsValid() then
             pcall(function()
                 if umgMat and umgMat:IsValid() then
-                    newComp.IconMaterial_UMG = umgMat
-                    newComp.InitialIconMaterial_UMG = umgMat
+                    comp.IconMaterial_UMG = umgMat
+                    comp.InitialIconMaterial_UMG = umgMat
                 end
                 if dotTex and dotTex:IsValid() then
-                    newComp.IconTexture = dotTex
+                    comp.IconTexture = dotTex
                 end
-                newComp.IconSize = isGravestone and 16.0 or 14.0
-                newComp.IconSizeUnit = 0
+                comp.IconSize = isGravestone and 16.0 or 14.0
+                comp.IconSizeUnit = 0
                 local color = isGravestone
                     and { R = 1.0, G = 0.15, B = 0.25, A = 1.0 } -- Crimson (Death point)
                     or  { R = 0.2, G = 0.75, B = 1.0, A = 1.0 }  -- Cyan (Lodestone teleport)
-                newComp.IconDrawColor = color
-                newComp.bIconRotates = false
-                newComp.IconZOrder = isGravestone and 25 or 20
-                newComp.bHideOwnerInsideFog = false
-                newComp.bIconVisible = LandmarkIconsEnabled
+                comp.IconDrawColor = color
+                comp.bIconRotates = false
+                comp.IconZOrder = isGravestone and 25 or 20
+                comp.bHideOwnerInsideFog = false
+                comp.bIconVisible = LandmarkIconsEnabled
 
-                if actor.FinishAddComponent then
-                    pcall(function() actor:FinishAddComponent(newComp, false, compTransform) end)
-                elseif newComp.RegisterComponent then
-                    newComp:RegisterComponent()
+                if isNew then
+                    if actor.FinishAddComponent then
+                        pcall(function() actor:FinishAddComponent(comp, false, compTransform) end)
+                    elseif comp.RegisterComponent then
+                        comp:RegisterComponent()
+                    end
+                elseif comp.RegisterComponent then
+                    comp:RegisterComponent()
                 end
 
-                if newComp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
-                    newComp:SetIconMaterialForUMG(umgMat)
+                if comp.SetIconMaterialForUMG and umgMat and umgMat:IsValid() then
+                    comp:SetIconMaterialForUMG(umgMat)
                 end
-                if dotTex and dotTex:IsValid() and newComp.SetIconTexture then
-                    newComp:SetIconTexture(dotTex)
+                if dotTex and dotTex:IsValid() and comp.SetIconTexture then
+                    comp:SetIconTexture(dotTex)
                 end
-                if newComp.SetIconDrawColor then
-                    newComp:SetIconDrawColor(color)
+                if comp.SetIconDrawColor then
+                    comp:SetIconDrawColor(color)
                 end
-                if newComp.SetIconSize then
-                    newComp:SetIconSize(isGravestone and 16.0 or 14.0, 0)
+                if comp.SetIconSize then
+                    comp:SetIconSize(isGravestone and 16.0 or 14.0, 0)
                 end
-                if newComp.SetIconVisible then
-                    newComp:SetIconVisible(LandmarkIconsEnabled)
+                if comp.SetIconVisible then
+                    comp:SetIconVisible(LandmarkIconsEnabled)
                 end
 
                 if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.AddMapIcon then
-                    MinimapWidget:AddMapIcon(newComp)
+                    MinimapWidget:AddMapIcon(comp)
                 end
             end)
 
             TrackedLandmarkActors[addr] = {
-                Actor = actor,
-                Comp = newComp,
                 IsGravestone = isGravestone
             }
         end
     end
+
+    local liveLandmarkAddrs = {}
 
     -- Scan Lodestones (Teleport crystals)
     local okL, lodestones = pcall(FindAllOf, "Lodestone")
     if okL and lodestones then
         for _, obj in ipairs(lodestones) do
             if obj and obj:IsValid() and not obj:HasAnyFlags(0x00000010 + 0x00000020) then
+                local addr = obj:GetAddress()
+                liveLandmarkAddrs[addr] = true
                 registerLandmarkActor(obj, false)
             end
         end
@@ -1638,148 +1616,70 @@ local function ScanAndRegisterLandmarks()
     if okG and gravestones then
         for _, obj in ipairs(gravestones) do
             if obj and obj:IsValid() and not obj:HasAnyFlags(0x00000010 + 0x00000020) then
+                local addr = obj:GetAddress()
+                liveLandmarkAddrs[addr] = true
                 registerLandmarkActor(obj, true)
             end
         end
+    end
+
+    -- Prune dead/removed landmarks from table without touching dead pointers
+    for addr in pairs(TrackedLandmarkActors) do
+        if not liveLandmarkAddrs[addr] then
+            TrackedLandmarkActors[addr] = nil
+        end
+    end
+
+    if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+        pcall(function() MinimapWidget:ForgetDestroyedIcons() end)
     end
 end
 
 PurgeAllResourceComponents = function()
     local ok, allComps = pcall(function() return FindAllOf("MapIconComponent") end)
     if not ok or not allComps then return end
-    local destroyed = 0
+    local count = 0
     for _, comp in ipairs(allComps) do
         if comp and comp:IsValid() then
-            local shouldDestroy = false
             pcall(function()
                 local owner = comp:GetOwner()
                 if not owner or not owner:IsValid() then
-                    shouldDestroy = true
+                    if comp.SetIconVisible then comp:SetIconVisible(false) end
+                    count = count + 1
                 else
-                    -- Purge custom resource icons (IconZOrder == 10) or custom AI radar dots (IconZOrder == 15)
                     if comp.IconZOrder == 10 and ClassifyResource(owner) == nil then
-                        shouldDestroy = true
+                        if comp.SetIconVisible then comp:SetIconVisible(false) end
+                        count = count + 1
                     elseif comp.IconZOrder == 15 then
-                        shouldDestroy = true
+                        if comp.SetIconVisible then comp:SetIconVisible(false) end
+                        count = count + 1
                     end
                 end
             end)
-            if shouldDestroy then
-                pcall(function()
-                    if comp.SetIconVisible then comp:SetIconVisible(false) end
-                    comp:K2_DestroyComponent(comp)
-                    destroyed = destroyed + 1
-                end)
-            end
         end
     end
-    if destroyed > 0 then
-        pcall(function()
-            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
-                MinimapWidget:ForgetDestroyedIcons()
-            end
-            local official = GetOfficialMap()
-            if official and official:IsValid() and official.ForgetDestroyedIcons then
-                official:ForgetDestroyedIcons()
-            end
-        end)
-        Log(string.format("[PURGE] Destroyed %d unclassified resource/radar icon components from world.", destroyed))
+    pcall(function()
+        if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+            MinimapWidget:ForgetDestroyedIcons()
+        end
+        local official = GetOfficialMap()
+        if official and official:IsValid() and official.ForgetDestroyedIcons then
+            official:ForgetDestroyedIcons()
+        end
+    end)
+    if count > 0 then
+        Log(string.format("[PURGE] Hid %d unclassified/stale resource/radar icons.", count))
     end
 end
 
 local function PruneDeadIconWidgets(Widget)
     if not Widget or not Widget:IsValid() then return 0 end
-    local canvases = { Widget.Canvas_IconsBelowFog, Widget.Canvas_IconsAboveFog }
-    local totalPruned = 0
-
-    local activeAddrs = {}
-    for addr, data in pairs(TrackedResourceActors) do
-        local comp = (type(data) == "table") and data.Comp or data
-        if comp and comp:IsValid() then
-            pcall(function()
-                local cAddr = comp:GetAddress()
-                if cAddr then activeAddrs[cAddr] = true end
-            end)
+    pcall(function()
+        if Widget.ForgetDestroyedIcons then
+            Widget:ForgetDestroyedIcons()
         end
-    end
-    for addr, data in pairs(TrackedAiActors) do
-        local comp = (type(data) == "table") and data.Comp or data
-        if comp and comp:IsValid() then
-            pcall(function()
-                local cAddr = comp:GetAddress()
-                if cAddr then activeAddrs[cAddr] = true end
-            end)
-        end
-    end
-
-    for _, canvas in ipairs(canvases) do
-        if canvas and canvas:IsValid() then
-            local count = canvas:GetChildrenCount()
-            for i = count - 1, 0, -1 do
-                local child = canvas:GetChildAt(i)
-                if child and child:IsValid() then
-                    local shouldRemove = false
-                    local comp = nil
-                    pcall(function() comp = child.MapIconComp end)
-
-                    if not comp or not comp:IsValid() then
-                        shouldRemove = true
-                    else
-                        local owner = nil
-                        pcall(function() owner = comp:GetOwner() end)
-                        if not owner or not owner:IsValid() then
-                            shouldRemove = true
-                        else
-                            if comp.IconZOrder == 10 then
-                                local cAddr = nil
-                                pcall(function() cAddr = comp:GetAddress() end)
-                                if not cAddr or not activeAddrs[cAddr] then
-                                    shouldRemove = true
-                                elseif ClassifyResource(owner) == nil then
-                                    shouldRemove = true
-                                end
-                            elseif comp.IconZOrder == 15 then
-                                local cAddr = nil
-                                pcall(function() cAddr = comp:GetAddress() end)
-                                if not cAddr or not activeAddrs[cAddr] then
-                                    shouldRemove = true
-                                end
-                            end
-                        end
-                    end
-
-                    if shouldRemove then
-                        if comp and comp:IsValid() then
-                            pcall(function()
-                                if comp.SetIconVisible then comp:SetIconVisible(false) end
-                                comp:K2_DestroyComponent(comp)
-                            end)
-                        end
-                        pcall(function()
-                            if canvas.RemoveChildAt then
-                                canvas:RemoveChildAt(i)
-                            elseif canvas.RemoveChild then
-                                canvas:RemoveChild(child)
-                            else
-                                child:RemoveFromParent()
-                            end
-                            totalPruned = totalPruned + 1
-                        end)
-                    end
-                end
-            end
-        end
-    end
-
-    if totalPruned > 0 then
-        pcall(function()
-            if Widget.ForgetDestroyedIcons then
-                Widget:ForgetDestroyedIcons()
-            end
-        end)
-    end
-
-    return totalPruned
+    end)
+    return 0
 end
 
 local function ScanAndRegisterResources()
@@ -1794,59 +1694,25 @@ local function ScanAndRegisterResources()
     -- Cull radius: 250 meters around the player (50m hysteresis buffer)
     local cullDistSq = 25000.0 * 25000.0
 
-    -- Phase 1: Distance Culling & Dead Actor Cleanup
+    -- Phase 1: Distance Culling using purely numeric coordinates (ZERO UObject dereferencing)
     local culledCount = 0
     for addr, data in pairs(TrackedResourceActors) do
-        local actor = (type(data) == "table") and data.Actor or nil
-        local comp = (type(data) == "table") and data.Comp or data
         local loc = (type(data) == "table") and data.Location or nil
-
-        local shouldCull = false
-        if not comp or not comp:IsValid() then
-            shouldCull = true
-        elseif not actor or not actor:IsValid() then
-            shouldCull = true
+        if loc then
+            local dx = playerLoc.X - loc.X
+            local dy = playerLoc.Y - loc.Y
+            local dz = playerLoc.Z - loc.Z
+            if (dx * dx + dy * dy + dz * dz) > cullDistSq then
+                TrackedResourceActors[addr] = nil
+                culledCount = culledCount + 1
+            end
         else
-            if not loc and actor:IsValid() then
-                pcall(function() loc = actor:K2_GetActorLocation() end)
-            end
-            if loc then
-                local dx = playerLoc.X - loc.X
-                local dy = playerLoc.Y - loc.Y
-                local dz = playerLoc.Z - loc.Z
-                local distSq = dx * dx + dy * dy + dz * dz
-                if distSq > cullDistSq then
-                    shouldCull = true
-                end
-            end
-        end
-
-        if shouldCull then
-            if comp and comp:IsValid() then
-                pcall(function()
-                    if comp.SetIconVisible then comp:SetIconVisible(false) end
-                    comp:K2_DestroyComponent(comp)
-                end)
-            end
             TrackedResourceActors[addr] = nil
             culledCount = culledCount + 1
         end
     end
 
-    if culledCount > 0 then
-        pcall(function()
-            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
-                MinimapWidget:ForgetDestroyedIcons()
-            end
-            local official = GetOfficialMap()
-            if official and official:IsValid() and official.ForgetDestroyedIcons then
-                official:ForgetDestroyedIcons()
-            end
-        end)
-    end
-
     -- Phase 2: Targeted Proximity Scan (Consolidated Parent Classes)
-    -- If player hasn't moved more than 5 meters since last resource scan, skip scanning all 17 classes (trees and rocks are static)
     local shouldScanClasses = true
     if LastResourceScanLocation then
         local dx = playerLoc.X - LastResourceScanLocation.X
@@ -1885,10 +1751,13 @@ local function ScanAndRegisterResources()
             if ok and actors then
                 for _, actor in ipairs(actors) do
                     if IsValidResourceActor(actor, playerLoc, maxDistSq) then
-                        local resType = ClassifyResource(actor)
-                        if resType then
-                            if SetupResourceIcon(actor, resType) then
-                                newCount = newCount + 1
+                        local addr = actor:GetAddress()
+                        if not TrackedResourceActors[addr] then
+                            local resType = ClassifyResource(actor)
+                            if resType then
+                                if SetupResourceIcon(actor, resType) then
+                                    newCount = newCount + 1
+                                end
                             end
                         end
                     end
@@ -1897,17 +1766,21 @@ local function ScanAndRegisterResources()
         end
     end
 
-    local prunedMinimap = PruneDeadIconWidgets(MinimapWidget)
+    -- Phase 3: Native cleanup of dead icons
+    if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+        pcall(function() MinimapWidget:ForgetDestroyedIcons() end)
+    end
     local official = GetOfficialMap()
-    local prunedOfficial = official and official:IsValid() and PruneDeadIconWidgets(official) or 0
-    local totalPruned = prunedMinimap + prunedOfficial
+    if official and official:IsValid() and official.ForgetDestroyedIcons then
+        pcall(function() official:ForgetDestroyedIcons() end)
+    end
 
     local activeResourceCount = 0
     for _ in pairs(TrackedResourceActors) do activeResourceCount = activeResourceCount + 1 end
 
-    if newCount > 0 or culledCount > 0 or totalPruned > 0 then
-        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled, -%d widgets pruned. Active tracked resources: %d",
-            newCount, culledCount, totalPruned, activeResourceCount))
+    if newCount > 0 or culledCount > 0 then
+        Log(string.format("[RESOURCE SCAN] +%d new, -%d culled. Active tracked resources: %d",
+            newCount, culledCount, activeResourceCount))
     end
 end
 
@@ -1947,22 +1820,24 @@ pcall(function()
     RegisterKeyBind(Key.F9, function()
         ExecuteInGameThread(function()
             ResourceIconsEnabled = not ResourceIconsEnabled
-            for addr, data in pairs(TrackedResourceActors) do
-                local comp = (type(data) == "table") and data.Comp or data
-                if comp and comp:IsValid() and comp.SetIconVisible then
-                    pcall(function() comp:SetIconVisible(ResourceIconsEnabled) end)
-                end
-            end
-            for addr, data in pairs(TrackedAiActors) do
-                local comp = (type(data) == "table") and data.Comp or data
-                if comp and comp:IsValid() and comp.SetIconVisible then
-                    pcall(function() comp:SetIconVisible(ResourceIconsEnabled) end)
+            local okComps, allComps = pcall(FindAllOf, "MapIconComponent")
+            if okComps and allComps then
+                for _, comp in ipairs(allComps) do
+                    pcall(function()
+                        if comp and comp:IsValid() and (comp.IconZOrder == 10 or comp.IconZOrder == 15) then
+                            if comp.SetIconVisible then
+                                comp:SetIconVisible(ResourceIconsEnabled)
+                            end
+                        end
+                    end)
                 end
             end
             Log("Resource Icons & AI Radar toggled: " .. (ResourceIconsEnabled and "VISIBLE" or "HIDDEN"))
             if ResourceIconsEnabled then
-                pcall(ScanAndRegisterResources)
-                pcall(ScanAndRegisterAI)
+                TrackedResourceActors = {}
+                TrackedAiActors = {}
+                NextResourceScanTick = 0
+                NextAiScanTick = 0
             end
         end)
     end)
@@ -2039,7 +1914,7 @@ local WasPaused = false
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
     local paused = PC and IsGamePaused(PC)
-    if UpdateTick % 40 == 0 then
+    if (not paused and UpdateTick % 40 == 0) or (paused and UpdateTick % 600 == 0) then
         Log(string.format("[HEARTBEAT] PC=%s, Paused=%s, Widget=%s",
             tostring(PC and PC:IsValid()),
             tostring(paused),
@@ -2075,28 +1950,19 @@ local function UpdateMinimap()
     if ReadyPawnAddress ~= address then
         ReadyPawnAddress = address
         ReadyAfterTick = UpdateTick + 100 -- 5s delay
-        for _, data in pairs(TrackedResourceActors) do
-            local comp = (type(data) == "table") and data.Comp or data
-            if comp and comp:IsValid() then
-                pcall(function()
-                    if comp.SetIconVisible then comp:SetIconVisible(false) end
-                    comp:K2_DestroyComponent(comp)
-                end)
-            end
-        end
-        for _, data in pairs(TrackedAiActors) do
-            local comp = (type(data) == "table") and data.Comp or data
-            if comp and comp:IsValid() then
-                pcall(function()
-                    if comp.SetIconVisible then comp:SetIconVisible(false) end
-                    comp:K2_DestroyComponent(comp)
-                end)
-            end
-        end
         TrackedResourceActors = {}
         TrackedAiActors = {}
+        TrackedLandmarkActors = {}
+        if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget.ForgetDestroyedIcons then
+            pcall(function() MinimapWidget:ForgetDestroyedIcons() end)
+        end
+        local official = GetOfficialMap()
+        if official and official:IsValid() and official.ForgetDestroyedIcons then
+            pcall(function() official:ForgetDestroyedIcons() end)
+        end
         NextResourceScanTick = ReadyAfterTick + 100
         NextAiScanTick = ReadyAfterTick + 60
+        NextLandmarkScanTick = ReadyAfterTick + 80
     end
     if UpdateTick < ReadyAfterTick then return end
 
@@ -2165,44 +2031,47 @@ local function UpdateMinimap()
     end
 end
 
-LoopAsync(50, function()
+local FirstTickCleanupDone = false
+local function RunMinimapTick()
     UpdateTick = UpdateTick + 1
-    if UpdatePending then return false end
-    UpdatePending = true
-    local queued, queueError = pcall(function()
-        ExecuteInGameThread(function()
-            local ok, err = pcall(UpdateMinimap)
-            UpdatePending = false
-            if not ok then
-                local message = tostring(err)
-                if message ~= LastUpdateError then
-                    Log("[UPDATE ERROR] " .. message)
-                    LastUpdateError = message
-                end
-            else
-                LastUpdateError = nil
+    if not FirstTickCleanupDone then
+        FirstTickCleanupDone = true
+        local pc = UEHelpers.GetPlayerController()
+        if not (pc and IsGamePaused(pc)) then
+            pcall(function() CleanupAllOrphans(MinimapWidget) end)
+            if PurgeAllResourceComponents then
+                pcall(PurgeAllResourceComponents)
             end
-        end)
-    end)
-    if not queued then
-        UpdatePending = false
-        if tostring(queueError) ~= LastUpdateError then
-            Log("[QUEUE ERROR] " .. tostring(queueError))
-            LastUpdateError = tostring(queueError)
         end
     end
-    return false
-end)
 
-Log("OSRS Minimap Ornate HUD v3 ready. F6: toggle, F7: reload, F8: circle/tablet shape, F9: resources/radar, PageUp/Down: zoom, [/]: size.")
-
--- One-time startup purge of any legacy icon components lingering in world
-ExecuteInGameThread(function()
-    pcall(function() CleanupAllOrphans(MinimapWidget) end)
-    if PurgeAllResourceComponents then
-        pcall(PurgeAllResourceComponents)
+    local ok, err = pcall(UpdateMinimap)
+    if not ok then
+        local message = tostring(err)
+        if message ~= LastUpdateError then
+            Log("[UPDATE ERROR] " .. message)
+            LastUpdateError = message
+        end
+    else
+        LastUpdateError = nil
     end
-end)
+end
+
+if LoopInGameThreadWithDelay then
+    LoopInGameThreadWithDelay(50, RunMinimapTick)
+else
+    local function NextTick()
+        ExecuteWithDelay(50, function()
+            ExecuteInGameThread(function()
+                RunMinimapTick()
+                NextTick()
+            end)
+        end)
+    end
+    NextTick()
+end
+
+Log("OSRS Minimap Ornate HUD v3.0.1 ready. F6: toggle, F7: reload, F8: circle/tablet shape, F9: resources/radar, PageUp/Down: zoom, [/]: size.")
 
 -- Immediate reaction to network replication of Lodestones and Gravestones
 pcall(RegisterHook, "/Script/Dominion.GameplayObjectRegistry:OnRep_Lodestones", function()

@@ -1,3 +1,25 @@
+-- Hot-reload-safe timers: UE4SS 3.0 runs these on the game thread and cancels them
+-- when the mod unloads (LoopAsync's own thread can hang or crash a reload).
+-- Inside a GameLoop body we are already on the game thread, so ExecuteInGameThread
+-- runs its callback straight away; everywhere else (key binds) it still queues.
+local QueueInGameThread = ExecuteInGameThread
+local InGameLoop = false
+local function ExecuteInGameThread(fn, ...)
+    if InGameLoop then return fn() end
+    return QueueInGameThread(fn, ...)
+end
+local function GameLoop(ms, fn)
+    if not LoopInGameThreadWithDelay then return LoopAsync(ms, fn) end
+    local handle
+    handle = LoopInGameThreadWithDelay(ms, function()
+        InGameLoop = true
+        local ok, stop = pcall(fn)
+        InGameLoop = false
+        if not ok then print("[GameLoop] " .. tostring(stop) .. "\n") end
+        if ok and stop == true and handle then CancelDelayedAction(handle) end
+    end)
+    return handle
+end
 local UEHelpers = require("UEHelpers")
 
 local ModName = "QuickStack"
@@ -49,6 +71,37 @@ local Config = {
     -- Hold duration (in seconds) to trigger Ground Item Magnetism
     HoldDuration = 0.25,
 
+    -- Alt+G at an open crafting station: stacks of each accepted ingredient to pull from chests
+    StationFetchStacksPerItem = 1,
+    -- If a station accepts more item types than this, treat it as unfiltered and use name hints
+    StationFetchMaxItemTypes = 12,
+    -- Furnaces/smelters: only fetch item types already in the station's ingredient or
+    -- fuel slots (put one iron ore in -> Alt+G fetches iron). Set false to fetch everything it accepts.
+    StationFetchLoadedOnly = true,
+    -- Alt+G at a station opens a clickable list of what it can use (items in nearby
+    -- chests, with counts); click one to fetch a stack. False = fetch straight away.
+    StationFetchPicker = true,
+    -- Top edge of the picker column; 380 keeps it clear of the OSRS minimap.
+    StationPickerTop = 380,
+    -- Open the picker automatically whenever a station menu opens (Alt+G still toggles it).
+    StationFetchAutoOpen = true,
+    -- Alt+G with no station open shows the Nearby Storage dialog: every nearby chest
+    -- as one list with category tabs; click an item to take stacks of it.
+    StorageDialog = true,
+    StorageStacksPerClick = 1,
+    -- With StationFetchLoadedOnly, an empty station fetches everything it accepts (true) or nothing (false).
+    StationFetchAllWhenEmpty = false,
+
+    -- Floating category labels above chests (Shift+F12 toggles)
+    ChestLabels = true,
+    ChestLabelRadius = 3000.0,  -- 30 meters
+    ChestLabelHeight = 110.0,   -- above the chest pivot
+    ChestLabelSize = 28.0,
+
+    -- Move items a crafting station drops on the ground into the matching category chest
+    AutoStoreStationOutput = true,
+    StationOutputRadius = 3000.0, -- only items that appear within 30 m of you
+
     -- Print detailed information to the console log
     DebugLog = true
 }
@@ -64,6 +117,8 @@ Log("  [Tap G]    : At Base: Auto-stack & sort into matching chests / In Wild: I
 Log("  [Hold G]   : Continuous 40m vacuum -> Rapidly harvest and magnetize all wild resources & ground items as you run!")
 Log("  [Ctrl + G] : PACK BASE -> Store all ground items within 150m into your virtual Relocation Crate!")
 Log("  [Shift + G]: UNPACK BASE -> Deposit all Relocation Crate items organized into nearby chests!")
+Log("  [Alt + G]  : STATION FETCH -> At an open crafting station, pull its ingredients from nearby chests (or pull the hovered item)")
+Log("  [Shift + F12] : Toggle floating category labels above nearby chests")
 Log("==========================================")
 
 -- Helper: Safely get the name of any UObject, UClass, or UActorComponent without TrivialObject crashes
@@ -1787,9 +1842,1267 @@ local function ExecuteQuickStack(depositOnly)
 end
 
 -- =========================================================================
+-- SHARED: store a stack into the best category chest nearby
+-- =========================================================================
+local function StoreIntoCategoryChest(itemData, count, durability, itemName, category, nearbyChests)
+    local stored = 0
+    local ranked = {}
+    for _, ch in ipairs(nearbyChests) do
+        local st = AnalyzeChest(ch)
+        local score = (st.DominantCategory == category and 100 or 0) + (st.CategoryCounts[category] or 0)
+        if st.TotalItemCount == 0 then score = 50 end
+        -- Never overflow into another category's chest.
+        if st.DominantCategory == category or st.TotalItemCount == 0 or Config.OverflowWhenCategoryFull then
+            table.insert(ranked, { Chest = ch, Score = score })
+        end
+    end
+    table.sort(ranked, function(a, b) return a.Score > b.Score end)
+    for _, cand in ipairs(ranked) do
+        if stored >= count then break end
+        local inv = cand.Chest.Inventory
+        local space = 0
+        pcall(function() space = inv:GetSpaceAvailableForItemByData(itemData) end)
+        if space > 0 then
+            local toAdd = math.min(count - stored, space)
+            local ok = false
+            pcall(function() ok = inv:AddItemByData(itemData, toAdd, durability or 1.0, {}) end)
+            if ok then stored = stored + toAdd end
+        end
+    end
+    if stored > 0 and Config.DebugLog then
+        Log(string.format("Stored %dx '%s' into [%s] chest.", stored, itemName, category))
+    end
+    return stored
+end
+
+local function PlayerContext()
+    local PC = UEHelpers.GetPlayerController()
+    if not IsValidWorldActor(PC) or not IsValidWorldActor(PC.Pawn) then return nil end
+    local loc = nil
+    pcall(function() loc = PC.Pawn:K2_GetActorLocation() end)
+    if not loc then return nil end
+    return PC, PC.Pawn, loc
+end
+
+local function DistSq(a, b)
+    local dx, dy, dz = a.X - b.X, a.Y - b.Y, a.Z - b.Z
+    return dx * dx + dy * dy + dz * dz
+end
+
+-- =========================================================================
+-- FETCH INGREDIENTS FOR THE OPEN CRAFTING STATION (Alt + G)
+-- =========================================================================
+-- Open a furnace/anvil/range etc. and press Alt+G: every item the station's
+-- inventory will accept is pulled from nearby chests into your backpack
+-- (one stack of each by default). Hovering an item instead pulls that item.
+local StationIngredientHints = {
+    -- Used only when the station accepts "anything" (no item filter found).
+    { Keys = { "furnace", "smelter" }, Items = { "ore", "coal" } },
+    { Keys = { "anvil", "smith" }, Items = { "bar" } },
+    { Keys = { "range", "cook", "campfire", "fire" }, Items = { "raw" } },
+    { Keys = { "sawmill", "carpent", "bench" }, Items = { "log", "plank" } },
+    { Keys = { "loom", "spinning", "wheel" }, Items = { "flax", "wool", "thread", "fibre", "fiber" } },
+    { Keys = { "tanning", "tanner" }, Items = { "hide", "pelt", "leather" } },
+    { Keys = { "kiln", "pottery" }, Items = { "clay" } },
+    { Keys = { "brew", "cauldron", "alch", "herb" }, Items = { "herb", "vial", "potion" } },
+}
+
+-- Station classes (from the object dump): processing stations (furnace, smelter,
+-- tanner, spinning wheel...) carry a ProcessingStationComponent whose open menu is
+-- a ProcessingStationUIAPI; crafting benches carry a CraftingStationComponent whose
+-- open menu is the CraftingUIAPI (CurrentStation / CurrentCraftRecipe).
+local StationOpenRadius = 800.0   -- an open station menu belongs to a station this close
+local StationFallbackRadius = 600.0
+
+local function DataSet(arr)
+    local set, n = {}, 0
+    pcall(function()
+        local count = arr:GetArrayNum()
+        for i = 1, count do
+            local d = arr[i]
+            if d and d:IsValid() then set[d:GetAddress()] = true; n = n + 1 end
+        end
+    end)
+    return set, n
+end
+
+local function RecipeIngredientSet(recipe)
+    local set, n = {}, 0
+    pcall(function()
+        local arr = recipe.ItemsConsumed
+        local count = arr:GetArrayNum()
+        for i = 1, count do
+            local d = arr[i].ItemData
+            if d and d:IsValid() then set[d:GetAddress()] = true; n = n + 1 end
+        end
+    end)
+    return set, n
+end
+
+local function ComponentNear(comp, playerLoc, radius)
+    local owner, dsq = nil, math.huge
+    pcall(function()
+        owner = comp:GetOwner()
+        local loc = owner:K2_GetActorLocation()
+        local dx, dy, dz = loc.X - playerLoc.X, loc.Y - playerLoc.Y, loc.Z - playerLoc.Z
+        dsq = dx * dx + dy * dy + dz * dz
+    end)
+    if owner and IsValidWorldActor(owner) and dsq <= radius * radius then return owner, dsq end
+    return nil
+end
+
+-- Item types currently sitting in an inventory component, as { [dataAddr] = name }.
+local function InventoryDataSet(inv)
+    local set, n = {}, 0
+    pcall(function()
+        local count = inv.ItemSlots:GetArrayNum()
+        for i = 1, count do
+            local item = inv.ItemSlots[i]
+            local addr = GetItemDataAddress(item)
+            if addr and not set[addr] then set[addr] = GetItemName(item); n = n + 1 end
+        end
+    end)
+    return set, n
+end
+
+local function ProcessingStation(comp, owner)
+    local resources, n = DataSet(comp.AcceptedResources)
+    local fuels, nf = DataSet(comp.AcceptedFuelsIncludingRecipeOverrides)
+    local accepted = {}
+    for addr in pairs(resources) do accepted[addr] = true end
+    for addr in pairs(fuels) do accepted[addr] = true end
+    n = n + nf
+    local inv, fuel = nil, nil
+    pcall(function() inv = comp.Resources end)
+    pcall(function() fuel = comp.Fuel end)
+    -- What the player already put in the ingredient and fuel slots: that is the
+    -- selection Station Fetch tops up.
+    local loaded, loadedCount = {}, 0
+    for _, source in ipairs({ inv, fuel }) do
+        if source and source:IsValid() then
+            local set, c = InventoryDataSet(source)
+            for addr, name in pairs(set) do
+                if not loaded[addr] then loaded[addr] = name; loadedCount = loadedCount + 1 end
+            end
+        end
+    end
+    return { Actor = owner, Inventory = inv, ClassName = GetSafeClassName(owner),
+             Accepted = n > 0 and accepted or nil, Processing = true,
+             Resources = resources, Fuels = fuels,
+             Loaded = loadedCount > 0 and loaded or nil }
+end
+
+local function FindOpenStation(PC, playerLoc)
+    -- 1. An open processing-station menu.
+    for _, ui in ipairs(FindAllOf("ProcessingStationUIAPI") or {}) do
+        local comp = nil
+        pcall(function() comp = ui.ProcessingStationComponent end)
+        if comp and comp:IsValid() then
+            local owner = ComponentNear(comp, playerLoc, StationOpenRadius)
+            if owner then return ProcessingStation(comp, owner), "processing menu" end
+        end
+    end
+    -- 2. An open crafting-bench menu: fetch the selected recipe's ingredients.
+    for _, ui in ipairs(FindAllOf("CraftingUIAPI") or {}) do
+        local comp, recipe = nil, nil
+        pcall(function() comp = ui.CurrentStation end)
+        pcall(function() recipe = ui.CurrentCraftRecipe end)
+        if comp and comp:IsValid() then
+            local owner = ComponentNear(comp, playerLoc, StationOpenRadius)
+            if owner then
+                local accepted, n = nil, 0
+                if recipe and recipe:IsValid() then accepted, n = RecipeIngredientSet(recipe) end
+                return { Actor = owner, Inventory = nil, ClassName = GetSafeClassName(owner),
+                         Accepted = n > 0 and accepted or nil, Crafting = true,
+                         RecipeAddr = (recipe and recipe:IsValid()) and recipe:GetAddress() or 0 }, "crafting menu"
+            end
+        end
+    end
+    -- 3. Fallback: the nearest processing station within reach (only without the
+    -- picker/dialog: with them, no open station menu means the Nearby Storage dialog).
+    if Config.StationFetchPicker then return nil end
+    local best, bestD = nil, math.huge
+    for _, comp in ipairs(FindAllOf("ProcessingStationComponent") or {}) do
+        local owner, dsq = ComponentNear(comp, playerLoc, StationFallbackRadius)
+        if owner and dsq < bestD then best, bestD = { Comp = comp, Owner = owner }, dsq end
+    end
+    if best then return ProcessingStation(best.Comp, best.Owner), "nearest station" end
+    return nil
+end
+
+local function MaxStackOf(itemData)
+    local maxStack = 0
+    pcall(function()
+        if itemData.GetMaxStackSize then maxStack = itemData:GetMaxStackSize()
+        elseif itemData.MaxStackSize then maxStack = itemData.MaxStackSize end
+    end)
+    if not maxStack or maxStack <= 0 then maxStack = 20 end
+    return maxStack
+end
+
+local ExecuteQuickPull -- defined below (forward-declared by the station fetch)
+
+-- =========================================================================
+-- STATION FETCH PICKER (clickable list of what the open station can use)
+-- =========================================================================
+-- Alt+G at an open station shows one game-style button per item type in nearby
+-- chests that the station accepts (ingredients and fuel), with the count.
+-- Clicking one pulls a stack of it into the backpack. Alt+G again, or closing
+-- the station menu, hides the list. Same widget + click hook as ModMenu.
+local PICKER_BUTTON = "/Game/UI/Common/WBP_DomAllCapsButton.WBP_DomAllCapsButton_C"
+local Picker = { Buttons = {}, Rows = {}, Entries = {}, Page = 1, Visible = false,
+                 Station = nil, Close = nil, More = nil }
+-- Auto-open state: the station menu the picker was opened for, its selected recipe,
+-- and a station the player closed the picker at (stays closed until that menu closes).
+local AutoPicker = { Key = nil, Recipe = nil, Dismissed = nil }
+
+local function PickerValid(w)
+    if not w then return false end
+    local ok, res = pcall(function() return w:IsValid() and w:GetAddress() ~= 0 end)
+    return ok and res
+end
+
+local function PickerSame(a, b)
+    return PickerValid(a) and PickerValid(b) and a:GetAddress() == b:GetAddress()
+end
+
+-- Buttons left behind by a previous load of this script (Ctrl+R hot reload).
+do
+    local recorded = nil
+    if ModRef then pcall(function() recorded = ModRef:GetSharedVariable("QuickStack.PickerWidgets") end) end
+    if type(recorded) == "string" and recorded ~= "" then
+        ExecuteInGameThread(function()
+            local names = {}
+            for n in recorded:gmatch("[^\n]+") do names[n] = true end
+            for _, w in ipairs(FindAllOf("WBP_DomAllCapsButton_C") or {}) do
+                if PickerValid(w) and names[w:GetFullName()] then pcall(function() w:RemoveFromParent() end) end
+            end
+        end)
+    end
+end
+
+-- Every picker widget that exists (a nil entry would stop ipairs early).
+local function PickerWidgets()
+    local list = {}
+    if Picker.Close then list[#list + 1] = Picker.Close end
+    if Picker.More then list[#list + 1] = Picker.More end
+    for _, w in pairs(Picker.Buttons) do list[#list + 1] = w end
+    return list
+end
+
+local function PickerRemember()
+    if not ModRef then return end
+    local names = {}
+    for _, w in pairs(PickerWidgets()) do
+        if PickerValid(w) then names[#names + 1] = w:GetFullName() end
+    end
+    pcall(function() ModRef:SetSharedVariable("QuickStack.PickerWidgets", table.concat(names, "\n")) end)
+end
+
+local function PickerText(str)
+    return StaticFindObject("/Script/Engine.Default__KismetTextLibrary"):Conv_StringToText(str)
+end
+
+local function PickerCreateButton(pc)
+    local cls = StaticFindObject(PICKER_BUTTON)
+    if not PickerValid(cls) and LoadAsset then
+        pcall(function() LoadAsset(PICKER_BUTTON) end)
+        cls = StaticFindObject(PICKER_BUTTON)
+    end
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not PickerValid(cls) or not PickerValid(lib) then return nil end
+    local w = lib:Create(pc, cls, pc)
+    if not PickerValid(w) then return nil end
+    pcall(function() w:SetIsFocusable(false) end)
+    w:AddToViewport(10060)
+    w:SetVisibility(1)
+    return w
+end
+
+local function PickerPlace(w, x, y, width, height)
+    w:SetAlignmentInViewport({ X = 0.0, Y = 0.0 })
+    w:SetAnchorsInViewport({ Minimum = { X = 0, Y = 0 }, Maximum = { X = 0, Y = 0 } })
+    w:SetPositionInViewport({ X = x, Y = y }, false)
+    w:SetDesiredSizeInViewport({ X = width, Y = height })
+end
+
+local function HidePicker()
+    Picker.Visible = false
+    for _, w in pairs(PickerWidgets()) do
+        if PickerValid(w) then pcall(function() w:SetVisibility(1) end) end
+    end
+end
+
+-- Item types in nearby chests that the station takes, with total counts.
+local function PickerBuildEntries(station, playerLoc)
+    local entries, byAddr = {}, {}
+    if not station.Accepted then return entries end
+    for _, entry in ipairs(FindNearbyChests(playerLoc)) do
+        local n = 0
+        pcall(function() n = entry.Inventory.ItemSlots:GetArrayNum() end)
+        for i = 1, n do
+            local item = nil
+            pcall(function() item = entry.Inventory.ItemSlots[i] end)
+            if IsValidItem(item) then
+                local addr = GetItemDataAddress(item)
+                if addr and station.Accepted[addr] then
+                    local count = 0
+                    pcall(function() count = item:GetStackSize() end)
+                    local e = byAddr[addr]
+                    if not e then
+                        e = { DataAddr = addr, ItemData = item.ItemData, Name = GetItemName(item), Count = 0,
+                              Fuel = station.Fuels and station.Fuels[addr] and not station.Resources[addr],
+                              Loaded = station.Loaded and station.Loaded[addr] and true or false }
+                        byAddr[addr] = e
+                        entries[#entries + 1] = e
+                    end
+                    e.Count = e.Count + (count or 0)
+                end
+            end
+        end
+    end
+    -- What is already in the station first, then ingredients before fuel, then by name.
+    table.sort(entries, function(a, b)
+        if a.Loaded ~= b.Loaded then return a.Loaded end
+        if (a.Fuel and 1 or 0) ~= (b.Fuel and 1 or 0) then return not a.Fuel end
+        return a.Name < b.Name
+    end)
+    return entries
+end
+
+local function PickerRender(pc)
+    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = layout:GetViewportSize(pc), layout:GetViewportScale(pc)
+    local width, height = size.X / dpi, size.Y / dpi
+    local rowH, colW = 58, 380
+    -- Right-hand column, starting below the OSRS minimap (320px square, 24px from the top-right).
+    local x, y = width - colW - 40, Config.StationPickerTop
+    local perPage = math.max(3, math.min(12, math.floor((height - y - 2 * rowH - 40) / rowH)))
+    local pages = math.max(1, math.ceil(#Picker.Entries / perPage))
+    if Picker.Page > pages then Picker.Page = 1 end
+
+    if not PickerValid(Picker.Close) then Picker.Close = PickerCreateButton(pc) end
+    if not PickerValid(Picker.Close) then
+        Log("Station Fetch: could not create the picker buttons.")
+        return
+    end
+    local title = #Picker.Entries == 0
+        and (Picker.Station.Crafting and not Picker.Station.Accepted and "SELECT A RECIPE FIRST  /  CLOSE"
+             or "NOTHING IN NEARBY CHESTS  /  CLOSE")
+        or "FETCH FROM CHESTS  /  CLOSE"
+    Picker.Close:SetLabelText(PickerText(title))
+    PickerPlace(Picker.Close, x, y, colW, rowH - 6)
+    Picker.Close:SetVisibility(0)
+
+    Picker.Rows = {}
+    local first = (Picker.Page - 1) * perPage
+    for i = 1, perPage do
+        local e = Picker.Entries[first + i]
+        local b = Picker.Buttons[i]
+        if e then
+            if not PickerValid(b) then
+                b = PickerCreateButton(pc)
+                Picker.Buttons[i] = b
+            end
+            if PickerValid(b) then
+                local label = string.format("%s%s  x%d", e.Name, e.Fuel and " (fuel)" or "", e.Count)
+                b:SetLabelText(PickerText(label))
+                PickerPlace(b, x, y + i * rowH, colW, rowH - 6)
+                b:SetVisibility(0)
+                Picker.Rows[i] = e
+            end
+        elseif PickerValid(b) then
+            b:SetVisibility(1)
+        end
+    end
+    for i = perPage + 1, #Picker.Buttons do
+        if PickerValid(Picker.Buttons[i]) then Picker.Buttons[i]:SetVisibility(1) end
+    end
+
+    if pages > 1 then
+        if not PickerValid(Picker.More) then Picker.More = PickerCreateButton(pc) end
+        if PickerValid(Picker.More) then
+            Picker.More:SetLabelText(PickerText(string.format("MORE  (%d / %d)", Picker.Page, pages)))
+            PickerPlace(Picker.More, x, y + (perPage + 1) * rowH, colW, rowH - 6)
+            Picker.More:SetVisibility(0)
+        end
+    elseif PickerValid(Picker.More) then
+        Picker.More:SetVisibility(1)
+    end
+    PickerRemember()
+    Picker.Visible = true
+end
+
+local function OpenPicker(PC, station, playerLoc)
+    Picker.Station = station
+    Picker.Entries = PickerBuildEntries(station, playerLoc)
+    Picker.Page = 1
+    PickerRender(PC)
+    Log(string.format("Station Fetch picker: %d item type(s) for '%s'.", #Picker.Entries, station.ClassName))
+end
+
+local function PickerClicked(index)
+    local e = Picker.Rows[index]
+    local PC, pawn, playerLoc = PlayerContext()
+    if not e or not PC then return end
+    ExecuteQuickPull({ Item = nil, DataAddr = e.DataAddr, Name = e.Name },
+        MaxStackOf(e.ItemData) * Config.StationFetchStacksPerItem)
+    -- Refresh the counts left in the chests.
+    Picker.Entries = PickerBuildEntries(Picker.Station, playerLoc)
+    PickerRender(PC)
+end
+
+-- Hide the list once the station menu closes (the mouse cursor goes away).
+local function PickerWatch()
+    if not Picker.Visible then return end
+    local PC = UEHelpers.GetPlayerController()
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then HidePicker() end
+end
+
+pcall(function()
+    RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
+        if not Picker.Visible then return end
+        local ok, button = pcall(function() return context:get() end)
+        if not ok then return end
+        if PickerSame(button, Picker.Close) then
+            ExecuteInGameThread(function()
+                AutoPicker.Dismissed = AutoPicker.Key -- stay closed until this station menu closes
+                pcall(HidePicker)
+            end)
+        elseif PickerSame(button, Picker.More) then
+            ExecuteInGameThread(function()
+                Picker.Page = Picker.Page + 1
+                pcall(PickerRender, UEHelpers.GetPlayerController())
+            end)
+        else
+            for i, b in ipairs(Picker.Buttons) do
+                if PickerSame(button, b) then
+                    ExecuteInGameThread(function()
+                        local okClick, err = pcall(PickerClicked, i)
+                        if not okClick then Log("Station Fetch picker error: " .. tostring(err)) end
+                    end)
+                    break
+                end
+            end
+        end
+    end)
+end)
+
+-- =========================================================================
+-- NEARBY STORAGE DIALOG (every nearby chest as one list; Alt+G away from stations)
+-- =========================================================================
+-- A full-screen page built from the game's own Settings frame, tab buttons and
+-- menu buttons (the same parts as the Toolkit dashboard): category tabs, a grid
+-- of every item type across nearby chests with totals, paging, DEPOSIT ALL and
+-- CLOSE. Clicking an item pulls a stack of it into the backpack.
+local STORAGE_PAGE = "/Game/UI/Settings/WBP_SettingsWidget.WBP_SettingsWidget_C"
+local STORAGE_ROW = "/Game/UI/Common/WBP_MainMenuTabButton.WBP_MainMenuTabButton_C"
+local STORAGE_BACK = "/Game/UI/Common/WBP_DomMainMenuBottomNavButton.WBP_DomMainMenuBottomNavButton_C"
+local STORAGE_VISIBLE, STORAGE_COLLAPSED = 0, 1
+local StorageTabs = {
+    { "ALL", nil }, { "FOOD", "FOOD" }, { "WOOD", "WOOD" }, { "MINING", "MINING" },
+    { "FARMING", "FARMING" }, { "MAGIC", "MAGIC" }, { "ARMOUR", "ARMOUR" },
+    { "EQUIPMENT", "EQUIPMENT" }, { "RECIPES", "RECIPES" }, { "MISC", "MISC" },
+}
+local Storage = {
+    Visible = false, OwnCursor = false, Page = nil, Info = nil, Tabs = {}, Rows = {}, Hits = {},
+    Prev = nil, Next = nil, Deposit = nil, Close = nil,
+    Entries = {}, Shown = {}, Tab = 1, PageIndex = 1, ChestCount = 0,
+}
+
+local function StorageWidgets()
+    local list = {}
+    for _, w in ipairs({ "Page", "Info", "Prev", "Next", "Deposit", "Close" }) do
+        if Storage[w] then list[#list + 1] = Storage[w] end
+    end
+    for _, group in ipairs({ Storage.Tabs, Storage.Rows, Storage.Hits }) do
+        for _, w in pairs(group) do list[#list + 1] = w end
+    end
+    return list
+end
+
+-- Widgets left behind by a previous load of this script (Ctrl+R hot reload).
+do
+    local recorded = nil
+    if ModRef then pcall(function() recorded = ModRef:GetSharedVariable("QuickStack.StorageWidgets") end) end
+    if type(recorded) == "string" and recorded ~= "" then
+        ExecuteInGameThread(function()
+            local names = {}
+            for n in recorded:gmatch("[^\n]+") do names[n] = true end
+            for _, cls in ipairs({ "WBP_SettingsWidget_C", "WBP_MainMenuTabButton_C",
+                                   "WBP_DomAllCapsButton_C", "WBP_DomMainMenuBottomNavButton_C" }) do
+                for _, w in ipairs(FindAllOf(cls) or {}) do
+                    if PickerValid(w) and names[w:GetFullName()] then pcall(function() w:RemoveFromParent() end) end
+                end
+            end
+        end)
+    end
+end
+
+local function StorageRemember()
+    if not ModRef then return end
+    local names = {}
+    for _, w in pairs(StorageWidgets()) do
+        if PickerValid(w) then names[#names + 1] = w:GetFullName() end
+    end
+    pcall(function() ModRef:SetSharedVariable("QuickStack.StorageWidgets", table.concat(names, "\n")) end)
+end
+
+local function StorageCreate(pc, path, z)
+    local cls = StaticFindObject(path)
+    if not PickerValid(cls) and LoadAsset then
+        pcall(function() LoadAsset(path) end)
+        cls = StaticFindObject(path)
+    end
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not PickerValid(cls) or not PickerValid(lib) then error("game UI asset unavailable: " .. path) end
+    local w = lib:Create(pc, cls, pc)
+    if not PickerValid(w) then error("game UI construction failed: " .. path) end
+    pcall(function() w:SetIsFocusable(false) end)
+    w:SetVisibility(STORAGE_COLLAPSED)
+    w:AddToViewport(z)
+    return w
+end
+
+-- Text on a tab-button row (its native LabelText) or on a menu button.
+local function StorageLabel(w, text)
+    if not PickerValid(w) then return end
+    local ok = pcall(function() w.LabelText:SetText(PickerText(text)) end)
+    if not ok then pcall(function() w:SetLabelText(PickerText(text)) end) end
+end
+
+local function StorageBuild(pc)
+    Storage.Page = StorageCreate(pc, STORAGE_PAGE, 10070)
+    -- Our own Settings instance: collapse its categories and content so none of
+    -- its handlers can change game settings; keep the frame and title styling.
+    for _, name in ipairs({
+        "Button_Video", "Button_Legal", "Button_Gameplay", "Button_Controls",
+        "Button_Audio", "Button_Accessibility", "AudioSubWidget", "AccessibilitySubWidget",
+        "GameplaySubWidget", "DeveloperSubWidget", "ControlsSubWidget", "VideoSubWidget",
+        "LegalSubWidget", "WBP_SettingTooltipContainer", "SubCategoryScroller",
+        "SubCategoryButtonGroup", "SubTabLeftInputActionWidget", "SubTabRightInputActionWidget",
+    }) do
+        pcall(function()
+            local child = Storage.Page[name]
+            if PickerValid(child) then child:SetVisibility(STORAGE_COLLAPSED) end
+        end)
+    end
+    pcall(function()
+        Storage.Page.WBP_MainMenu_ScreenTitle.HeaderTextBlock:SetText(PickerText("NEARBY STORAGE"))
+    end)
+    Storage.Info = StorageCreate(pc, STORAGE_ROW, 10071)
+    for i, tab in ipairs(StorageTabs) do
+        Storage.Tabs[i] = StorageCreate(pc, PICKER_BUTTON, 10072)
+        StorageLabel(Storage.Tabs[i], tab[1])
+    end
+    Storage.Prev = StorageCreate(pc, PICKER_BUTTON, 10072)
+    Storage.Next = StorageCreate(pc, PICKER_BUTTON, 10072)
+    Storage.Deposit = StorageCreate(pc, PICKER_BUTTON, 10072)
+    Storage.Close = StorageCreate(pc, STORAGE_BACK, 10072)
+    StorageLabel(Storage.Prev, "< PREV")
+    StorageLabel(Storage.Next, "NEXT >")
+    StorageLabel(Storage.Deposit, "DEPOSIT ALL (G)")
+    StorageLabel(Storage.Close, "CLOSE")
+    StorageRemember()
+end
+
+-- Every item type across nearby chests: { DataAddr, ItemData, Name, Count, Chests, Category }.
+local function StorageCollect(playerLoc)
+    local entries, byAddr = {}, {}
+    local chests = FindNearbyChests(playerLoc)
+    for _, entry in ipairs(chests) do
+        local seenHere = {}
+        local n = 0
+        pcall(function() n = entry.Inventory.ItemSlots:GetArrayNum() end)
+        for i = 1, n do
+            local item = nil
+            pcall(function() item = entry.Inventory.ItemSlots[i] end)
+            if IsValidItem(item) then
+                local addr = GetItemDataAddress(item)
+                if addr then
+                    local e = byAddr[addr]
+                    if not e then
+                        e = { DataAddr = addr, ItemData = item.ItemData, Name = GetItemName(item),
+                              Count = 0, Chests = 0, Category = GetItemCategory(item) }
+                        byAddr[addr] = e
+                        entries[#entries + 1] = e
+                    end
+                    local count = 0
+                    pcall(function() count = item:GetStackSize() end)
+                    e.Count = e.Count + (count or 0)
+                    if not seenHere[addr] then seenHere[addr] = true; e.Chests = e.Chests + 1 end
+                end
+            end
+        end
+    end
+    table.sort(entries, function(a, b) return a.Name < b.Name end)
+    return entries, #chests
+end
+
+local function StoragePlace(w, x, y, width, height)
+    if not PickerValid(w) then return end
+    PickerPlace(w, x, y, width, height)
+    w:SetVisibility(STORAGE_VISIBLE)
+end
+
+local function StorageRender(pc)
+    local layout = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+    local size, dpi = layout:GetViewportSize(pc), layout:GetViewportScale(pc)
+    local width, height = size.X / dpi, size.Y / dpi
+    local x0 = math.max(90, width * 0.05)
+    local innerW = width - 2 * x0
+
+    -- Filtered list for the selected tab.
+    local category = StorageTabs[Storage.Tab][2]
+    local list = {}
+    for _, e in ipairs(Storage.Entries) do
+        if not category or e.Category == category then list[#list + 1] = e end
+    end
+
+    -- Summary line.
+    local totalItems = 0
+    for _, e in ipairs(Storage.Entries) do totalItems = totalItems + e.Count end
+    StorageLabel(Storage.Info, string.format("%d CHESTS NEARBY  |  %d ITEM TYPES  |  %d ITEMS  |  CLICK AN ITEM TO TAKE A STACK",
+        Storage.ChestCount, #Storage.Entries, totalItems))
+    StoragePlace(Storage.Info, x0, 168, innerW, 46)
+
+    -- Category tabs (the selected one reads [LIKE THIS]).
+    local tabW = (innerW - (#StorageTabs - 1) * 8) / #StorageTabs
+    for i, tab in ipairs(StorageTabs) do
+        StorageLabel(Storage.Tabs[i], i == Storage.Tab and ("[" .. tab[1] .. "]") or tab[1])
+        StoragePlace(Storage.Tabs[i], x0 + (i - 1) * (tabW + 8), 224, tabW, 50)
+    end
+
+    -- Item grid.
+    local cols, rowH, gap = 3, 60, 14
+    local colW = (innerW - (cols - 1) * gap) / cols
+    local gridTop = 292
+    local rows = math.max(3, math.min(10, math.floor((height - gridTop - 150) / rowH)))
+    local perPage = rows * cols
+    local pages = math.max(1, math.ceil(#list / perPage))
+    if Storage.PageIndex > pages then Storage.PageIndex = pages end
+    local first = (Storage.PageIndex - 1) * perPage
+    Storage.Shown = {}
+    for slot = 1, perPage do
+        local e = list[first + slot]
+        if e then
+            if not PickerValid(Storage.Rows[slot]) then
+                Storage.Rows[slot] = StorageCreate(pc, STORAGE_ROW, 10071)
+                -- An invisible menu button on top of each row takes the click (as in the Toolkit dashboard).
+                Storage.Hits[slot] = StorageCreate(pc, PICKER_BUTTON, 10073)
+                StorageLabel(Storage.Hits[slot], "")
+                pcall(function() Storage.Hits[slot]:SetRenderOpacity(0.0) end)
+                StorageRemember()
+            end
+            local col = (slot - 1) % cols
+            local row = math.floor((slot - 1) / cols)
+            local x, y = x0 + col * (colW + gap), gridTop + row * rowH
+            local label = string.format("%s   x%d", e.Name, e.Count)
+            if e.Chests > 1 then label = label .. string.format("   (%d chests)", e.Chests) end
+            StorageLabel(Storage.Rows[slot], label)
+            StoragePlace(Storage.Rows[slot], x, y, colW, rowH - 8)
+            StoragePlace(Storage.Hits[slot], x, y, colW, rowH - 8)
+            Storage.Shown[slot] = e
+        else
+            if PickerValid(Storage.Rows[slot]) then Storage.Rows[slot]:SetVisibility(STORAGE_COLLAPSED) end
+            if PickerValid(Storage.Hits[slot]) then Storage.Hits[slot]:SetVisibility(STORAGE_COLLAPSED) end
+        end
+    end
+    for slot = perPage + 1, #Storage.Rows do
+        if PickerValid(Storage.Rows[slot]) then Storage.Rows[slot]:SetVisibility(STORAGE_COLLAPSED) end
+        if PickerValid(Storage.Hits[slot]) then Storage.Hits[slot]:SetVisibility(STORAGE_COLLAPSED) end
+    end
+    if #list == 0 then
+        StorageLabel(Storage.Info, Storage.ChestCount == 0 and "NO CHESTS NEARBY"
+            or "NOTHING IN THIS CATEGORY  |  PICK ANOTHER TAB")
+    end
+
+    -- Bottom bar.
+    local by = height - 112
+    StoragePlace(Storage.Close, x0, by, 240, 56)
+    StorageLabel(Storage.Prev, pages > 1 and string.format("< PREV   %d / %d", Storage.PageIndex, pages) or "< PREV")
+    StoragePlace(Storage.Prev, x0 + 260, by, 240, 56)
+    StoragePlace(Storage.Next, x0 + 520, by, 200, 56)
+    StoragePlace(Storage.Deposit, width - x0 - 340, by, 340, 56)
+    StoragePlace(Storage.Page, 0, 0, width, height)
+    Storage.Visible = true
+end
+
+local function StorageSetCursor(pc, on)
+    local lib = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    pcall(function() pc.bShowMouseCursor = on end)
+    if on then
+        pcall(function() lib:SetInputMode_UIOnlyEx(pc, Storage.Page, 0, false) end)
+    else
+        pcall(function() lib:SetInputMode_GameOnly(pc, false) end)
+    end
+end
+
+local function CloseStorage()
+    if not Storage.Visible then return end
+    Storage.Visible = false
+    for _, w in pairs(StorageWidgets()) do
+        if PickerValid(w) then pcall(function() w:SetVisibility(STORAGE_COLLAPSED) end) end
+    end
+    if Storage.OwnCursor then
+        Storage.OwnCursor = false
+        local pc = UEHelpers.GetPlayerController()
+        if PickerValid(pc) then StorageSetCursor(pc, false) end
+    end
+end
+
+local function StorageRefresh()
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    Storage.Entries, Storage.ChestCount = StorageCollect(playerLoc)
+    StorageRender(PC)
+end
+
+local function OpenStorage(PC, playerLoc)
+    if not PickerValid(Storage.Page) then StorageBuild(PC) end
+    Storage.Tab, Storage.PageIndex = 1, 1
+    Storage.Entries, Storage.ChestCount = StorageCollect(playerLoc)
+    StorageRender(PC)
+    -- Opened from normal play: show the cursor and send input to the dialog.
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then
+        Storage.OwnCursor = true
+        StorageSetCursor(PC, true)
+    end
+    Log(string.format("Nearby Storage: %d item type(s) across %d chest(s).", #Storage.Entries, Storage.ChestCount))
+end
+
+-- Close with the menu it was opened over (the cursor goes away), or on Escape.
+local function StorageWatch()
+    if not Storage.Visible or Storage.OwnCursor then return end
+    local PC = UEHelpers.GetPlayerController()
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then CloseStorage() end
+end
+
+pcall(function()
+    RegisterKeyBind(Key.ESCAPE, function()
+        ExecuteInGameThread(function() if Storage.Visible then pcall(CloseStorage) end end)
+    end)
+end)
+
+local function StorageGuard(fn)
+    local ok, err = pcall(fn)
+    if not ok then
+        Log("Nearby Storage error: " .. tostring(err))
+        pcall(CloseStorage)
+    end
+end
+
+pcall(function()
+    RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
+        if not Storage.Visible then return end
+        local ok, button = pcall(function() return context:get() end)
+        if not ok then return end
+        if PickerSame(button, Storage.Close) then
+            ExecuteInGameThread(function() StorageGuard(CloseStorage) end)
+        elseif PickerSame(button, Storage.Prev) then
+            ExecuteInGameThread(function() StorageGuard(function()
+                Storage.PageIndex = math.max(1, Storage.PageIndex - 1)
+                StorageRender(UEHelpers.GetPlayerController())
+            end) end)
+        elseif PickerSame(button, Storage.Next) then
+            ExecuteInGameThread(function() StorageGuard(function()
+                Storage.PageIndex = Storage.PageIndex + 1
+                StorageRender(UEHelpers.GetPlayerController())
+            end) end)
+        elseif PickerSame(button, Storage.Deposit) then
+            ExecuteInGameThread(function() StorageGuard(function()
+                local found = ExecuteQuickStack(true)
+                if found then ExecuteQuickStack() end
+                StorageRefresh()
+            end) end)
+        else
+            for i, tab in ipairs(Storage.Tabs) do
+                if PickerSame(button, tab) then
+                    ExecuteInGameThread(function() StorageGuard(function()
+                        Storage.Tab, Storage.PageIndex = i, 1
+                        StorageRender(UEHelpers.GetPlayerController())
+                    end) end)
+                    return
+                end
+            end
+            for slot, hit in pairs(Storage.Hits) do
+                if PickerSame(button, hit) then
+                    ExecuteInGameThread(function() StorageGuard(function()
+                        local e = Storage.Shown[slot]
+                        if not e then return end
+                        ExecuteQuickPull({ Item = nil, DataAddr = e.DataAddr, Name = e.Name },
+                            MaxStackOf(e.ItemData) * Config.StorageStacksPerClick)
+                        StorageRefresh()
+                    end) end)
+                    return
+                end
+            end
+        end
+    end)
+end)
+
+-- Opens the picker by itself when a station menu opens, refreshes it when the
+-- selected recipe changes at a crafting bench, and resets once all menus close.
+local function AutoPickerTick()
+    if not Config.StationFetchAutoOpen or not Config.StationFetchPicker or Storage.Visible then return end
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    local cursor = false
+    pcall(function() cursor = PC.bShowMouseCursor end)
+    if not cursor then
+        AutoPicker.Key, AutoPicker.Recipe, AutoPicker.Dismissed = nil, nil, nil
+        return
+    end
+    local station = FindOpenStation(PC, playerLoc)
+    if not station then
+        if Picker.Visible and AutoPicker.Key then HidePicker() end
+        AutoPicker.Key, AutoPicker.Recipe, AutoPicker.Dismissed = nil, nil, nil
+        return
+    end
+    local key = station.Actor:GetAddress()
+    local recipe = station.RecipeAddr or 0
+    if AutoPicker.Dismissed == key then return end
+    if Picker.Visible and AutoPicker.Key == key and AutoPicker.Recipe == recipe then return end
+    AutoPicker.Key, AutoPicker.Recipe, AutoPicker.Dismissed = key, recipe, nil
+    OpenPicker(PC, station, playerLoc)
+end
+
+local function ExecuteStationFetch()
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+
+    -- Alt+G while Nearby Storage is open closes it.
+    if Storage.Visible then
+        CloseStorage()
+        return
+    end
+
+    -- Alt+G while the picker is open closes it (and keeps it closed for this station visit).
+    if Picker.Visible then
+        AutoPicker.Dismissed = AutoPicker.Key
+        HidePicker()
+        return
+    end
+
+    -- Hovering an item always wins: pull every matching stack.
+    local hover = GetCurrentHoverTarget()
+    if hover then
+        ExecuteQuickPull(hover)
+        return
+    end
+
+    local station, how = FindOpenStation(PC, playerLoc)
+    if not station and Config.StorageDialog then
+        OpenStorage(PC, playerLoc)
+        return
+    end
+    if not station then
+        Log("[DISCOVERY] Station Fetch: no open station menu and no processing station within 6m.")
+        Log("Station Fetch: open a crafting station (or hover an item) and press [Alt + G].")
+        return
+    end
+    local acceptedCount = 0
+    for _ in pairs(station.Accepted or {}) do acceptedCount = acceptedCount + 1 end
+    Log(string.format("[DISCOVERY] Station Fetch: found '%s' via %s, %d accepted item type(s) listed.",
+        station.ClassName, how, acceptedCount))
+
+    -- Show the clickable list so the player picks exactly what to fetch.
+    if Config.StationFetchPicker and (station.Processing or station.Crafting) then
+        OpenPicker(PC, station, playerLoc)
+        return
+    end
+
+    -- Crafting benches: only the selected recipe's ingredients, never a guess.
+    if station.Crafting and not station.Accepted then
+        Log(string.format("Station Fetch: select a recipe at '%s' first, then press [Alt + G] to fetch its ingredients.",
+            station.ClassName))
+        return
+    end
+
+    -- Every processing station (smelter, loom, spinning wheel, tanner, sawmill, kiln,
+    -- grindstone, stonecutter, campfire, grill, cauldron, fermentation barrel...):
+    -- only top up what is already in it, so the player chooses
+    -- (one iron ore in = fetch iron; a log in the fuel slot = fetch logs).
+    if station.Processing and Config.StationFetchLoadedOnly then
+        if station.Loaded then
+            station.Accepted = station.Loaded
+        elseif not Config.StationFetchAllWhenEmpty then
+            Log(string.format("Station Fetch: '%s' is empty. Put one of what you want (ore, fuel...) into it, then press [Alt + G] to fetch more of it. Or hover an item and press [Alt + G].",
+                station.ClassName))
+            return
+        end
+    end
+
+    local nearbyChests = FindNearbyChests(playerLoc)
+    if #nearbyChests == 0 then
+        Log("Station Fetch: no chests nearby.")
+        return
+    end
+
+    -- Collect one entry per item type found in chests.
+    local types, order = {}, {}
+    for _, entry in ipairs(nearbyChests) do
+        local n = 0
+        pcall(function() n = entry.Inventory.ItemSlots:GetArrayNum() end)
+        for i = 1, n do
+            local item = nil
+            pcall(function() item = entry.Inventory.ItemSlots[i] end)
+            if IsValidItem(item) then
+                local addr = GetItemDataAddress(item)
+                if addr and not types[addr] then
+                    types[addr] = { DataAddr = addr, ItemData = item.ItemData, Name = GetItemName(item) }
+                    order[#order + 1] = types[addr]
+                end
+            end
+        end
+    end
+
+    -- Which of those does the station take? Prefer the station's own list
+    -- (AcceptedResources, or the selected recipe's ingredients).
+    local accepted = {}
+    if station.Accepted then
+        for _, t in ipairs(order) do
+            if station.Accepted[t.DataAddr] then accepted[#accepted + 1] = t end
+        end
+    elseif station.Inventory then
+        for _, t in ipairs(order) do
+            local space = 0
+            pcall(function() space = station.Inventory:GetSpaceAvailableForItemByData(t.ItemData) end)
+            if space and space > 0 then accepted[#accepted + 1] = t end
+        end
+    end
+
+    -- A station that accepts nearly everything has no filter we can read: use name hints instead.
+    if not station.Accepted and (#accepted == 0 or #accepted > Config.StationFetchMaxItemTypes) then
+        local cls = station.ClassName:lower()
+        local wanted = nil
+        for _, hint in ipairs(StationIngredientHints) do
+            for _, k in ipairs(hint.Keys) do
+                if cls:find(k, 1, true) then wanted = hint.Items; break end
+            end
+            if wanted then break end
+        end
+        if not wanted then
+            Log(string.format("Station Fetch: can't tell what '%s' accepts (it took %d item types). Hover the ingredient and press [Alt + G] instead.",
+                station.ClassName, #accepted))
+            return
+        end
+        accepted = {}
+        for _, t in ipairs(order) do
+            local nm = t.Name:lower()
+            for _, w in ipairs(wanted) do
+                if nm:find(w, 1, true) then accepted[#accepted + 1] = t; break end
+            end
+        end
+    end
+
+    if #accepted == 0 then
+        Log(string.format("Station Fetch: nothing in nearby chests that '%s' uses.", station.ClassName))
+        return
+    end
+
+    local names = {}
+    for _, t in ipairs(accepted) do
+        ExecuteQuickPull({ Item = nil, DataAddr = t.DataAddr, Name = t.Name },
+            MaxStackOf(t.ItemData) * Config.StationFetchStacksPerItem)
+        names[#names + 1] = t.Name
+    end
+    Log(string.format(">>> Station Fetch for '%s': pulled %s", station.ClassName, table.concat(names, ", ")))
+end
+
+-- =========================================================================
+-- CHEST LABELS (floating category name above each nearby chest)
+-- =========================================================================
+local ChestLabels = {}          -- [actorAddress] = { Actor, Comp, Text }
+local ChestLabelsEnabled = Config.ChestLabels
+local TextRenderClass = nil
+local CategoryLabelText = {
+    FOOD = "Food", WOOD = "Wood", MINING = "Mining", FARMING = "Farming",
+    MAGIC = "Magic", EQUIPMENT = "Equipment", MISC = "Misc",
+}
+
+local function MakeText(str)
+    local lib = StaticFindObject("/Script/Engine.Default__KismetTextLibrary")
+    return lib:Conv_StringToText(str)
+end
+
+local function RemoveChestLabel(addr)
+    local label = ChestLabels[addr]
+    if label and label.Comp and label.Comp:IsValid() then
+        pcall(function() label.Comp:K2_DestroyComponent(label.Comp) end)
+    end
+    ChestLabels[addr] = nil
+end
+
+local function RemoveAllChestLabels()
+    for addr in pairs(ChestLabels) do RemoveChestLabel(addr) end
+end
+
+-- Labels left behind by a previous load of this script (Ctrl+R hot reload).
+local function PurgeOrphanChestLabels()
+    local ok, comps = pcall(function() return FindAllOf("TextRenderComponent") end)
+    if not ok or not comps then return end
+    for _, comp in ipairs(comps) do
+        pcall(function()
+            local owner = comp:GetOwner()
+            if owner and owner:IsValid() and IsChestActor(owner) then
+                comp:K2_DestroyComponent(comp)
+            end
+        end)
+    end
+end
+
+local function EnsureChestLabel(actor, text)
+    local addr = actor:GetAddress()
+    local label = ChestLabels[addr]
+    if label and label.Comp and label.Comp:IsValid() then
+        if label.Text ~= text then
+            pcall(function() label.Comp:K2_SetText(MakeText(text)) end)
+            label.Text = text
+        end
+        return
+    end
+    if not TextRenderClass or not TextRenderClass:IsValid() then
+        TextRenderClass = StaticFindObject("/Script/Engine.TextRenderComponent")
+    end
+    if not TextRenderClass or not TextRenderClass:IsValid() then return end
+    local comp = nil
+    pcall(function()
+        comp = actor:AddComponentByClass(TextRenderClass, false, {
+            Rotation = { X = 0, Y = 0, Z = 0, W = 1 },
+            Translation = { X = 0, Y = 0, Z = Config.ChestLabelHeight },
+            Scale3D = { X = 1, Y = 1, Z = 1 }
+        }, false)
+    end)
+    if not comp or not comp:IsValid() then return end
+    pcall(function()
+        comp:SetHorizontalAlignment(1) -- EHTA_Center
+        comp:SetVerticalAlignment(1)   -- EVRTA_TextCenter
+        comp:SetWorldSize(Config.ChestLabelSize)
+        comp:SetTextRenderColor({ R = 255, G = 215, B = 0, A = 255 })
+        comp:SetCollisionEnabled(0)
+        comp:K2_SetText(MakeText(text))
+    end)
+    ChestLabels[addr] = { Actor = actor, Comp = comp, Text = text }
+end
+
+local function RefreshChestLabels()
+    if not ChestLabelsEnabled then return end
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC then return end
+    local maxSq = Config.ChestLabelRadius * Config.ChestLabelRadius
+    local seen = {}
+    for _, entry in ipairs(FindNearbyChests(playerLoc)) do
+        if entry.Distance * entry.Distance <= maxSq then
+            local st = AnalyzeChest(entry)
+            local text = st.TotalItemCount == 0 and "Empty"
+                or (CategoryLabelText[st.DominantCategory] or st.DominantCategory or "Misc")
+            local addr = entry.Actor:GetAddress()
+            seen[addr] = true
+            EnsureChestLabel(entry.Actor, text)
+        end
+    end
+    for addr, label in pairs(ChestLabels) do
+        if not seen[addr] or not label.Actor or not label.Actor:IsValid() then RemoveChestLabel(addr) end
+    end
+end
+
+-- Turn each label to face the camera so it reads from any side.
+local function FaceChestLabels()
+    if not ChestLabelsEnabled or next(ChestLabels) == nil then return end
+    local PC = UEHelpers.GetPlayerController()
+    if not PC or not PC:IsValid() then return end
+    local cam = nil
+    pcall(function() cam = PC.PlayerCameraManager:GetCameraLocation() end)
+    if not cam then return end
+    for _, label in pairs(ChestLabels) do
+        pcall(function()
+            local loc = label.Comp:K2_GetComponentLocation()
+            local yaw = math.deg(math.atan(cam.Y - loc.Y, cam.X - loc.X))
+            label.Comp:K2_SetWorldRotation({ Pitch = 0.0, Yaw = yaw, Roll = 0.0 }, false, {}, true)
+        end)
+    end
+end
+
+local function ToggleChestLabels()
+    ChestLabelsEnabled = not ChestLabelsEnabled
+    if ChestLabelsEnabled then
+        RefreshChestLabels()
+    else
+        RemoveAllChestLabels()
+    end
+    Log("Chest labels: " .. (ChestLabelsEnabled and "ON" or "OFF"))
+end
+
+-- =========================================================================
+-- STATION OUTPUT AUTO-STORE
+-- =========================================================================
+-- When a crafting station finishes and drops its product on the ground, move
+-- that item straight into the matching category chest.
+local SeenWorldItems = {}         -- [address] = true for items that existed before
+local SeenWorldItemsPrimed = false
+local LoggedOwnerClasses = {}
+
+local StationKeywords = {
+    "furnace", "smelter", "kiln", "campfire", "range", "cook", "cauldron", "bench",
+    "anvil", "wheel", "station", "crafting", "grinder", "sawmill", "loom",
+    "stonecutter", "tanning", "brew", "pottery", "altar", "workshop", "forge",
+}
+local function IsStationActor(actor)
+    if not actor or not IsValidWorldActor(actor) then return false end
+    local cls = GetSafeClassName(actor):lower()
+    for _, kw in ipairs(StationKeywords) do
+        if cls:find(kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function StationThatMade(item)
+    -- Processing stations (furnace, smelter...) drop their product as this class
+    -- (ProcessingStationComponent.SpawnItemClass in the object dump).
+    local cls = GetSafeClassName(item)
+    if cls:find("ProcessingStation", 1, true) then return item, cls end
+    for _, getter in ipairs({
+        function() return item:GetOwner() end,
+        function() return item.Owner end,
+        function() return item:GetInstigator() end,
+    }) do
+        local ok, owner = pcall(getter)
+        if ok and owner and IsStationActor(owner) then return owner, GetSafeClassName(owner) end
+    end
+    return nil
+end
+
+-- Room for itemData across the chests StoreIntoCategoryChest would use.
+local function CategoryChestSpace(itemData, category, nearbyChests)
+    local space = 0
+    for _, ch in ipairs(nearbyChests) do
+        local st = AnalyzeChest(ch)
+        if st.DominantCategory == category or st.TotalItemCount == 0 or Config.OverflowWhenCategoryFull then
+            local s = 0
+            pcall(function() s = ch.Inventory:GetSpaceAvailableForItemByData(itemData) end)
+            space = space + (s or 0)
+        end
+    end
+    return space
+end
+
+local GameplayStatics = nil
+local function IsGamePaused(pc)
+    if not pc or not pc:IsValid() then return false end
+    local ok1, paused = pcall(function() return pc:IsPaused() end)
+    if ok1 and paused then return true end
+
+    if not GameplayStatics or not GameplayStatics:IsValid() then
+        GameplayStatics = StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    end
+    if GameplayStatics and GameplayStatics:IsValid() then
+        local ok2, gPaused = pcall(function() return GameplayStatics:IsGamePaused(pc) end)
+        if ok2 and gPaused then return true end
+    end
+    return false
+end
+
+local function AutoStoreStationOutput()
+    if not Config.AutoStoreStationOutput then return end
+    local PC, pawn, playerLoc = PlayerContext()
+    if not PC or IsGamePaused(PC) then return end
+    local okItems, items = pcall(function() return FindAllOf("WorldItem") end)
+    if not okItems or not items then return end
+
+    local fresh = {}
+    local maxSq = Config.StationOutputRadius * Config.StationOutputRadius
+    local current = {}
+    for _, actor in ipairs(items) do
+        if IsValidWorldActor(actor) then
+            local addr = actor:GetAddress()
+            current[addr] = true
+            if SeenWorldItemsPrimed and not SeenWorldItems[addr] then
+                local loc = nil
+                pcall(function() loc = actor:K2_GetActorLocation() end)
+                if loc and DistSq(loc, playerLoc) <= maxSq then fresh[#fresh + 1] = actor end
+            end
+        end
+    end
+    SeenWorldItems = current
+    if not SeenWorldItemsPrimed then
+        SeenWorldItemsPrimed = true
+        return
+    end
+    if #fresh == 0 then return end
+
+    local nearbyChests = nil
+    for _, actor in ipairs(fresh) do
+        local station, stationCls = StationThatMade(actor)
+        if not station and Config.DebugLog then
+            local itemCls = GetSafeClassName(actor)
+            if not LoggedOwnerClasses[itemCls] then
+                LoggedOwnerClasses[itemCls] = true
+                Log("[DISCOVERY] New ground item near you (not station output): " .. itemCls)
+            end
+        end
+        if station then
+            nearbyChests = nearbyChests or FindNearbyChests(playerLoc)
+            local itemData, count = nil, 0
+            pcall(function() itemData = actor.ItemData end)
+            pcall(function() count = actor:GetStackSize() end)
+            if itemData and itemData:IsValid() and count and count > 0 and #nearbyChests > 0 then
+                local name = GetItemName(actor)
+                local category = GetItemCategory(actor)
+                -- Only move whole stacks: a ground item's stack size can't be reduced,
+                -- so a partial store would duplicate the rest.
+                if CategoryChestSpace(itemData, category, nearbyChests) >= count then
+                    local stored = StoreIntoCategoryChest(itemData, count, 1.0, name, category, nearbyChests)
+                    if stored >= count then
+                        pcall(function() actor:K2_DestroyActor() end)
+                        Log(string.format(">>> Auto-stored %dx '%s' from %s.", stored, name, stationCls))
+                    elseif stored > 0 then
+                        Log(string.format("Auto-store: only %d of %dx '%s' fit; left the stack on the ground.", stored, count, name))
+                    end
+                elseif Config.DebugLog then
+                    Log(string.format("Auto-store: no room for %dx '%s' in [%s] chests; left it on the ground.", count, name, category))
+                end
+            end
+        end
+    end
+end
+
+-- Background loop: labels every 10 s (each refresh scans every chest), label facing every 0.2 s, station output every 1 s.
+do
+    local tick, busy = 0, false
+    GameLoop(200, function()
+        tick = tick + 1
+        if busy then return false end
+        busy = true
+        ExecuteInGameThread(function()
+            local PC = UEHelpers.GetPlayerController()
+            if not PC or not PC:IsValid() or IsGamePaused(PC) then
+                busy = false
+                return
+            end
+            if tick % 50 == 1 then pcall(RefreshChestLabels) end
+            if tick % 5 == 0 then pcall(AutoStoreStationOutput) end
+            pcall(FaceChestLabels)
+            pcall(PickerWatch)
+            pcall(StorageWatch)
+            pcall(AutoPickerTick)
+            busy = false
+        end)
+        return false
+    end)
+end
+ExecuteInGameThread(function() pcall(PurgeOrphanChestLabels) end)
+
+-- =========================================================================
 -- EXECUTE QUICK PULL (Retrieve matching items from chests into player inventory)
 -- =========================================================================
-local function ExecuteQuickPull(target)
+ExecuteQuickPull = function(target, maxCount)
     if not target then
         Log("QuickPull failed: No target item specified.")
         return
@@ -1967,6 +3280,12 @@ local function ExecuteQuickPull(target)
         local chestActor = cEntry.ChestActor
         local cSlotZero = cEntry.SlotZero
         local cCount = cEntry.Count
+        if maxCount then
+            -- Station Fetch asks for a limited amount rather than every stack.
+            local left = maxCount - totalPulled
+            if left <= 0 then break end
+            cCount = math.min(cCount, left)
+        end
 
         -- Top-off existing partial player stacks
         while cCount > 0 and #playerTargetSlots > 0 do
@@ -2376,7 +3695,7 @@ local function ExecuteGroundMagnetism()
     MagnetizeWorldItems(pawn, playerLoc, radius)
 
     -- 3. Follow-up micro-pulse after 150ms to sweep up any items that took a frame to drop
-    LoopAsync(150, function()
+    GameLoop(150, function()
         ExecuteInGameThread(function()
             local PC2 = UEHelpers.GetPlayerController()
             if PC2 and PC2:IsValid() and PC2.Pawn and PC2.Pawn:IsValid() then
@@ -2714,7 +4033,7 @@ local function StoreGroundItems()
     if pulled > 0 then
         Log(string.format(">>> Picking up %d ground item(s) to store them (%d free backpack slot(s))...", pulled, freeSlots))
         -- Give the pickups time to land in the backpack, then deposit them into chests
-        LoopAsync(1500, function()
+        GameLoop(1500, function()
             ExecuteInGameThread(function() ExecuteQuickStack(true) end)
             return true -- one-shot timer
         end)
@@ -2762,7 +4081,7 @@ local function OnKeyG()
     -- Poll the real key state every 100ms. Holds are detected by polling, never by timing alone,
     -- so a quick tap never harvests or vacuums at base.
     local lastPulse = 0
-    LoopAsync(100, function()
+    GameLoop(100, function()
         if HoldState.PressId ~= pressId or not HoldState.Active then return true end
         ExecuteInGameThread(function()
             if HoldState.PressId ~= pressId or not HoldState.Active then return end
@@ -2846,6 +4165,25 @@ pcall(function()
     Log("Keybind registered: [Shift + G] -> Unpack Relocation Crate into nearby chests.")
 end)
 
+-- Keybind Registration: Alt + G -> Fetch ingredients for the open crafting station (or pull the hovered item)
+pcall(function()
+    RegisterKeyBind(Config.Key, { ModifierKey.ALT }, function()
+        ExecuteInGameThread(function()
+            local ok, err = pcall(ExecuteStationFetch)
+            if not ok then Log("Station Fetch error: " .. tostring(err)) end
+        end)
+    end)
+    Log("Keybind registered: [Alt + G] -> Fetch ingredients for the open station / pull hovered item from chests.")
+end)
+
+-- Keybind Registration: Shift + F12 -> Toggle floating chest category labels
+pcall(function()
+    RegisterKeyBind(Key.F12, { ModifierKey.SHIFT }, function()
+        ExecuteInGameThread(function() pcall(ToggleChestLabels) end)
+    end)
+    Log("Keybind registered: [Shift + F12] -> Toggle chest category labels.")
+end)
+
 
 return {
     ExecuteQuickStack = ExecuteQuickStack,
@@ -2853,6 +4191,7 @@ return {
     ExecuteGroundMagnetism = ExecuteGroundMagnetism,
     ExecutePackRelocationCrate = ExecutePackRelocationCrate,
     ExecuteUnpackRelocationCrate = ExecuteUnpackRelocationCrate,
+    ExecuteStationFetch = ExecuteStationFetch,
     RelocationCrate = RelocationCrate,
     Config = Config
 }

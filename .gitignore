@@ -4,3 +4,17 @@
 CraftAnything/
 *.log
 *.tmp
+
+# Release archives
+release/
+*.zip
+
+# Runtime player data and temporary exports
+placed*.txt
+base.txt
+player.txt
+inventory.json
+inventory_cmd.txt
+anchor.txt
+save_quests.json
+*.bak
