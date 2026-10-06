@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "id": "QuickStack",
+  "name": "Quick Stack",
+  "author": "Antigravity",
+  "version": "1.2.0",
+  "description": "Smart chest sorting, categorical auto-organization, and 40m ground item magnetism.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "QuickStack Enabled",
+      "default": true,
+      "tooltip": "Toggle quick stack and ground magnetism."
+    },
+    {
+      "type": "header",
+      "label": "Chests & Sorting"
+    },
+    {
+      "key": "SortSimilarIntoChests",
+      "type": "toggle",
+      "label": "Categorical Chest Sorting",
+      "default": true,
+      "tooltip": "Route items to dedicated category chests (Food, Metals, Runes, Plants)."
+    },
+    {
+      "key": "OrganizeNearbyChests",
+      "type": "toggle",
+      "label": "Auto-Reorganize Nearby Chests",
+      "default": true,
+      "tooltip": "Clean up misplaced items between chests in your base upon deposit."
+    },
+    {
+      "key": "ProtectHotbar",
+      "type": "toggle",
+      "label": "Protect Hotbar Slots",
+      "default": true,
+      "tooltip": "Prevent active tools, weapons, and food on your hotbar from depositing."
+    },
+    {
+      "key": "ProtectAmmo",
+      "type": "toggle",
+      "label": "Protect Ammo",
+      "default": true,
+      "tooltip": "Keep arrows, bolts, and ammunition in player inventory."
+    },
+    {
+      "key": "ProtectRunes",
+      "type": "toggle",
+      "label": "Protect Runes & Essence",
+      "default": true,
+      "tooltip": "Keep spellcasting runes and essence in player inventory."
+    },
+    {
+      "type": "header",
+      "label": "Ranges & Magnetism"
+    },
+    {
+      "key": "SearchRadius",
+      "type": "slider",
+      "label": "Chest Scan Radius (m)",
+      "min": 10,
+      "max": 200,
+      "step": 5,
+      "decimals": 0,
+      "default": 100,
+      "suffix": " m",
+      "tooltip": "Distance to scan for nearby storage containers."
+    },
+    {
+      "key": "GroundMagnetRadius",
+      "type": "slider",
+      "label": "Ground Vacuum Radius (m)",
+      "min": 5,
+      "max": 100,
+      "step": 5,
+      "decimals": 0,
+      "default": 40,
+      "suffix": " m",
+      "tooltip": "Distance to vacuum loose dropped items and harvest yields into inventory."
+    },
+    {
+      "type": "header",
+      "label": "Controls"
+    },
+    {
+      "key": "QuickStackKey",
+      "type": "key",
+      "label": "QuickStack Key",
+      "default": "G",
+      "tooltip": "Key to deposit inventory to chests and vacuum nearby ground items."
+    }
+  ]
+}

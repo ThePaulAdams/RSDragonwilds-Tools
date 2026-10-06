@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "id": "AutoRun",
+  "name": "Auto Run",
+  "author": "Antigravity",
+  "version": "1.2.0",
+  "description": "Camera-forward auto-run toggled by hotkey; movement or menu keys cancel automatically.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "AutoRun Enabled",
+      "default": true,
+      "tooltip": "Enable or disable the AutoRun system."
+    },
+    {
+      "type": "header",
+      "label": "Controls"
+    },
+    {
+      "key": "ToggleKey",
+      "type": "key",
+      "label": "AutoRun Toggle Key",
+      "default": "NUM_LOCK",
+      "tooltip": "Key that engages camera-forward autorun."
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "id": "CustomBuilds",
+  "name": "Custom Builds & Quests",
+  "author": "Antigravity",
+  "version": "1.2.0",
+  "description": "Base-builder placement engine, interactive NPC companions, dialogue system, and custom JSON quests.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "Base Builder Enabled",
+      "default": true,
+      "tooltip": "Toggle the custom base building and quest system."
+    },
+    {
+      "type": "header",
+      "label": "Placement & Snapping"
+    },
+    {
+      "key": "GridSnap",
+      "type": "slider",
+      "label": "Grid Snap Unit (cm)",
+      "min": 10,
+      "max": 200,
+      "step": 10,
+      "decimals": 0,
+      "default": 50,
+      "suffix": " cm",
+      "tooltip": "Position increment when placing modular architectural pieces."
+    },
+    {
+      "key": "AngleSnap",
+      "type": "slider",
+      "label": "Angle Snap (deg)",
+      "min": 5,
+      "max": 90,
+      "step": 5,
+      "decimals": 0,
+      "default": 15,
+      "suffix": " deg",
+      "tooltip": "Rotation increment when rotating placed models."
+    },
+    {
+      "key": "GroundRaycastSnap",
+      "type": "toggle",
+      "label": "Auto Ground Raycast Snapping",
+      "default": true,
+      "tooltip": "Raycast collision downwards to prevent companions and models from floating on slopes."
+    },
+    {
+      "type": "header",
+      "label": "Quests & Dialogue"
+    },
+    {
+      "key": "ShowQuestTracker",
+      "type": "toggle",
+      "label": "On-Screen Quest Tracker",
+      "default": true,
+      "tooltip": "Display active quest objective progress on your HUD."
+    },
+    {
+      "key": "AutoTrackNewQuests",
+      "type": "toggle",
+      "label": "Auto-Track Accepted Quests",
+      "default": true,
+      "tooltip": "Automatically pin newly accepted quests to the HUD."
+    },
+    {
+      "type": "header",
+      "label": "Hotkeys"
+    },
+    {
+      "key": "MenuKey",
+      "type": "key",
+      "label": "Build Catalog Key",
+      "default": "F5",
+      "tooltip": "Open the visual model catalog and base building menu."
+    },
+    {
+      "key": "InteractKey",
+      "type": "key",
+      "label": "Companion Chat Key",
+      "default": "E",
+      "tooltip": "Key to talk to spawned NPC companions."
+    }
+  ]
+}

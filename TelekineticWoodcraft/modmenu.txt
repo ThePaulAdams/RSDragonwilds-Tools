@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "id": "TelekineticWoodcraft",
+  "name": "Telekinetic Woodcraft",
+  "author": "Antigravity",
+  "version": "1.2.0",
+  "description": "Telekinetic log manipulation and mass log gathering for Splinter harvesting.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "Woodcraft Enabled",
+      "default": true,
+      "tooltip": "Toggle telekinetic log grabbing and mass gathering."
+    },
+    {
+      "type": "header",
+      "label": "Ranges & Harvesting"
+    },
+    {
+      "key": "MassGatherRadius",
+      "type": "slider",
+      "label": "Log Magnet Radius (m)",
+      "min": 20,
+      "max": 300,
+      "step": 10,
+      "decimals": 0,
+      "default": 150,
+      "suffix": " m",
+      "tooltip": "Radius in meters to vacuum and stack fallen logs into a neat pile."
+    },
+    {
+      "key": "SplinterTier",
+      "type": "choice",
+      "label": "Splinter Spell AoE",
+      "options": [
+        "1.0x (Vanilla Radius)",
+        "2.5x (Adept Radius)",
+        "5.0x (Archmage Giant)"
+      ],
+      "default": "1.0x (Vanilla Radius)",
+      "tooltip": "Area-of-effect size multiplier for Splinter spell gathering."
+    },
+    {
+      "type": "header",
+      "label": "Hotkeys"
+    },
+    {
+      "key": "GrabKey",
+      "type": "key",
+      "label": "Grab / Drop Log Key",
+      "default": "V",
+      "tooltip": "Key to telekinetically levitate and place the targeted log."
+    },
+    {
+      "key": "MagnetKey",
+      "type": "key",
+      "label": "Log Magnet Key",
+      "default": "Z",
+      "tooltip": "Key to vacuum all loose logs in the area into a harvest stack."
+    }
+  ]
+}

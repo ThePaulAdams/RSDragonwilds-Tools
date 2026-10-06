@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "id": "EnhancedReticle",
+  "name": "Enhanced Reticle",
+  "author": "Antigravity",
+  "version": "1.2.0",
+  "description": "High-visibility crosshair and cast cursor enhancements with custom colors and size scaling.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "Reticle Enhancement Enabled",
+      "default": true,
+      "tooltip": "Toggle custom reticle colors and size scaling."
+    },
+    {
+      "type": "header",
+      "label": "Appearance"
+    },
+    {
+      "key": "ColorIndex",
+      "type": "choice",
+      "label": "Crosshair Color",
+      "options": [
+        "Neon Green",
+        "OSRS Gold",
+        "Cyan",
+        "Crimson Red",
+        "Hot Pink",
+        "Amber Orange",
+        "Pure White"
+      ],
+      "default": "Neon Green",
+      "tooltip": "Color tint applied to the reticle crosshair."
+    },
+    {
+      "key": "SizeIndex",
+      "type": "choice",
+      "label": "Crosshair Scale",
+      "options": [
+        "1.0x (Vanilla)",
+        "1.5x (Medium)",
+        "2.0x (Large)",
+        "2.5x (XL)",
+        "3.2x (Massive)"
+      ],
+      "default": "2.0x (Large)",
+      "tooltip": "Scale multiplier for crosshairs and aiming indicators."
+    },
+    {
+      "type": "header",
+      "label": "Hotkeys"
+    },
+    {
+      "key": "KeyToggle",
+      "type": "key",
+      "label": "Toggle Reticle Key",
+      "default": "F4",
+      "tooltip": "Hotkey to toggle the enhanced crosshair on or off."
+    },
+    {
+      "key": "KeyCycleColor",
+      "type": "key",
+      "label": "Cycle Color Key",
+      "default": "F1",
+      "tooltip": "Hotkey to cycle through contrast color palette."
+    },
+    {
+      "key": "KeyCycleSize",
+      "type": "key",
+      "label": "Cycle Size Key",
+      "default": "F2",
+      "tooltip": "Hotkey to cycle crosshair sizing."
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "id": "OSRSMinimap",
+  "name": "OSRS Minimap",
+  "author": "Antigravity",
+  "version": "1.2.0",
+  "description": "Authentic Old School RuneScape minimap HUD with rotating compass, gold bezel, resource radar, and landmark tracking.",
+  "settings": [
+    {
+      "key": "Enabled",
+      "type": "toggle",
+      "label": "Minimap Visible",
+      "default": true,
+      "tooltip": "Toggle the OSRS minimap HUD."
+    },
+    {
+      "type": "header",
+      "label": "Frame & Shape"
+    },
+    {
+      "key": "CircularMode",
+      "type": "toggle",
+      "label": "OSRS Circular Frame",
+      "default": true,
+      "tooltip": "Use the circular OSRS stone bezel (uncheck for square view)."
+    },
+    {
+      "key": "ZoomLevel",
+      "type": "slider",
+      "label": "Minimap Zoom",
+      "min": 4.0,
+      "max": 24.0,
+      "step": 0.5,
+      "decimals": 1,
+      "default": 12.0,
+      "tooltip": "Camera zoom scale of the minimap surface."
+    },
+    {
+      "type": "header",
+      "label": "Radar & Overlays"
+    },
+    {
+      "key": "AiRadar",
+      "type": "toggle",
+      "label": "NPC & Monster Radar",
+      "default": true,
+      "tooltip": "Display yellow/red radar dots for nearby characters and wildlife."
+    },
+    {
+      "key": "ResourceIcons",
+      "type": "toggle",
+      "label": "Gathering Resource Icons",
+      "default": true,
+      "tooltip": "Display mining, woodcutting, and farming icons on nearby nodes."
+    },
+    {
+      "key": "LandmarkIcons",
+      "type": "toggle",
+      "label": "Lodestones & Death Markers",
+      "default": true,
+      "tooltip": "Display lodestones and gravestones on the minimap."
+    },
+    {
+      "type": "header",
+      "label": "Hotkeys"
+    },
+    {
+      "key": "ToggleKey",
+      "type": "key",
+      "label": "Toggle Minimap Key",
+      "default": "F3",
+      "tooltip": "Hotkey to quickly show or hide the OSRS minimap."
+    }
+  ]
+}

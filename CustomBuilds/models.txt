@@ -1,14 +1,10 @@
-# Custom Builds favourites: one per line, "Menu name | mesh path".
-# These show in the FAVOURITES category of the model browser (N). Every other model is
-# listed in models-all.txt. Restart the game after editing this file.
+# CustomBuilds models: one per line, "Menu name | mesh path".
+# The mesh path can be copied straight from the model viewer
+# (RSDragonwilds/Content/... is turned into /Game/...), or written as /Game/....
+# Restart the game after editing this file.
 
-Saradomin Temple Entrance | /Game/Art/Env/Architecture/Human/Temple/SM_SaradominTemple_Entrance_02_v1.SM_SaradominTemple_Entrance_02_v1
-Saradomin Temple Window   | /Game/Art/Env/Architecture/Human/Temple/SM_SaradominTemple_Window_6x12_01_v1.SM_SaradominTemple_Window_6x12_01_v1
-Castle Entrance           | /Game/Art/Env/Architecture/Human/Castle/SM_Castle_Entrance_01_v1.SM_Castle_Entrance_01_v1
-Vault Wall 4x2m           | /Game/Art/Env/Architecture/Dragonkin/Vault/Walls/SM_Vault_4x2m_Wall_01_V2.SM_Vault_4x2m_Wall_01_V2
-Dungeon Door              | /Game/Art/Env/Misc/Dungeon/Meshes/Refactor/SM_DungeonDoor.SM_DungeonDoor
-Wicker Fence              | /Game/Art/Env/Architecture/Human/Village/Level_Arch/Village_Fences/SM_Wicker_Fence_01v1.SM_Wicker_Fence_01v1
-Lesser Demon Statue       | /Game/Art/Env/Architecture/DowdunReach/GateWay/Statues/SM_Statue_Lesser_Demon_01.SM_Statue_Lesser_Demon_01
-Zamorak Banner            | /Game/Art/Env/Architecture/DowdunReach/GateWay/SM_DR_Gateway_Zamorak_Banner_01.SM_DR_Gateway_Zamorak_Banner_01
-Red Dragon Trophy         | /Game/Art/BaseBuilding/Decorations/Trophy_Plaques/SM_Trophy_Plaque_RedDragon.SM_Trophy_Plaque_RedDragon
-Campfire                  | /Game/Art/BaseBuilding/Prop/Misc/SM_Campfire_01.SM_Campfire_01
+Lesser Demon Statue | RSDragonwilds/Content/Art/Env/Architecture/DowdunReach/GateWay/Statues/SM_Statue_Lesser_Demon_01.SM_Statue_Lesser_Demon_01
+Red Dragon Trophy   | RSDragonwilds/Content/Art/BaseBuilding/Decorations/Trophy_Plaques/SM_Trophy_Plaque_RedDragon.SM_Trophy_Plaque_RedDragon
+Zamorak Banner      | RSDragonwilds/Content/Art/Env/Architecture/DowdunReach/GateWay/SM_DR_Gateway_Zamorak_Banner_01.SM_DR_Gateway_Zamorak_Banner_01
+Seated Skeleton     | RSDragonwilds/Content/Art/Animation/Misc/Quests/SM_Skeleton_Sitting_Quest.SM_Skeleton_Sitting_Quest
+Campfire            | RSDragonwilds/Content/Art/BaseBuilding/Prop/Misc/SM_Campfire_01.SM_Campfire_01

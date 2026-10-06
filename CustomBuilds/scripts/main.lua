@@ -383,9 +383,9 @@ local NPCMeshToBlueprint = {
     -- Garou (Elder Garou & Moon Garou variants)
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_01.SK_M_MED_MoonGarou_01_Outfit_01"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_02.SK_M_MED_MoonGarou_01_Outfit_02"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
-    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_03.SK_M_MED_MoonGarou_01_Outfit_03"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
-    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_04.SK_M_MED_MoonGarou_01_Outfit_04"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
-    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_05.SK_M_MED_MoonGarou_01_Outfit_05"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_03.SK_M_MED_MoonGarou_01_Outfit_03"] = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C", -- Domri The Merchant
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_04.SK_M_MED_MoonGarou_01_Outfit_04"] = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C", -- Valas The Blacksmith
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_05.SK_M_MED_MoonGarou_01_Outfit_05"] = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C", -- Lagra The Hunter
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_07.SK_M_MED_MoonGarou_01_Outfit_07"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_08.SK_M_MED_MoonGarou_01_Outfit_08"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
     -- Chinchompas
@@ -440,6 +440,23 @@ local NPCBarks = {
     garou = {
         "Elder Garou: *The wolf elder lowers his head in deep respect for your domain.*",
         "Elder Garou: The moon watches over our pack... and over your hearth.",
+    },
+    domri = {
+        "Domri - The Merchant: Welcome, traveller! Looking for rare goods and trinkets from the Alcarrid Camp?",
+        "Domri - The Merchant: My wares are the finest in the sands. Bring me moonstones and we'll trade!",
+        "Domri - The Merchant: The desert is harsh, but honest commerce always thrives.",
+    },
+    merchant = {
+        "Domri - The Merchant: Welcome, traveller! Looking for rare goods and trinkets from the Alcarrid Camp?",
+        "Domri - The Merchant: My wares are the finest in the sands. Bring me moonstones and we'll trade!",
+    },
+    valas = {
+        "Valas - The Blacksmith: The forge heat never cools in the desert. Need a sturdy blade tempered?",
+        "Valas - The Blacksmith: Good steel and sharp edges - that's what keeps you alive out there.",
+    },
+    lagra = {
+        "Lagra - The Hunter: Watch your flanks out in the dunes. Beasts strike without warning.",
+        "Lagra - The Hunter: Fresh game, fresh pelts. The hunt never ceases.",
     },
     chin = {
         "Chinchompa: *Squeak! The fluffy creature nuzzles against your boots.*",
@@ -708,6 +725,11 @@ local function DestroyProp(id)
         pcall(function() a:K2_DestroyActor() end)
     end
     Props[id] = nil
+    for _, sfx in ipairs({ "_fx", "_fx1", "_fx2" }) do
+        local fx = Props[id .. sfx]
+        if Valid(fx) then pcall(function() fx:K2_DestroyActor() end) end
+        Props[id .. sfx] = nil
+    end
 end
 
 -- =========================================================================
@@ -1120,6 +1142,7 @@ local function SyncPlaced()
         ExportNativePieces(loc)
     end
     if LoadQuests then pcall(LoadQuests) end
+    if SyncInventory then pcall(SyncInventory) end
     local text = ReadFile(ModDir .. "placed.txt")
     if not text or text == LastText then return end
     LastText = text
@@ -1418,16 +1441,6 @@ end
 -- foundation rules and no material cost.
 local Placer = { Yaw = 0, Spot = nil, TraceNoted = false }
 
-local function CameraView()
-    local pc = GetPC()
-    if not Valid(pc) then return nil end
-    local cam = nil
-    pcall(function() cam = pc.PlayerCameraManager end)
-    if not Valid(cam) then return nil end
-    local loc, rot = cam:GetCameraLocation(), cam:GetCameraRotation()
-    local fwd = StaticFindObject("/Script/Engine.Default__KismetMathLibrary"):GetForwardVector(rot)
-    return pc, loc, rot, fwd
-end
 
 -- Surface point under the crosshair within Config.PlaceDistance, or nil.
 local function CrosshairHit()
@@ -1505,16 +1518,6 @@ local function V(v)
     return nil
 end
 
-local function Add(a, b) return { X = a.X + b.X, Y = a.Y + b.Y, Z = a.Z + b.Z } end
-local function Sub(a, b) return { X = a.X - b.X, Y = a.Y - b.Y, Z = a.Z - b.Z } end
-local function Mul(a, s) return { X = a.X * s, Y = a.Y * s, Z = a.Z * s } end
-
--- Local (mesh) offset to world, using an actor's axes.
-local function ToWorld(f, r, u, v)
-    return { X = f.X * v.X + r.X * v.Y + u.X * v.Z, Y = f.Y * v.X + r.Y * v.Y + u.Y * v.Z,
-             Z = f.Z * v.X + r.Z * v.Y + u.Z * v.Z }
-end
-
 -- Nearest game building piece (position and yaw), refreshed at most twice a second.
 local PieceCache = { At = -1, Near = nil }
 OnWorldChange[#OnWorldChange + 1] = function() PieceCache.Manager, PieceCache.Near = nil, nil end
@@ -1547,6 +1550,13 @@ end
 
 -- Returns the snapped pivot, yaw, pitch, roll (or nil to use the plain spot).
 local function SnapSpot(p, yaw, o, fine)
+    local function Add(a, b) return { X = a.X + b.X, Y = a.Y + b.Y, Z = a.Z + b.Z } end
+    local function Sub(a, b) return { X = a.X - b.X, Y = a.Y - b.Y, Z = a.Z - b.Z } end
+    local function Mul(a, s) return { X = a.X * s, Y = a.Y * s, Z = a.Z * s } end
+    local function ToWorld(f, r, u, v)
+        return { X = f.X * v.X + r.X * v.Y + u.X * v.Z, Y = f.Y * v.X + r.Y * v.Y + u.Y * v.Z,
+                 Z = f.Z * v.X + r.Z * v.Y + u.Z * v.Z }
+    end
     local mode = SNAP_MODES[Placer.Snap]
     local sb = MeshBounds(Skin.Mesh)
     local ss = o.Scale
@@ -1668,67 +1678,148 @@ local function CheckPortals()
     local pLoc = pawn:K2_GetActorLocation()
     if not pLoc then return end
 
+    -- Clear departure portal lockout once player moves away (> 2.8m) from exit portal
+    if LastTeleportedPortal then
+        local lastRec = nil
+        for _, rec in pairs(Placed) do
+            if rec.Portal and rec.Portal:lower() == LastTeleportedPortal:lower() then
+                lastRec = rec; break
+            end
+        end
+        if lastRec then
+            local dx = pLoc.X - lastRec.X
+            local dy = pLoc.Y - lastRec.Y
+            if (dx*dx + dy*dy) > 78400 then
+                LastTeleportedPortal = nil
+            end
+        else
+            LastTeleportedPortal = nil
+        end
+    end
+
     for id, r in pairs(Placed) do
-        if r.Portal and r.Portal ~= "" and r.Target and r.Target ~= "" then
-            local a = Props[id]
-            local aLoc = Valid(a) and a:K2_GetActorLocation() or { X = r.X, Y = r.Y, Z = r.Z }
-            local dx = pLoc.X - aLoc.X
-            local dy = pLoc.Y - aLoc.Y
-            local dz = pLoc.Z - aLoc.Z
-            local dist2 = dx*dx + dy*dy + dz*dz
+        if r.Portal and r.Portal ~= "" then
+            -- Clean up legacy cylinder FX if present
+            local oldFx = Props[id .. "_fx"]
+            if Valid(oldFx) then
+                pcall(function() oldFx:K2_DestroyActor() end)
+                Props[id .. "_fx"] = nil
+            end
 
-            -- Touch radius: 180 cm (1.8m), height tolerance: 250 cm
-            if dist2 <= 32400 and math.abs(dz) <= 250 then
-                if LastTeleportedPortal == r.Portal then
-                    return
-                end
-                if now < PortalCooldownUntil then
-                    return
-                end
+            -- Spawn two Campfire 01 Ashes back-to-back scaled up floating above the portal
+            if not r.Mesh:find("SM_Campfire_01_Ashes") then
+                local fxKey1 = id .. "_fx1"
+                local fxKey2 = id .. "_fx2"
+                if not Valid(Props[fxKey1]) or not Valid(Props[fxKey2]) then
+                    local yaw = 0
+                    if r.QW and r.QZ then
+                        local atan = math.atan2 or math.atan
+                        yaw = math.deg(2 * atan(r.QZ, r.QW))
+                    end
+                    local rad = math.rad(yaw)
+                    local fwdX = math.cos(rad)
+                    local fwdY = math.sin(rad)
+                    local s = (r.Scale or 1) * 1.95
+                    local z = r.Z + 120
+                    local ashesMesh = "/Game/Art/Env/Props/Env_Props/Human_Props/Campsite/SM_Campfire_01_Ashes.SM_Campfire_01_Ashes"
 
-                -- Find the paired portal
-                local targetRec, targetId = nil, nil
-                for tid, tr in pairs(Placed) do
-                    if tr.Portal == r.Target or tid == r.Target then
-                        targetRec = tr
-                        targetId = tid
-                        break
+                    if not Valid(Props[fxKey1]) then
+                        local r1 = { X = r.X - fwdX * 8, Y = r.Y - fwdY * 8, Z = z, Pitch = -90, Roll = 0, Yaw = yaw, Scale = s }
+                        local a1 = SpawnModel(ashesMesh, r1)
+                        if a1 then Props[fxKey1] = a1 end
+                    end
+                    if not Valid(Props[fxKey2]) then
+                        local r2 = { X = r.X + fwdX * 8, Y = r.Y + fwdY * 8, Z = z, Pitch = 90, Roll = 0, Yaw = yaw, Scale = s }
+                        local a2 = SpawnModel(ashesMesh, r2)
+                        if a2 then Props[fxKey2] = a2 end
                     end
                 end
+            end
 
-                if targetRec then
-                    local destYaw = 0
-                    if targetRec.QW and targetRec.QZ then
-                        destYaw = math.deg(2 * math.atan2(targetRec.QZ, targetRec.QW))
+            if r.Target and r.Target ~= "" then
+                local dx = pLoc.X - r.X
+                local dy = pLoc.Y - r.Y
+                local dz = pLoc.Z - r.Z
+                local hDist2 = dx*dx + dy*dy
+
+                -- Generous 2.5m (250cm) horizontal touch radius and vertical tolerance
+                if hDist2 <= 62500 and dz >= -60 and dz <= 350 then
+                    local isRecent = LastTeleportedPortal and LastTeleportedPortal:lower() == r.Portal:lower()
+                    if not isRecent and now >= PortalCooldownUntil then
+                        -- Find paired destination portal
+                        local targetRec, targetId = nil, nil
+                        for tid, tr in pairs(Placed) do
+                            if tr.Portal and (tr.Portal:lower() == r.Target:lower() or tid == r.Target) then
+                                targetRec = tr
+                                targetId = tid
+                                break
+                            end
+                        end
+
+                        if targetRec then
+                            local destYaw = 0
+                            if targetRec.QW and targetRec.QZ then
+                                local atan = math.atan2 or math.atan
+                                destYaw = math.deg(2 * atan(targetRec.QZ, targetRec.QW))
+                            end
+
+                            local rad = math.rad(destYaw)
+                            local exitX = targetRec.X + math.cos(rad) * 120
+                            local exitY = targetRec.Y + math.sin(rad) * 120
+                            local exitZ = targetRec.Z + 130
+
+                            local teleported = false
+
+                            -- Attempt 1: K2_TeleportTo with forward offset and safe +130cm capsule height
+                            local ok1, res1 = pcall(function()
+                                return pawn:K2_TeleportTo({ X = exitX, Y = exitY, Z = exitZ }, { Pitch = 0, Yaw = destYaw, Roll = 0 })
+                            end)
+                            if ok1 and res1 ~= false then
+                                teleported = true
+                            end
+
+                            -- Attempt 2: Directly above destination center at +140cm
+                            if not teleported then
+                                local ok2, res2 = pcall(function()
+                                    return pawn:K2_TeleportTo({ X = targetRec.X, Y = targetRec.Y, Z = targetRec.Z + 140 }, { Pitch = 0, Yaw = destYaw, Roll = 0 })
+                                end)
+                                if ok2 and res2 ~= false then
+                                    teleported = true
+                                end
+                            end
+
+                            -- Attempt 3: K2_SetActorLocation (non-swept, guarantees placement through any geometry)
+                            if not teleported then
+                                local ok3 = pcall(function()
+                                    pawn:K2_SetActorLocation({ X = targetRec.X, Y = targetRec.Y, Z = targetRec.Z + 140 }, false, nil, true)
+                                    pawn:K2_SetActorRotation({ Pitch = 0, Yaw = destYaw, Roll = 0 }, false)
+                                end)
+                                if ok3 then
+                                    teleported = true
+                                end
+                            end
+
+                            if teleported then
+                                pcall(function()
+                                    pc:SetControlRotation({ Pitch = 0, Yaw = destYaw, Roll = 0 })
+                                end)
+                                pcall(function()
+                                    if Valid(pawn.CharacterMovement) then
+                                        pawn.CharacterMovement.Velocity = { X = 0, Y = 0, Z = 0 }
+                                    end
+                                end)
+
+                                PortalCooldownUntil = now + 1.5
+                                LastTeleportedPortal = targetRec.Portal
+                                Say(string.format("Portal: teleported from '%s' to '%s'", r.Portal, targetRec.Portal or r.Target))
+                                return
+                            else
+                                Log(string.format("Portal: teleport failed from '%s' to '%s'", r.Portal, r.Target))
+                            end
+                        else
+                            Log(string.format("Portal '%s' target '%s' not found", r.Portal, r.Target))
+                        end
                     end
-
-                    -- Forward exit offset (120cm along exit portal's facing yaw) + 25cm Z
-                    local rad = math.rad(destYaw)
-                    local exitX = targetRec.X + math.sin(rad) * 120
-                    local exitY = targetRec.Y + math.cos(rad) * 120
-                    local exitZ = targetRec.Z + 25
-
-                    local ok, res = pcall(function()
-                        return pawn:K2_TeleportTo({ X = exitX, Y = exitY, Z = exitZ }, { Pitch = 0, Yaw = destYaw, Roll = 0 })
-                    end)
-                    if not ok or res == false then
-                        pcall(function()
-                            pawn:K2_TeleportTo({ X = targetRec.X, Y = targetRec.Y, Z = targetRec.Z + 50 }, { Pitch = 0, Yaw = destYaw, Roll = 0 })
-                        end)
-                    end
-
-                    pcall(function()
-                        pc:SetControlRotation({ Pitch = 0, Yaw = destYaw, Roll = 0 })
-                    end)
-
-                    PortalCooldownUntil = now + 1.2
-                    LastTeleportedPortal = targetRec.Portal
-                    Say(string.format("Portal: teleported from '%s' to '%s'", r.Portal, targetRec.Portal or r.Target))
-                    return
-                end
-            else
-                if LastTeleportedPortal == r.Portal and dist2 > 48400 then
-                    LastTeleportedPortal = nil
                 end
             end
         end
@@ -1743,7 +1834,7 @@ local GhostLoop = nil
 
 local function GhostStep()
     local pc = GetPC()
-    if not Valid(pc) or IsGamePaused(pc) then return end
+    if not Valid(pc) then return end
 
     local now = os.clock()
     if now - SyncAt > 2 then
@@ -1754,7 +1845,10 @@ local function GhostStep()
         end
     end
     pcall(function() if UpdateQuestWorldMarkers then UpdateQuestWorldMarkers() end end)
-    pcall(CheckPortals)
+    local pok, perr = pcall(CheckPortals)
+    if not pok then Log("Portal error: " .. tostring(perr)) end
+
+    if IsGamePaused(pc) then return end
     if not Skin then
         -- CheckWorld first: after a world change the old ghost is gone and must not be touched.
         if Ghost.Actor and CheckWorld() then DestroyGhost() end
@@ -1885,8 +1979,7 @@ local LABEL_CLASS = "/Game/UI/Common/WBP_MainMenuTabButton.WBP_MainMenuTabButton
 local VISIBLE, COLLAPSED = 0, 1
 local PER_PAGE = 16
 local TILE_CLASS = "/Game/UI/Building/GridNav/WBP_BuildingCategoryItemSlot.WBP_BuildingCategoryItemSlot_C"
-local TILE_COLS, TILE_ROWS, TILE_SIZE = 8, 4, 80
-local TILES_PER_PAGE = TILE_COLS * TILE_ROWS
+local TILES_PER_PAGE = 32
 
 local UI = { Built = false, Visible = false, Title = nil, Category = nil, Rows = {}, RowModel = {},
     Prev = nil, Next = nil, Off = nil, Import = nil, Page = 1, Cat = 1, Owned = {}, Tiles = {}, TileModel = {} }
@@ -2867,60 +2960,62 @@ local function Bind(key, mods, fn)
     if mods then RegisterKeyBind(key, mods, run) else RegisterKeyBind(key, run) end
 end
 
-local SHIFT, CTRL = { ModifierKey.SHIFT }, { ModifierKey.CONTROL }
-local CTRL_SHIFT = { ModifierKey.CONTROL, ModifierKey.SHIFT }
-Bind(Key.LEFT_ARROW, nil, function() Adjust(-15, 0, 0, 1) end)
-Bind(Key.RIGHT_ARROW, nil, function() Adjust(15, 0, 0, 1) end)
-Bind(Key.LEFT_ARROW, SHIFT, function() Adjust(-90, 0, 0, 1) end)
-Bind(Key.RIGHT_ARROW, SHIFT, function() Adjust(90, 0, 0, 1) end)
-Bind(Key.LEFT_ARROW, CTRL, function() Adjust(-1, 0, 0, 1) end)
-Bind(Key.RIGHT_ARROW, CTRL, function() Adjust(1, 0, 0, 1) end)
-Bind(Key.LEFT_ARROW, CTRL_SHIFT, function() Adjust(-0.1, 0, 0, 1) end)
-Bind(Key.RIGHT_ARROW, CTRL_SHIFT, function() Adjust(0.1, 0, 0, 1) end)
+do
+    local SHIFT, CTRL = { ModifierKey.SHIFT }, { ModifierKey.CONTROL }
+    local CTRL_SHIFT = { ModifierKey.CONTROL, ModifierKey.SHIFT }
+    Bind(Key.LEFT_ARROW, nil, function() Adjust(-15, 0, 0, 1) end)
+    Bind(Key.RIGHT_ARROW, nil, function() Adjust(15, 0, 0, 1) end)
+    Bind(Key.LEFT_ARROW, SHIFT, function() Adjust(-90, 0, 0, 1) end)
+    Bind(Key.RIGHT_ARROW, SHIFT, function() Adjust(90, 0, 0, 1) end)
+    Bind(Key.LEFT_ARROW, CTRL, function() Adjust(-1, 0, 0, 1) end)
+    Bind(Key.RIGHT_ARROW, CTRL, function() Adjust(1, 0, 0, 1) end)
+    Bind(Key.LEFT_ARROW, CTRL_SHIFT, function() Adjust(-0.1, 0, 0, 1) end)
+    Bind(Key.RIGHT_ARROW, CTRL_SHIFT, function() Adjust(0.1, 0, 0, 1) end)
 
-Bind(Key.UP_ARROW, nil, function() Adjust(0, 15, 0, 1) end)
-Bind(Key.DOWN_ARROW, nil, function() Adjust(0, -15, 0, 1) end)
-Bind(Key.UP_ARROW, SHIFT, function() Adjust(0, 90, 0, 1) end)
-Bind(Key.DOWN_ARROW, SHIFT, function() Adjust(0, -90, 0, 1) end)
-Bind(Key.UP_ARROW, CTRL, function() Adjust(0, 0, 90, 1) end)
-Bind(Key.DOWN_ARROW, CTRL, function() Adjust(0, 0, -90, 1) end)
-Bind(Key.UP_ARROW, CTRL_SHIFT, function() Adjust(0, 1, 0, 1) end)
-Bind(Key.DOWN_ARROW, CTRL_SHIFT, function() Adjust(0, -1, 0, 1) end)
+    Bind(Key.UP_ARROW, nil, function() Adjust(0, 15, 0, 1) end)
+    Bind(Key.DOWN_ARROW, nil, function() Adjust(0, -15, 0, 1) end)
+    Bind(Key.UP_ARROW, SHIFT, function() Adjust(0, 90, 0, 1) end)
+    Bind(Key.DOWN_ARROW, SHIFT, function() Adjust(0, -90, 0, 1) end)
+    Bind(Key.UP_ARROW, CTRL, function() Adjust(0, 0, 90, 1) end)
+    Bind(Key.DOWN_ARROW, CTRL, function() Adjust(0, 0, -90, 1) end)
+    Bind(Key.UP_ARROW, CTRL_SHIFT, function() Adjust(0, 1, 0, 1) end)
+    Bind(Key.DOWN_ARROW, CTRL_SHIFT, function() Adjust(0, -1, 0, 1) end)
 
-Bind(Key.OEM_PLUS, nil, function() Adjust(0, 0, 0, 1.25) end)
-Bind(Key.OEM_MINUS, nil, function() Adjust(0, 0, 0, 0.8) end)
-Bind(Key.HOME, nil, function() Adjust(0, 0, 0, 1, true) end)
--- Nudge the model 10 cm at a time: Alt + Up/Down = away/towards you, Alt + Left/Right =
--- left/right, Alt + '+'/'-' = up/down. Home clears it.
--- Alt + Shift nudges 1 cm (0.01 m) at a time for fine placement.
-local ALT = { ModifierKey.ALT }
-local ALT_SHIFT = { ModifierKey.ALT, ModifierKey.SHIFT }
-local function Nudge(f, r, u)
-    if not Skin then return end
-    local n = Placer.Nudge or { F = 0, R = 0, U = 0 }
-    n.F, n.R, n.U = n.F + f, n.R + r, n.U + u
-    Placer.Nudge = n
-    ShowHint()
+    Bind(Key.OEM_PLUS, nil, function() Adjust(0, 0, 0, 1.25) end)
+    Bind(Key.OEM_MINUS, nil, function() Adjust(0, 0, 0, 0.8) end)
+    Bind(Key.HOME, nil, function() Adjust(0, 0, 0, 1, true) end)
+    -- Nudge the model 10 cm at a time: Alt + Up/Down = away/towards you, Alt + Left/Right =
+    -- left/right, Alt + '+'/'-' = up/down. Home clears it.
+    -- Alt + Shift nudges 1 cm (0.01 m) at a time for fine placement.
+    local ALT = { ModifierKey.ALT }
+    local ALT_SHIFT = { ModifierKey.ALT, ModifierKey.SHIFT }
+    local function Nudge(f, r, u)
+        if not Skin then return end
+        local n = Placer.Nudge or { F = 0, R = 0, U = 0 }
+        n.F, n.R, n.U = n.F + f, n.R + r, n.U + u
+        Placer.Nudge = n
+        ShowHint()
+    end
+    Bind(Key.UP_ARROW, ALT, function() Nudge(10, 0, 0) end)
+    Bind(Key.DOWN_ARROW, ALT, function() Nudge(-10, 0, 0) end)
+    Bind(Key.RIGHT_ARROW, ALT, function() Nudge(0, 10, 0) end)
+    Bind(Key.LEFT_ARROW, ALT, function() Nudge(0, -10, 0) end)
+    Bind(Key.OEM_PLUS, ALT, function() Nudge(0, 0, 10) end)
+    Bind(Key.OEM_MINUS, ALT, function() Nudge(0, 0, -10) end)
+    Bind(Key.UP_ARROW, ALT_SHIFT, function() Nudge(1, 0, 0) end)
+    Bind(Key.DOWN_ARROW, ALT_SHIFT, function() Nudge(-1, 0, 0) end)
+    Bind(Key.RIGHT_ARROW, ALT_SHIFT, function() Nudge(0, 1, 0) end)
+    Bind(Key.LEFT_ARROW, ALT_SHIFT, function() Nudge(0, -1, 0) end)
+    Bind(Key.OEM_PLUS, ALT_SHIFT, function() Nudge(0, 0, 1) end)
+    Bind(Key.OEM_MINUS, ALT_SHIFT, function() Nudge(0, 0, -1) end)
+
+    -- End cycles snapping: edges of your models / grid of the nearest building / free.
+    Bind(Key.END, nil, function()
+        if not Skin then return end
+        Placer.Snap = Placer.Snap % #SNAP_MODES + 1
+        ShowHint()
+    end)
 end
-Bind(Key.UP_ARROW, ALT, function() Nudge(10, 0, 0) end)
-Bind(Key.DOWN_ARROW, ALT, function() Nudge(-10, 0, 0) end)
-Bind(Key.RIGHT_ARROW, ALT, function() Nudge(0, 10, 0) end)
-Bind(Key.LEFT_ARROW, ALT, function() Nudge(0, -10, 0) end)
-Bind(Key.OEM_PLUS, ALT, function() Nudge(0, 0, 10) end)
-Bind(Key.OEM_MINUS, ALT, function() Nudge(0, 0, -10) end)
-Bind(Key.UP_ARROW, ALT_SHIFT, function() Nudge(1, 0, 0) end)
-Bind(Key.DOWN_ARROW, ALT_SHIFT, function() Nudge(-1, 0, 0) end)
-Bind(Key.RIGHT_ARROW, ALT_SHIFT, function() Nudge(0, 1, 0) end)
-Bind(Key.LEFT_ARROW, ALT_SHIFT, function() Nudge(0, -1, 0) end)
-Bind(Key.OEM_PLUS, ALT_SHIFT, function() Nudge(0, 0, 1) end)
-Bind(Key.OEM_MINUS, ALT_SHIFT, function() Nudge(0, 0, -1) end)
-
--- End cycles snapping: edges of your models / grid of the nearest building / free.
-Bind(Key.END, nil, function()
-    if not Skin then return end
-    Placer.Snap = Placer.Snap % #SNAP_MODES + 1
-    ShowHint()
-end)
 
 -- Place with a left click, stop with a right click or Esc.
 Moving = nil
@@ -3638,7 +3733,127 @@ function DeliverQuestReward(quest)
     end
 end
 
+function SyncInventory()
+    if not GameWorld or WorldKey() ~= GameWorld then return end
+    local inv = GetPlayerInventory()
+    local pc = GetPC()
+    if not Valid(inv) then return end
 
+    -- 1. Read & process commands from inventory_cmd.txt if it exists
+    local cmdText = ReadFile(ModDir .. "inventory_cmd.txt")
+    if cmdText and cmdText:match("%S") then
+        -- Clear cmd file immediately so commands don't re-execute
+        WriteText("inventory_cmd.txt", "")
+        for line in cmdText:gmatch("[^\r\n]+") do
+            line = line:match("^%s*(.-)%s*$")
+            if line ~= "" and not line:find("^#") then
+                local parts = {}
+                for part in line:gmatch("[^|]+") do
+                    parts[#parts + 1] = part
+                end
+                local op = parts[1] and parts[1]:lower()
+                if op == "add" then
+                    -- add|<itemIdOrName>|<count>
+                    local id = parts[2]
+                    local count = tonumber(parts[3]) or 1
+                    if id and count > 0 then
+                        local ok, res = GivePlayerItem(id, count)
+                        Log(string.format("[INV_CMD] add %s x%d -> %s", id, count, tostring(res)))
+                    end
+                elseif op == "move" then
+                    -- move|<fromSlot>|<toSlot>|<amount>
+                    local fromSlot = tonumber(parts[2])
+                    local toSlot = tonumber(parts[3])
+                    local amount = tonumber(parts[4]) or -1
+                    if fromSlot and toSlot and inv.MoveItem then
+                        pcall(function()
+                            inv:MoveItem(fromSlot, inv, toSlot, pc, amount)
+                        end)
+                        Log(string.format("[INV_CMD] move slot %d -> %d (amt: %d)", fromSlot, toSlot, amount))
+                    end
+                elseif op == "remove" then
+                    -- remove|<slot>|<count>
+                    local slot = tonumber(parts[2])
+                    local count = tonumber(parts[3]) or 1
+                    if slot and inv.RemoveFromSlot then
+                        pcall(function()
+                            inv:RemoveFromSlot(slot, count, pc)
+                        end)
+                        Log(string.format("[INV_CMD] remove slot %d (count: %d)", slot, count))
+                    end
+                elseif op == "clean" then
+                    -- fill stacks
+                    if inv.FillStacks then
+                        pcall(function() inv:FillStacks() end)
+                        Log("[INV_CMD] fill stacks / clean")
+                    end
+                elseif op == "clear" then
+                    -- clear inventory
+                    if inv.ClearInventory then
+                        pcall(function() inv:ClearInventory() end)
+                        Log("[INV_CMD] clear inventory")
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Export current inventory state to inventory.json
+    local numSlots = 0
+    pcall(function() numSlots = inv.ItemSlots:GetArrayNum() end)
+    local maxSlots = 40
+    pcall(function()
+        if inv.MaxSlotCount and inv.MaxSlotCount > 0 then maxSlots = inv.MaxSlotCount end
+    end)
+    if numSlots > maxSlots then maxSlots = numSlots end
+
+    local slotEntries = {}
+    for i = 1, numSlots do
+        local slotIdx = i - 1
+        local item = nil
+        pcall(function() item = inv.ItemSlots[i] end)
+        if item and Valid(item) then
+            local count = 1
+            pcall(function() count = item:GetStackSize() end)
+            local name = "Unknown"
+            pcall(function()
+                local fn = item:GetPlayerFacingName()
+                if fn and fn.ToString then name = fn:ToString() end
+            end)
+            local itemId = ""
+            local itemPath = ""
+            local maxStack = 20
+            pcall(function()
+                local d = item.ItemData or (item.BP_GetItemData and item:BP_GetItemData())
+                if Valid(d) then
+                    itemId = d:GetFName():ToString()
+                    itemPath = d:GetFullName()
+                    if d.GetMaxStackSize then maxStack = d:GetMaxStackSize() end
+                end
+            end)
+            local durability = 1.0
+            pcall(function()
+                if item.GetDurability then durability = item:GetDurability() end
+            end)
+            local maxDurability = 1.0
+            pcall(function()
+                if item.GetMaxDurability then maxDurability = item:GetMaxDurability() end
+            end)
+
+            local function jsonStr(s)
+                return '"' .. tostring(s):gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '') .. '"'
+            end
+
+            slotEntries[#slotEntries + 1] = string.format(
+                '{"slot":%d,"name":%s,"id":%s,"path":%s,"count":%d,"maxStack":%d,"durability":%.2f,"maxDurability":%.2f}',
+                slotIdx, jsonStr(name), jsonStr(itemId), jsonStr(itemPath), count, maxStack, durability, maxDurability
+            )
+        end
+    end
+
+    local json = string.format('{"maxSlots":%d,"slots":[%s],"time":%d}\n', maxSlots, table.concat(slotEntries, ","), os.time())
+    WriteText("inventory.json", json)
+end
 
 function CheckQuestObjective(quest)
     if not quest or not quest.objective then return true end
@@ -4375,42 +4590,44 @@ Bind(Key.E, nil, function()
 end)
 
 -- Hovering one of our tiles shows the model's name in the panel title.
-local function TileIndex(ctx)
-    if not UI.Visible then return nil end
-    local ok, tile = pcall(function() return ctx:get() end)
-    if not ok or not Valid(tile) then return nil end
-    for i, t in ipairs(UI.Tiles) do
-        if Valid(t) and t:GetAddress() == tile:GetAddress() then return i end
+do
+    local function TileIndex(ctx)
+        if not UI.Visible then return nil end
+        local ok, tile = pcall(function() return ctx:get() end)
+        if not ok or not Valid(tile) then return nil end
+        for i, t in ipairs(UI.Tiles) do
+            if Valid(t) and t:GetAddress() == tile:GetAddress() then return i end
+        end
+        return nil
     end
-    return nil
+    pcall(function()
+        RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotHovered", function(ctx)
+            local i = TileIndex(ctx)
+            if i and UI.TileModel[i] then
+                local name = UI.TileModel[i].Name:upper()
+                ExecuteInGameThread(function() Label(UI.Header, name) end)
+            end
+        end)
+    end)
+    -- A click on one of our tiles may arrive as the game's own "slot selected".
+    pcall(function()
+        RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotSelected", function(ctx)
+            local i = TileIndex(ctx)
+            if i and UI.TileModel[i] then
+                local m = UI.TileModel[i]
+                ExecuteInGameThread(function() if UI.Visible then Pick(m) end end)
+            end
+        end)
+    end)
+    pcall(function()
+        RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotUnhovered", function(ctx)
+            if TileIndex(ctx) and UI.HeaderText then
+                local text = UI.HeaderText
+                ExecuteInGameThread(function() Label(UI.Header, text) end)
+            end
+        end)
+    end)
 end
-pcall(function()
-    RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotHovered", function(ctx)
-        local i = TileIndex(ctx)
-        if i and UI.TileModel[i] then
-            local name = UI.TileModel[i].Name:upper()
-            ExecuteInGameThread(function() Label(UI.Header, name) end)
-        end
-    end)
-end)
--- A click on one of our tiles may arrive as the game's own "slot selected".
-pcall(function()
-    RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotSelected", function(ctx)
-        local i = TileIndex(ctx)
-        if i and UI.TileModel[i] then
-            local m = UI.TileModel[i]
-            ExecuteInGameThread(function() if UI.Visible then Pick(m) end end)
-        end
-    end)
-end)
-pcall(function()
-    RegisterHook("/Script/Dominion.BuildingUISlotBase:OnSlotUnhovered", function(ctx)
-        if TileIndex(ctx) and UI.HeaderText then
-            local text = UI.HeaderText
-            ExecuteInGameThread(function() Label(UI.Header, text) end)
-        end
-    end)
-end)
 
 -- Writes the build menu's widget structure to the log (build menu must be open).
 MenuProbeFn = function(Say)
@@ -4477,27 +4694,7 @@ end
 -- the anchor of your build (anchor.txt) and your normal building pieces within 150 m
 -- as a reference (base.txt). The website builds around the anchor and writes
 -- placed.txt in world positions, which the mod then shows live.
-local function WriteText(name, text)
-    local f = io.open(ModDir .. name, "wb")
-    if not f then return false end
-    f:write(text)
-    f:close()
-    return true
-end
-
-local function PieceNames()
-    local names = {}
-    for _, d in ipairs(FindAllOf("BuildingPieceData") or {}) do
-        if Valid(d) and not NameOf(d):find("^Default__") then
-            local idx = nil
-            pcall(function() idx = tonumber(d.BuildingPieceDataIndex) end)
-            if idx and idx >= 0 and not names[idx] then names[idx] = NameOf(d) end
-        end
-    end
-    return names
-end
-
-local function SetAnchor()
+function SetAnchor()
     local _, pawn = Pawn()
     if not pawn then return "Not in a world" end
     local p = CrosshairHit()
@@ -4631,6 +4828,13 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
                 mannequin = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_ArmourMannequin.BP_BaseBuilding_ArmourMannequin_C",
                 guard = "/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
                 zilyana = "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C",
+                domri = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C",
+                merchant = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C",
+                hawker = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C",
+                valas = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C",
+                blacksmith = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C",
+                lagra = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C",
+                hunter = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C",
             }
             local bpPath = npcMap[which] or ResolveNPCBlueprint(which) or which
             local _, pawn = Pawn()

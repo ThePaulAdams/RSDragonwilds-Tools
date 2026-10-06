@@ -1,0 +1,136 @@
+{
+  "quests": [
+    {
+      "id": "quest_doric_ore",
+      "npc": "SK_Doric_01",
+      "npcName": "Doric",
+      "title": "Doric's Iron Delivery",
+      "repeatable": "daily",
+      "description": "Gather 3 Iron Ore from the hills and deliver them to Doric.",
+      "startDialogue": {
+        "speaker": "Doric",
+        "text": "Greetings, traveller! My forge has run cold and I'm desperately short on iron. Could you fetch me 3 pieces of Iron Ore from the hills?",
+        "choices": [
+          { "text": "I can help with that.", "target": "accept" },
+          { "text": "Where can I find iron ore?", "target": "hint" },
+          { "text": "Not right now, Doric.", "target": "decline" }
+        ],
+        "branches": {
+          "hint": {
+            "speaker": "Doric",
+            "text": "Check the rocky slopes and outcrops along the hills east of the sanctuary. Look for dark mineral veins.",
+            "choices": [
+              { "text": "Understood, I'll go gather some.", "target": "accept" },
+              { "text": "Sounds like too much work right now.", "target": "decline" }
+            ]
+          },
+          "decline": {
+            "speaker": "Doric",
+            "text": "Fair enough. The forge will be here whenever you're ready.",
+            "action": "close"
+          },
+          "accept": {
+            "speaker": "Doric",
+            "text": "Splendid! Bring me 3 pieces of Iron Ore and I'll make sure you're well rewarded.",
+            "action": "start_quest"
+          }
+        }
+      },
+      "objective": {
+        "type": "item",
+        "item": "Iron Ore",
+        "count": 3,
+        "hudText": "Gather Iron Ore"
+      },
+      "progressDialogue": {
+        "speaker": "Doric",
+        "text": "Any luck finding that iron ore? Remember to search the rocky hills to the east.",
+        "choices": [
+          { "text": "Still working on it, Doric.", "action": "close" }
+        ]
+      },
+      "turnInDialogue": {
+        "speaker": "Doric",
+        "text": "Ah, look at the quality of this ore! Just what my anvil needed. Thank you, traveller! Here is your reward.",
+        "choices": [
+          { "text": "Glad to help, Doric!", "action": "complete_quest" }
+        ]
+      },
+      "completedDialogue": {
+        "speaker": "Doric",
+        "text": "Thanks again for the iron, friend! The forge has never burned brighter."
+      },
+      "rewards": {
+        "text": "10x Garou Pack & Dwarven Smithing Lore",
+        "item": "GarouPack",
+        "count": 10
+      }
+    },
+    {
+      "id": "quest_wise_fishing_daily",
+      "npc": "SK_WiseOldMan_01",
+      "npcName": "Wise Old Man",
+      "title": "Wise Old Man's Daily Catch",
+      "repeatable": "daily",
+      "description": "Catch 5 Raw Shrimp from any freshwater fishing spot and bring them to the Wise Old Man.",
+      "startDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Ah, greetings adventurer! An old scholar needs sustenance to keep the wits sharp. Fancy doing a spot of angling? Bring me 5 fresh Raw Shrimp and I'll part with a curious Zamorakian pouch I acquired during my adventures.",
+        "choices": [
+          { "text": "I can catch some shrimp for you.", "target": "accept" },
+          { "text": "Where can I find shrimp?", "target": "hint" },
+          { "text": "Not interested right now.", "target": "decline" }
+        ],
+        "branches": {
+          "hint": {
+            "speaker": "Wise Old Man",
+            "text": "Cast your rod into the shallow waters, streams, or lakes nearby. Shrimp are plentiful and bite easily!",
+            "choices": [
+              { "text": "Understood, I'll go get some.", "target": "accept" },
+              { "text": "Sounds like too much trouble.", "target": "decline" }
+            ]
+          },
+          "decline": {
+            "speaker": "Wise Old Man",
+            "text": "A pity. I suppose I'll have to settle for stale biscuits today.",
+            "action": "close"
+          },
+          "accept": {
+            "speaker": "Wise Old Man",
+            "text": "Splendid! Bring me 5 Raw Shrimp and that Zamorakian pouch is yours. Don't let them spoil on the way!",
+            "action": "start_quest"
+          }
+        }
+      },
+      "objective": {
+        "type": "item",
+        "item": "Raw Shrimp",
+        "count": 5,
+        "hudText": "Catch Raw Shrimp"
+      },
+      "progressDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Have you reeled in those shrimp yet? Remember, I need 5 fresh Raw Shrimp for my supper.",
+        "choices": [
+          { "text": "Still fishing, sir.", "action": "close" }
+        ]
+      },
+      "turnInDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Marvellous! Plump, fresh Raw Shrimp just as I requested. You have the patient touch of a master angler. Here is your Zamorakian pouch as promised!",
+        "choices": [
+          { "text": "Thank you, Wise Old Man!", "action": "complete_quest" }
+        ]
+      },
+      "completedDialogue": {
+        "speaker": "Wise Old Man",
+        "text": "Delicious! Come back tomorrow if you fancy another trade, adventurer."
+      },
+      "rewards": {
+        "text": "3x Zamorakian Pouch",
+        "item": "ITEM_Consumable_Pack_Zamorak_Mage",
+        "count": 3
+      }
+    }
+  ]
+}
