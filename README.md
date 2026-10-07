@@ -30,7 +30,7 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 Does the **Ashenfallen Base-Builder** ([ashenfallen.com](https://ashenfallen.com)) need this modpack installed?
 **YES!** 
 
-- **Ashenfallen Base-Builder** is the **external 3D visual scene & quest designer**: freely position 3,600+ extracted pieces, arrange temples, place NPC companions, storyboard multi-branch dialogue trees, define delivery/slay objectives, and set rewards.
+- **Ashenfallen Base-Builder** ([GitHub Repository](https://github.com/ThePaulAdams/RSDragonwilds-ModelViewer) | [Live Site](https://ashenfallen.com)) is the **external 3D visual scene & quest designer**: freely position 3,600+ extracted pieces, arrange temples, place NPC companions, storyboard multi-branch dialogue trees, define delivery/slay objectives, and set rewards.
 - **RSDragonwilds-Toolkit (CustomBuilds)** is the **in-game runtime execution engine**: it reads your exported `base.txt`, `placed.txt`, and `quests.json` files, materializes the structures in the UE5 game world, hooks the `E` interaction key, draws animated 3D overhead `!` and `?` markers, and rewards actual items directly into the player's backpack.
 
 ---
