@@ -4,7 +4,7 @@
 [![Framework](https://img.shields.io/badge/Framework-UE4SS%20v3.0%2B-green?style=for-the-badge)](https://github.com/UE4SS-RE/RE-UE4SS)
 [![BaseBuilder](https://img.shields.io/badge/Ecosystem-Ashenfallen%20Base--Builder-orange?style=for-the-badge)](https://ashenfallen.com)
 
-**Custom Builds** is the flagship creative and storytelling engine for *RuneScape: Dragonwilds*. It enables unrestricted placement of over 3,600+ game models, powers interactive companion NPCs, and executes full branching quest storyboards created in the **Ashenfallen Base-Builder**.
+**Custom Builds** is the flagship creative and storytelling engine for *RuneScape: Dragonwilds*. It enables unrestricted placement of over 5,100+ game models, powers interactive companion NPCs, and executes full branching quest storyboards created in the **Ashenfallen Base-Builder**.
 
 ---
 
@@ -26,7 +26,7 @@ Does the **Ashenfallen Base-Builder** need this modpack installed?
                  ▼
 ┌─────────────────────────────────┐
 │     CustomBuilds Mod            │  UE4SS Lua Runtime Engine
-│  (Dragonwilds Mod Directory)    │  • Materializes 3,600+ building pieces & decor
+│  (Dragonwilds Mod Directory)    │  • Materializes 5,100+ building pieces & decor
 └────────────────┬────────────────┘  • Spawns interactive companions (Doric, Cook...)
                  │                   • Renders 3D overhead [ ! ] & [ ? ] markers
                  ▼                   • Connects pins to OSRS Minimap
@@ -40,7 +40,7 @@ Does the **Ashenfallen Base-Builder** need this modpack installed?
 
 ## ✨ Key Features
 
-### 1. 3,600+ Model In-Game Browser & Placement (`[N]`)
+### 1. 5,100+ Model In-Game Browser & Placement (`[N]`)
 - **Visual Thumbnail Catalog**: Press **`N`** to browse every model extracted from the game (castle walls, towers, temple ruins, statues, furniture, lanterns, flora).
 - **Precise Transform Gizmos**: Rotate in 15° or 90° increments, tilt, roll, scale smoothly, or nudge by centimeters.
 - **Magnetic Snapping**: Press **`End`** to toggle between **EDGES** (flush against neighboring pieces), **GRID** (aligned with your base foundation grid), or **FREE** placement.
@@ -106,7 +106,7 @@ Open the UE4SS developer console in-game to run advanced commands:
 | `cb quest step` | Advances active quest objective progress by +1 |
 | `cb clean` | Scans and cleans up any duplicate companion actors near your base |
 | `cb npc <name>` | Quickly spawns a test companion (`doric`, `wise`, `cook`, `zanik`, `vannaka`) |
-| `cb find <text>` | Searches all 3,600+ models by keyword and creates a search category in the `N` browser |
+| `cb find <text>` | Searches all 5,100+ models by keyword and creates a search category in the `N` browser |
 | `cb base export` | Exports all native building pieces to `base.txt` for importing into Ashenfallen |
 
 ---
@@ -119,7 +119,7 @@ CustomBuilds/
 ├── quests.json          # Active quest definitions exported from Ashenfallen Base-Builder
 ├── save_quests.json     # Player quest completion states, progress, and daily timestamps
 ├── placed.txt           # Player's placed custom models and companion coordinates
-├── models-all.txt       # Master list of all 3,600+ placeable mesh paths
+├── models-all.txt       # Master list of all 5,100+ placeable mesh paths
 ├── models.txt           # Player favorites catalog
 ├── orient.txt           # Saved model tilt/rotation calibrations
 ├── scripts/
