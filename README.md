@@ -15,9 +15,11 @@ Each mod is completely standalone and can be enabled, disabled, or shared indivi
 
 | Tool | Category | Hotkeys | Description |
 | :--- | :--- | :--- | :--- |
-| [**CustomBuilds**](CustomBuilds/README.md) | Creative & Quests | `[N]`, `[E]`, `[1-4]` | Place any of 5,100+ game models, spawn living NPC companions (Doric, Wise Old Man, Cook...), and play custom branching quests with 3D overhead markers (`!`/`?`), OSRS minimap stars, and real inventory rewards. In-game runtime for the **Ashenfallen Base-Builder**. |
-| [**OSRSMinimap**](OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, and real-time resource tracking (ores, trees, essence, fishing). |
+| [**CustomBuilds**](CustomBuilds/README.md) | Creative & Quests | `[N]`, `[E]`, `[1-4]` | Place any of 5,100+ game models, spawn living NPC companions (Doric, Wise Old Man, Cook, Domri...), and play custom branching quests with 3D overhead markers (`!`/`?`), OSRS minimap stars, and real inventory rewards. In-game runtime for the **Ashenfallen Base-Builder**. |
+| [**OSRSMinimap**](OSRSMinimap/README.md) | HUD & Navigation | `[F6]`, `[F9]`, `[F8]` | Classic Old School RuneScape minimap with rotating player compass, camera frustum, day/night sundial clock, and real-time resource & monster tracking. |
 | [**QuickStack**](QuickStack/README.md) | Quality of Life | `[G]`, `[Ctrl+G]`, `[Shift+G]` | Smart base inventory sorting into dedicated category chests, 48-slot chest auto-upgrades, 40m wild resource gathering & ground vacuum, and 150m Base Relocation Crate. |
+| [**PauseGuard**](PauseGuard/README.md) | Performance & Anti-Freeze | `[Shift+F10]` | Anti-freeze and memory leak optimizer. Suppresses background SPUD auto-save cell cache accumulation while paused/AFK and coordinates global mod hibernation. |
+| [**AutoHarvest**](AutoHarvest/README.md) | Quality of Life | `[F11]` | Hands-free foraging for wild food bushes, flax, crops, and gatherable nodes within walking distance. |
 | [**EnhancedReticle**](EnhancedReticle/README.md) | Aiming & HUD | `[F4]`, `[F1]`, `[F2]` | High-contrast, scalable crosshair with 7 vibrant colors and 5 dynamic sizes across roaming, spellcasting, bows, and stealth. |
 | [**TelekineticWoodcraft**](TelekineticWoodcraft/README.md) | Gathering & Magic | `[E]`/`[V]`, `[Z]`, `[Shift+F6]` | Telekinetic log physics: pick up and carry logs (`E`/`V`), vacuum nearby logs into a tight flat woodpile (`Z` Log Magnet), and scale Splinter spell radius (`Shift+F6`). |
 | [**ModMenu**](ModMenu/README.md) | Dashboard & UI | `[Ctrl+F8]`, `[ESC]` Pause | In-game mod status overlay and hotkey reference card. Displays automatically on the ESC Pause screen or toggle anytime via `[Ctrl+F8]`. |
@@ -42,15 +44,18 @@ Does the **Ashenfallen Base-Builder** ([ashenfallen.com](https://ashenfallen.com
 | **`[ESC]`** | **Pause Menu** | Pausing automatically displays the active Toolkit Mod Dashboard |
 | **`[Ctrl+F8]`** | **Toolkit Mod Menu** | Open / close the in-game mod dashboard overlay anytime |
 | **`[N]`** | **Custom Builds** | Open / close the in-game 5,100+ model catalog browser |
-| **`[E]`** | **Custom Builds** | Talk / interact with nearby NPC companions (Doric, Wise Old Man, Cook...) |
+| **`[E]`** | **Custom Builds** | Talk / interact with nearby NPC companions (Doric, Wise Old Man, Cook, Domri...) |
 | **`[1]`, `[2]`, `[3]`, `[4]`** | **Custom Builds** | Select dialogue response choices during companion conversations |
 | **`[Num Lock]`** | **AutoRun** | Toggle continuous camera-forward autorun on / off |
 | **`[G]` (Tap)** | **Quick Stack** | **At Base:** Auto-sort items into dedicated category chests & upgrade to 48 slots<br>**In Wild:** Instant harvest & ground magnetism for nearby plants/loot |
 | **`[G]` (Hold)** | **Quick Stack** | **Continuous Vacuum:** Harvest and pull all wild flora & ground items within 40m<br>**Hovering Item:** Quick-pull all matching stacks from nearby chests |
 | **`[Ctrl + G]`** | **Quick Stack** | **Pack Base:** Vacuum all ground items within 150m into virtual Relocation Crate |
 | **`[Shift + G]`** | **Quick Stack** | **Unpack Base:** Deposit all Relocation Crate items categorized into nearby chests |
+| **`[Shift + F10]`** | **Pause Guard** | Force an immediate, safe manual save without background SPUD cache bloat |
+| **`[F11]`** | **Auto Harvest** | Toggle hands-free crop, berry, and flax foraging on / off |
 | **`[F6]`** | **OSRS Minimap** | Toggle OSRS minimap display on / off |
-| **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons on / off |
+| **`[F8]`** | **OSRS Minimap** | Toggle shape (Circular Compass Mode <-> Framed Tablet Mode) |
+| **`[F9]`** | **OSRS Minimap** | Toggle live resource tracking icons & monster radar dots on / off |
 | **`[F4]`** | **Enhanced Reticle** | Toggle high-visibility crosshair on / off |
 | **`[F1]`** | **Enhanced Reticle** | Cycle reticle color (Neon Green, Gold, Cyan, Red, Pink, Orange, White) |
 | **`[F2]`** | **Enhanced Reticle** | Cycle reticle size (1.0x, 1.5x, 2.0x, 2.5x, 3.2x) |
@@ -89,8 +94,11 @@ If you cloned or downloaded this repository:
    The script defaults to `F:\Steam\steamapps\common\RSDragonwilds\RSDragonwilds\Binaries\Win64\ue4ss\Mods`. If your game is installed elsewhere, pass your own path: `.\deploy.ps1 -GamePath "<GameRoot>\RSDragonwilds\Binaries\Win64\ue4ss\Mods"`.
 3. To deploy a specific tool only:
    ```powershell
-   .\deploy.ps1 -Tool QuickStack
+   .\deploy.ps1 -Tool CustomBuilds
    .\deploy.ps1 -Tool OSRSMinimap
+   .\deploy.ps1 -Tool QuickStack
+   .\deploy.ps1 -Tool PauseGuard
+   .\deploy.ps1 -Tool AutoHarvest
    .\deploy.ps1 -Tool EnhancedReticle
    .\deploy.ps1 -Tool TelekineticWoodcraft
    .\deploy.ps1 -Tool ModMenu
@@ -102,15 +110,18 @@ If you cloned or downloaded this repository:
 
 ### Option B: Manual Installation
 
-1. Copy the desired mod folders (`OSRSMinimap`, `QuickStack`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`, `AutoRun`) into:
+1. Copy the desired mod folders (`CustomBuilds`, `OSRSMinimap`, `QuickStack`, `PauseGuard`, `AutoHarvest`, `EnhancedReticle`, `TelekineticWoodcraft`, `ModMenu`, `AutoRun`) into:
    ```
    <GameRoot>/RSDragonwilds/Binaries/Win64/ue4ss/Mods/
    ```
 2. Open `<GameRoot>/RSDragonwilds/Binaries/Win64/ue4ss/Mods/mods.txt` in a text editor.
 3. Ensure each mod you want to run has `: 1` appended:
    ```ini
+   CustomBuilds : 1
    OSRSMinimap : 1
    QuickStack : 1
+   PauseGuard : 1
+   AutoHarvest : 1
    EnhancedReticle : 1
    TelekineticWoodcraft : 1
    ModMenu : 1
@@ -128,7 +139,24 @@ If you cloned or downloaded this repository:
 - **Real-Time Detection**: Automatically re-scans `mods.txt` whenever toggled, immediately showing changes without restarting.
 - **Zero Performance Impact**: Widget remains collapsed and uses 0 CPU cycles during normal gameplay.
 
-### 2. QuickStack (`QuickStack`)
+### 2. Custom Builds (`CustomBuilds`)
+- **5,100+ Model Catalog Browser (`[N]`)**: Instant search and place any building part, asset, prop, foliage, or dungeon element in real-time.
+- **Living Companion NPCs (`[E]`, `[1-4]`)**: Spawn Doric, Wise Old Man, Cook, Domri, and custom NPCs with animated 3D `!` and `?` quest markers and multi-branch dialogue trees.
+- **Quest Storyboard Engine**: In-game evaluation of player backpack items, distance tracking on the OSRS Minimap, and direct inventory reward payout with sound effects.
+- **Arcane Portal Teleporters**: Seamless zero-loading travel between paired portal gateways.
+- **Live Ashenfallen Web Sync**: Real-time bi-directional sync for player coordinates, world buildings, and web inventory management.
+
+### 3. Pause Guard (`PauseGuard`)
+- **SPUD Persistence Throttling**: Suppresses memory leaks and game-freeze crashes caused by runaway Unreal save-cell serialization while paused or AFK.
+- **Global Hibernation Coordinator**: Signals active mod loops (`AutoHarvest`, background syncs) to sleep while menus, inventory, or dialogue trees are open.
+- **Safe Manual Save (`Shift+F10`)**: Force a clean world state commit on demand without memory spikes.
+
+### 4. Auto Harvest (`AutoHarvest`)
+- **Hands-Free Foraging (`[F11]`)**: Automatically harvests wild berries, vegetables, flax, and surface resources within walking proximity.
+- **Smart Weight Cap**: Ignores heavy objects (`<= 0.2kg`) to keep inventory space open for high-value loot.
+- **Pause-Aware Hibernation**: Zero CPU usage when menus or crafting screens are active.
+
+### 5. QuickStack (`QuickStack`)
 - **In-Memory Category Consolidation**: Pulls items from nearby chests into an in-memory buffer, merges duplicate/split stacks, and redistributes them strictly into dedicated category chests (**FOOD**, **WOOD**, **MINING**, **FARMING**, **EQUIPMENT**, **MAGIC**, **MISC**).
 - **48-Slot Highest Tier Upgrade**: Dynamically upgrades all detected chests and crates to 48 slots (`MaxSlotCount = 48`) with high-tier static meshes in-place.
 - **Wild Gathering & Ground Magnetism (`Hold G`)**: Sweeps a 40m radius while sprinting, auto-harvesting wild crops (dwellberries, onions, flax, herbs, fallen wood, stones) directly into your backpack.
@@ -136,23 +164,23 @@ If you cloned or downloaded this repository:
 - **Targeted QuickPull**: Hover any item in your inventory or chest and hold `G` to pull all matching stacks from all nearby chests directly into your inventory.
 - **Strict Safe Guards**: Zero-tolerance blacklist prevents any crafting stations, blast furnaces, smelters, kilns, or campfires from being touched. Hotbar, combat ammunition, and runes are 100% protected.
 
-### 3. OSRS Minimap (`OSRSMinimap`)
+### 6. OSRS Minimap (`OSRSMinimap`)
 - **Compass Rotation**: Player icon remains locked pointing UP while the world map rotates and pans under you, matching traditional OSRS navigation.
 - **Resource Pin Tracking (`F9`)**: Real-time map pins for nearby high-tier ores (Runite, Adamant, Mithril, Coal, Blurite), trees (Yew, Maple, Willow, Oak), fishing spots, and elemental anima vents.
 - **Main Map Isolation**: Operates on an independent map layer—opening your full-screen World Map (`M`) is 100% unaffected.
 
-### 4. Enhanced Reticle (`EnhancedReticle`)
+### 7. Enhanced Reticle (`EnhancedReticle`)
 - **High-Contrast Aiming**: Replaces the faint default reticle with bright, crisp crosshairs for precise spellcasting and archery.
 - **7 Color Presets (`F1`)**: Neon Green, OSRS Gold, Cyan, Crimson Red, Hot Pink, Amber Orange, Pure White.
 - **5 Scale Levels (`F2`)**: 1.0x (Vanilla), 1.5x, 2.0x, 2.5x, 3.2x (High-visibility).
 - **Universal State Coverage**: Seamlessly adapts across combat spells, utility magic, bow ADS, and stealth.
 
-### 5. Telekinetic Woodcraft (`TelekineticWoodcraft`)
+### 8. Telekinetic Woodcraft (`TelekineticWoodcraft`)
 - **Single Log Drag (`E` or `V`)**: Aim at any felled tree or cut log to telekinetically carry it in front of you. Press again to settle it flat on the ground.
 - **Log Magnet Mass Gathering (`Z`)**: Pulls all logs within 150 meters into a compact, flat pyramid woodpile directly in front of you.
 - **Splinter Spell Multiplier (`Shift+F6`)**: Boosts the Splinter spell explosion radius (1.0x, 2.5x, 5.0x) to harvest an entire woodpile in a single cast.
 
-### 6. AutoRun (`AutoRun`)
+### 9. AutoRun (`AutoRun`)
 - **Hands-Free Traversal (`Num Lock`)**: Continuous camera-aligned movement without needing to hold W or Shift.
 - **Natural Cancellation**: Seamlessly cancels on backward input (S), manual pause, or UI interaction.
 

@@ -61,7 +61,28 @@ Does the **Ashenfallen Base-Builder** need this modpack installed?
 - **Minimap Integration**: Pinned quest star icons automatically display on the **OSRS Minimap** plugin with distance scaling.
 - **Inventory Objective Evaluation**: Checks your inventory slots in real time for requested items (e.g. Iron Ore, logs, relics, herbs).
 - **Real Reward Delivery**: Grants actual items directly to your backpack (e.g. Garou Packs, coins, consumables, or custom resources) with audible turn-in chimes.
-- **Daily Repeatable Quests**: Supports `"repeatable": "daily"`. Quests reset automatically at midnight or upon calendar rollover, turning delivery quests into daily routines.
+### 4. Live Web Inventory Synchronization (`ashenfallen.com`)
+- **Real-Time Backpack Telemetry**: Periodically dumps player inventory state (item names, IDs, stack counts, max stack limits, durability) to `inventory.json`.
+- **In-Browser Inventory Management**: The Ashenfallen web inventory editor can send commands via `inventory_cmd.txt` to:
+  - Add items by ID / name and quantity.
+  - Rearrange and move items between slots (`move|fromSlot|toSlot|amount`).
+  - Fill stacks and clean fragmented inventory (`clean`).
+  - Delete or trash items from specific slots (`remove|slot|count`).
+  - Clear entire inventory (`clear`).
+
+### 5. Arcane Portal Teleporters
+- **Instant World Teleportation**: Place paired portal arches (`SM_Portal01`).
+- Walking into Portal 1 smoothly teleports the player to Portal 2 with authentic teleportation audio and particle feedback.
+- Works across open terrain, inside towers, or down in subterranean dungeons.
+
+### 6. Merchant & Specialty Trader NPCs
+- In addition to story companions, place functional merchant and trader NPCs:
+  - **Domri - The Merchant**: `cb npc domri` or `cb npc merchant`
+  - **Valas - The Blacksmith**: `cb npc valas` or `cb npc blacksmith`
+  - **Lagra - The Hunter**: `cb npc lagra` or `cb npc hunter`
+
+### 7. Pause-Safe Background Synchronization
+- Player position (`player.txt`), native pieces export (`base.txt`), placed custom models (`placed.txt`), and inventory telemetry (`inventory.json`) continue updating even when the game is paused in menus or running in the background.
 
 ---
 
