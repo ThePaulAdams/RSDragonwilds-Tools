@@ -9,7 +9,7 @@ local ITEM = "/Game/UI/Common/WBP_MainMenuTabButton.WBP_MainMenuTabButton_C"
 local BACK = "/Game/UI/Common/WBP_DomMainMenuBottomNavButton.WBP_DomMainMenuBottomNavButton_C"
 local PAGE = "/Game/UI/Settings/WBP_SettingsWidget.WBP_SettingsWidget_C"
 local Dashboard, ToolkitButton, BackButton, Owner, PauseScreen
-local DetailTitle, DetailDescription, DetailStatus, DetailBindings, DetailSubtitle
+local DetailTitle, DetailDescription, DetailStatus, DetailBindings, DetailSubtitle, StatusTarget
 local Items, HitTargets, Owned = {}, {}, {}
 local SelectedIndex, CurrentStates = 1, {}
 local Visible, Cleaned, Pending = false, false, false
@@ -67,8 +67,6 @@ local function CleanupOrphans(pc)
                     Log("Removing WBP_TitleOnlyTooltip_C instance: " .. widget:GetFullName())
                     Remove(widget)
                 elseif class == "WBP_DomAllCapsButton_C" and Valid(pc) then
-                    -- The previous version forgot to persist its entry button.
-                    -- Match its exact label AND standalone viewport/player ownership.
                     local ok, legacy = pcall(function()
                         return widget:IsInViewport() and Same(widget:GetOwningPlayer(), pc)
                             and widget.ButtonLabel:ToString() == "Toolkit  /  MODS & HOTKEYS"
@@ -81,7 +79,6 @@ local function CleanupOrphans(pc)
             end
         end
     end
-    -- Also sweep all UserWidgets currently in the viewport
     local uws = FindAllOf("UserWidget") or {}
     for _, widget in ipairs(uws) do
         if Valid(widget) then
@@ -97,7 +94,6 @@ local function CleanupOrphans(pc)
                         textSample = "Label: " .. tostring(widget.ButtonLabel:ToString())
                     end
                 end)
-                Log("Viewport widget: " .. fn .. " | " .. textSample)
                 if names[fn] or fn:find("WBP_TitleOnlyTooltip") or textSample:find("TOOLKIT") or textSample:find("MOD DASHBOARD") or textSample:find("RUNESCAPE") then
                     Log("Removing viewport orphan UserWidget: " .. fn)
                     Remove(widget)
@@ -112,7 +108,7 @@ end
 local function Destroy()
     for _, widget in ipairs(Owned) do Remove(widget) end
     Dashboard, ToolkitButton, BackButton, Owner, PauseScreen = nil, nil, nil, nil, nil
-    DetailTitle, DetailDescription, DetailStatus, DetailBindings, DetailSubtitle = nil, nil, nil, nil, nil
+    DetailTitle, DetailDescription, DetailStatus, DetailBindings, DetailSubtitle, StatusTarget = nil, nil, nil, nil, nil, nil
     Items, HitTargets, Owned, Visible = {}, {}, {}, false
     SelectedIndex, CurrentStates = 1, {}
     Save("ModMenu.OwnedWidgets", "")
@@ -155,40 +151,124 @@ local function Position(widget, x, y, width, height)
 end
 
 local Mods = {
+    {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap, resource nodes, and AI monster radar.", "F6 map | F7 reload | F8 shape | F9 icons | PgUp/PgDn zoom | [ / ] size"},
+    {"CustomBuilds", "Custom Builds", "Place custom structures, props, and living base companions.", "B menu | N browser | Ins move | Del delete | Backspace undo"},
+    {"QuickStack", "Quick Stack", "Instantly stacks and sorts nearby items into dedicated chests.", "G stack to nearby chests"},
+    {"CraftAnything", "Craft Anything", "Allows crafting any item or recipe from any crafting bench.", "Shift+F1 open crafting window"},
+    {"RecipeLookup", "Recipe Lookup", "Lookup recipe ingredients and material requirements.", "Shift+F2 recipe browser"},
+    {"EnhancedMagicStaff", "Enhanced Magic Staff", "Adds staff power tiers, emissive glow, and legendary infusion.", "F5 power | F3 glow | F8 infusion | Shift+F8 summon"},
+    {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance via telekinesis.", "E/V grab/place | Z log magnet | Shift+F6 radius"},
+    {"EnhancedReticle", "Enhanced Reticle", "Adds configurable reticle colour, size, and styling.", "F4 toggle | F1 colour | F2 size"},
+    {"PauseGuard", "Pause Guard", "Prevents memory leaks and SPUD cell cache backlog during pause.", "Shift+F10 force clean save"},
     {"AutoRun", "Auto Run", "Runs forward in the camera direction without holding a movement key.", "Num Lock toggle | WASD or Escape stop"},
-    {"OSRSMinimap", "OSRS Minimap", "Shows a RuneScape-style minimap and resource markers.", "F6 map | F7 reload | F9 icons | PgUp/PgDn zoom | [ / ] size"},
-    {"QuickStack", "Quick Stack", "Stacks nearby items into nearby chests.", "G stack to nearby chests"},
-    {"EnhancedReticle", "Enhanced Reticle", "Adds configurable reticle colour and size controls.", "F4 toggle | F1 colour | F2 size"},
-    {"TelekineticWoodcraft", "Telekinetic Woodcraft", "Moves and gathers logs from a distance.", "E/V grab/place | Z log magnet | Shift+F6 radius"},
-    {
-        string.char(69, 110, 104, 97, 110, 99, 101, 100, 77, 97, 103, 105, 99, 83, 116, 97, 102, 102),
-        string.char(69, 110, 104, 97, 110, 99, 101, 100, 32, 77, 97, 103, 105, 99, 32, 83, 116, 97, 102, 102),
-        "Adds staff power tiers, emissive glow, and legendary infusion.",
-        "F5 power | F3 glow | F8 infusion | Shift+F8 summon"
-    },
-    {"ModMenu", "Toolkit Dashboard", "Shows installed Toolkit features and their bindings.", "Pause > Toolkit | Back to menu | Ctrl+F8 toggle"},
+    {"HomeRecall", "Home Recall", "Teleport directly back to your home base beacon.", "Shift+H recall to base"},
+    {"HotbarScroll", "Hotbar Scroll", "Quick mouse wheel scrolling through action hotbars.", "Mouse Wheel Up/Down scroll bar"},
+    {"RaidWarning", "Raid Warning", "Audio and visual alerts for incoming monster base raids.", "Automatic detection"},
+    {"BulkOpen", "Bulk Open", "Open multiple reward boxes or geodes in one click.", "Shift+Click in inventory"},
+    {"AutoHarvest", "Auto Harvest", "Automatically collects nearby crops and resources.", "Passive nearby pickup"},
+    {"ItemScanner", "Item Scanner", "Scans world objects and inventories for debug inspect.", "Shift+F4 scan target"},
+    {"ModMenu", "Toolkit Dashboard", "Shows installed Toolkit features and their bindings.", "Pause > Toolkit | Back to menu | Ctrl+F8 toggle"}
 }
-local function Statuses()
-    local values, file = {}, nil
-    -- UE4SS loads these Lua mods from enabled.txt. Keep mods.txt as a
-    -- fallback for installations that use the consolidated controller list.
-    for _, path in ipairs({"enabled.txt", "Mods/enabled.txt", "ue4ss/Mods/enabled.txt",
-        "Binaries/Win64/ue4ss/Mods/enabled.txt",
-        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/enabled.txt",
-        "mods.txt", "Mods/mods.txt", "ue4ss/Mods/mods.txt",
+
+local function GetModsTxtPath()
+    for _, path in ipairs({
+        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/mods.txt",
+        "ue4ss/Mods/mods.txt",
         "Binaries/Win64/ue4ss/Mods/mods.txt",
-        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/mods.txt"}) do
+        "Mods/mods.txt",
+        "mods.txt"
+    }) do
         local ok, handle = pcall(io.open, path, "r")
-        if ok and handle then file = handle; break end
+        if ok and handle then handle:close(); return path end
     end
-    if file then
+    return "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/mods.txt"
+end
+
+local function Statuses()
+    local values = {}
+    local path = GetModsTxtPath()
+    local ok, file = pcall(io.open, path, "r")
+    if ok and file then
         for line in file:lines() do
             local id, enabled = line:match("^%s*([%w_-]+)%s*:%s*(%d+)")
             if id then values[id] = tonumber(enabled) == 1 end
         end
         file:close()
     end
+    for _, mod in ipairs(Mods) do
+        local id = mod[1]
+        if values[id] == nil then
+            for _, ep in ipairs({
+                "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/" .. id .. "/enabled.txt",
+                "ue4ss/Mods/" .. id .. "/enabled.txt",
+                "Mods/" .. id .. "/enabled.txt",
+                id .. "/enabled.txt"
+            }) do
+                local eok, ef = pcall(io.open, ep, "r")
+                if eok and ef then
+                    local line = ef:read("*line") or ef:read("*all")
+                    ef:close()
+                    if line then
+                        values[id] = line:find("1") ~= nil
+                        break
+                    end
+                end
+            end
+            if values[id] == nil then values[id] = true end
+        end
+    end
     return values
+end
+
+local function SaveModStatus(modId, enable)
+    CurrentStates[modId] = enable
+
+    local path = GetModsTxtPath()
+    local lines = {}
+    local updated = false
+    local ok, f = pcall(io.open, path, "r")
+    if ok and f then
+        for line in f:lines() do
+            local id = line:match("^%s*([%w_-]+)%s*:")
+            if id and id:lower() == modId:lower() then
+                lines[#lines + 1] = string.format("%s : %d", id, enable and 1 or 0)
+                updated = true
+            else
+                lines[#lines + 1] = line
+            end
+        end
+        f:close()
+    end
+    if not updated then
+        lines[#lines + 1] = string.format("%s : %d", modId, enable and 1 or 0)
+    end
+
+    local out = io.open(path, "w")
+    if out then
+        for _, l in ipairs(lines) do out:write(l .. "\n") end
+        out:close()
+    end
+
+    for _, dirPath in ipairs({
+        "F:/Steam/steamapps/common/RSDragonwilds/RSDragonwilds/Binaries/Win64/ue4ss/Mods/" .. modId .. "/enabled.txt",
+        "ue4ss/Mods/" .. modId .. "/enabled.txt",
+        "Mods/" .. modId .. "/enabled.txt"
+    }) do
+        pcall(function()
+            local ef = io.open(dirPath, "w")
+            if ef then
+                ef:write(enable and "1\n" or "0\n")
+                ef:close()
+            end
+        end)
+    end
+
+    if ModRef then
+        pcall(function() ModRef:SetSharedVariable(modId .. ".Enabled", enable and "1" or "0") end)
+    end
+    _G[modId .. "_Enabled"] = enable
+
+    Log(string.format("Toggled %s -> %s", modId, enable and "ENABLED" or "DISABLED"))
 end
 
 local function ActivePause(pc)
@@ -201,34 +281,36 @@ local function ActivePause(pc)
             and screen:IsVisible() and screen:IsActivated() then return screen end
     end
 end
+
 local function Layout(pc)
     local width, height = Viewport(pc)
-    -- Supplemental native action on the right, clear of the original left-hand
-    -- actions. Never insert/reposition their widgets.
     if Valid(ToolkitButton) then Position(ToolkitButton, width-392, height-112, 320, 56) end
     if not Visible then return end
     if Valid(BackButton) then Position(BackButton, 72, height-112, 240, 56) end
     local listWidth = math.min(580, width * 0.31)
-    local rowHeight = math.min(78, (height-300) / #Mods)
-    local x, y = math.max(110, width * 0.055), 244
+    local rowHeight = math.min(48, (height - 300) / #Mods)
+    local x, y = math.max(110, width * 0.055), 210
     for index, item in ipairs(Items) do
-        Position(item, x, y+(index-1)*rowHeight, listWidth, rowHeight-8)
+        Position(item, x, y+(index-1)*rowHeight, listWidth, rowHeight-6)
         if Valid(HitTargets[index]) then
-            Position(HitTargets[index], x, y+(index-1)*rowHeight, listWidth, rowHeight-8)
+            Position(HitTargets[index], x, y+(index-1)*rowHeight, listWidth, rowHeight-6)
         end
     end
-    if Valid(DetailTitle) then Position(DetailTitle, width * 0.47, 250, width * 0.44, 54) end
-    if Valid(DetailSubtitle) then Position(DetailSubtitle, width * 0.47, 308, width * 0.44, 40) end
-    if Valid(DetailDescription) then Position(DetailDescription, width * 0.47, 384, width * 0.44, 120) end
-    if Valid(DetailStatus) then Position(DetailStatus, width * 0.47, 540, width * 0.44, 46) end
-    if Valid(DetailBindings) then Position(DetailBindings, width * 0.47, 614, width * 0.44, 130) end
+    if Valid(DetailTitle) then Position(DetailTitle, width * 0.47, 210, width * 0.44, 50) end
+    if Valid(DetailSubtitle) then Position(DetailSubtitle, width * 0.47, 265, width * 0.44, 38) end
+    if Valid(DetailDescription) then Position(DetailDescription, width * 0.47, 315, width * 0.44, 110) end
+    if Valid(DetailStatus) then Position(DetailStatus, width * 0.47, 440, width * 0.44, 52) end
+    if Valid(StatusTarget) then Position(StatusTarget, width * 0.47, 440, width * 0.44, 52) end
+    if Valid(DetailBindings) then Position(DetailBindings, width * 0.47, 508, width * 0.44, 140) end
 end
+
 local function Hide()
     Visible = false
     if Valid(Dashboard) then Dashboard:SetVisibility(COLLAPSED) end
     if Valid(BackButton) then BackButton:SetVisibility(COLLAPSED) end
+    if Valid(StatusTarget) then StatusTarget:SetVisibility(COLLAPSED) end
     for _, item in ipairs(Items) do if Valid(item) then item:SetVisibility(COLLAPSED) end end
-    for _, target in ipairs(HitTargets) do if Valid(target) then target:SetVisibility(COLLAPSED) end end
+    for _, target in ipairs(HitTargets) do target:SetVisibility(COLLAPSED) end end
     for _, detail in ipairs({DetailTitle, DetailSubtitle, DetailDescription, DetailStatus, DetailBindings}) do
         if Valid(detail) then detail:SetVisibility(COLLAPSED) end
     end
@@ -237,10 +319,8 @@ local function Hide()
         ToolkitButton:SetVisibility(Valid(pc) and ActivePause(pc) and VISIBLE or COLLAPSED)
     end
 end
+
 local function ConfigureSettingsPage()
-    -- The Settings widget is our own instance. Collapse only its native
-    -- categories/content so their input handlers cannot change game settings;
-    -- the page frame, title trim and typography remain native.
     for _, name in ipairs({
         "Button_Video", "Button_Legal", "Button_Gameplay", "Button_Controls",
         "Button_Audio", "Button_Accessibility", "AudioSubWidget", "AccessibilitySubWidget",
@@ -252,6 +332,7 @@ local function ConfigureSettingsPage()
         if Valid(child) then child:SetVisibility(COLLAPSED) end
     end
 end
+
 local function CreatePage(pc)
     Dashboard = CreateWidget(pc, PAGE, 9999)
     ConfigureSettingsPage()
@@ -260,8 +341,6 @@ local function CreatePage(pc)
     BackButton = CreateWidget(pc, BACK, 10001)
     BackButton:SetLabelText(FText("BACK"))
     BackButton:SetIsFocusable(false)
-    -- Standalone Back has no Player List blueprint delegate attached. Its click
-    -- only hides our page; it cannot call the game's player-list Back handler.
     for index = 1, #Mods do
         local item = CreateWidget(pc, ITEM, 10000)
         item:SetIsFocusable(false)
@@ -271,26 +350,39 @@ local function CreatePage(pc)
         target:SetRenderOpacity(0.0)
         Items[index], HitTargets[index] = item, target
     end
-    -- MainMenuTabButton is a UserWidget with the game's native label and
-    -- selection treatment. It is used as a read-only Settings-style text row;
-    -- creating WBP_DomTextBlock directly is invalid because it is a TextBlock,
-    -- not a UserWidget accepted by WidgetBlueprintLibrary:Create.
     DetailTitle = CreateWidget(pc, ITEM, 10000)
     DetailSubtitle = CreateWidget(pc, ITEM, 10000)
     DetailDescription = CreateWidget(pc, ITEM, 10000)
     DetailStatus = CreateWidget(pc, ITEM, 10000)
+    StatusTarget = CreateWidget(pc, BUTTON, 10001)
+    StatusTarget:SetLabelText(FText(""))
+    StatusTarget:SetIsFocusable(false)
+    StatusTarget:SetRenderOpacity(0.0)
     DetailBindings = CreateWidget(pc, ITEM, 10000)
     for _, detail in ipairs({DetailTitle, DetailSubtitle, DetailDescription, DetailStatus, DetailBindings}) do
         detail:SetIsFocusable(false)
     end
 end
-local function StateLabel(state)
-    return state == true and "ENABLED" or (state == false and "DISABLED" or "UNKNOWN")
+
+local function RefreshList()
+    local enabledCount = 0
+    for index, mod in ipairs(Mods) do
+        local state = CurrentStates[mod[1]]
+        if state == true then enabledCount = enabledCount + 1 end
+        if Valid(Items[index]) then
+            SetDisplayText(Items[index], (state and "[ON]  " or "[OFF] ") .. mod[2])
+        end
+    end
+    if Valid(DetailSubtitle) then
+        SetDisplayText(DetailSubtitle, string.format("%d / %d mods enabled  |  Click status or row to toggle", enabledCount, #Mods))
+    end
 end
+
 local function Select(index)
     if not Mods[index] or not Valid(Dashboard) then return end
     SelectedIndex = index
-    local mod, state = Mods[index], CurrentStates[Mods[index][1]]
+    local mod = Mods[index]
+    local state = CurrentStates[mod[1]]
     for itemIndex, item in ipairs(Items) do
         if Valid(item) then
             if itemIndex == index and item.BP_OnSelected then
@@ -304,26 +396,31 @@ local function Select(index)
     end
     SetDisplayText(DetailTitle, mod[2])
     SetDisplayText(DetailDescription, mod[3])
-    SetDisplayText(DetailStatus, "STATUS  /  " .. StateLabel(state))
+    SetDisplayText(DetailStatus, "STATUS  /  " .. (state and "ENABLED (Click to Turn OFF)" or "DISABLED (Click to Turn ON)"))
     SetDisplayText(DetailBindings, "KEY BINDINGS\n" .. mod[4])
 end
+
+local function ToggleCurrent()
+    local mod = Mods[SelectedIndex]
+    if not mod then return end
+    local newState = not CurrentStates[mod[1]]
+    SaveModStatus(mod[1], newState)
+    RefreshList()
+    Select(SelectedIndex)
+end
+
 local function Show(pc, pause)
     if not Valid(pause) then return end
     if not Valid(Dashboard) then CreatePage(pc) end
     ConfigureSettingsPage()
-    local states, enabled = Statuses(), 0
-    CurrentStates = states
-    for index, mod in ipairs(Mods) do
-        local state = states[mod[1]]
-        if state == true then enabled = enabled + 1 end
-        SetDisplayText(Items[index], mod[2])
-    end
-    SetDisplayText(DetailSubtitle, tostring(enabled) .. " / " .. #Mods .. " configured enabled  |  Read-only")
-    Select(1)
+    CurrentStates = Statuses()
+    RefreshList()
+    Select(SelectedIndex or 1)
     PauseScreen, Visible = pause, true
     Layout(pc)
     Dashboard:SetVisibility(VISIBLE)
     BackButton:SetVisibility(VISIBLE)
+    if Valid(StatusTarget) then StatusTarget:SetVisibility(VISIBLE) end
     for _, item in ipairs(Items) do item:SetVisibility(VISIBLE) end
     for _, target in ipairs(HitTargets) do target:SetVisibility(VISIBLE) end
     for _, detail in ipairs({DetailTitle, DetailSubtitle, DetailDescription, DetailStatus, DetailBindings}) do
@@ -332,20 +429,22 @@ local function Show(pc, pause)
     if Valid(ToolkitButton) then ToolkitButton:SetVisibility(COLLAPSED) end
     Log("Toolkit page opened by user")
 end
+
 local function Toggle()
     if Visible then Hide(); return end
     local pc = UEHelpers.GetPlayerController()
     if Valid(pc) and Same(Owner, pc) then Show(pc, ActivePause(pc)) end
 end
+
 local function Guard(callback)
     local ok, message = pcall(callback)
     if not ok then
-        -- Remove partial overlays so the stock menu stays usable on Lua failure.
         pcall(Destroy)
         NextRetry = Tick + 40
         Log("Toolkit UI removed after error: " .. tostring(message))
     end
 end
+
 local function Update()
     local pc = UEHelpers.GetPlayerController()
     if not Cleaned then CleanupOrphans(pc) end
@@ -372,7 +471,6 @@ local function Update()
         Layout(pc)
     end
     ToolkitButton:SetVisibility(Visible and COLLAPSED or VISIBLE)
-    -- Opening Pause must NEVER call Show: page creation requires user activation.
 end
 
 LoopAsync(250, function()
@@ -385,20 +483,20 @@ LoopAsync(250, function()
     end)
     return false
 end)
+
 if Key.F8 and ModifierKey and ModifierKey.CONTROL then
     RegisterKeyBind(Key.F8, {ModifierKey.CONTROL}, function()
         ExecuteInGameThread(function() Guard(Toggle) end)
     end)
 end
+
 if Key.ESCAPE then
     RegisterKeyBind(Key.ESCAPE, function()
-        -- UE4SS keybinds do not consume the game's Escape input. Mouse Back is
-        -- the return-to-menu action; Escape may also resume gameplay.
         ExecuteInGameThread(function() Guard(function() if Visible then Hide() end end) end)
     end)
 end
+
 RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(context)
-    -- Native hook context is RemoteUnrealParam, not a UWidget.
     local ok, button = pcall(function() return context:get() end)
     if not ok then return end
     Guard(function()
@@ -406,22 +504,31 @@ RegisterHook("/Script/CommonUI.CommonButtonBase:HandleButtonClicked", function(c
             ExecuteInGameThread(function() Guard(Toggle) end)
         elseif Same(button, BackButton) then
             ExecuteInGameThread(function() Guard(Hide) end)
+        elseif Same(button, StatusTarget) then
+            ExecuteInGameThread(function() Guard(ToggleCurrent) end)
         else
             for index, target in ipairs(HitTargets) do
                 if Same(button, target) then
-                    ExecuteInGameThread(function() Guard(function() Select(index) end) end)
+                    ExecuteInGameThread(function()
+                        Guard(function()
+                            if SelectedIndex == index then
+                                ToggleCurrent()
+                            else
+                                Select(index)
+                            end
+                        end)
+                    end)
                     break
                 end
             end
         end
     end)
-    -- Void hook: no return override, and no handling of the game's own buttons.
 end)
-Log("Menu flow v5 loaded: Settings layout with native tab items and selected feature details")
+
+Log("Menu flow v6 loaded: full mod dashboard with live ON/OFF toggles and persistent save")
 
 ExecuteInGameThread(function()
     Guard(function()
         CleanupOrphans(UEHelpers.GetPlayerController())
     end)
 end)
-

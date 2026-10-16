@@ -4130,6 +4130,10 @@ end
 
 -- Keybind Registration: Normal G (Tap = Quick Stack, Hold over an item = Quick Pull, Hold elsewhere = Ground Magnetism)
 local keyCallback = function()
+    if ModRef then
+        local ok, val = pcall(function() return ModRef:GetSharedVariable("QuickStack.Enabled") end)
+        if ok and val == "0" then return end
+    end
     ExecuteInGameThread(function()
         OnKeyG()
     end)

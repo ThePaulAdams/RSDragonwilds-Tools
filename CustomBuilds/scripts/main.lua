@@ -545,6 +545,70 @@ local function TraceGroundZ(x, y, z, ignoreActor)
     return nil
 end
 
+local function CleanNPCComponents(a)
+    if not Valid(a) then return end
+    pcall(function()
+        for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
+            local comp = a[prop]
+            if Valid(comp) then
+                comp:SetVisibility(false, false)
+                comp:SetHiddenInGame(true, true)
+                pcall(function() comp:SetCollisionEnabled(0) end)
+            end
+        end
+        local smCls = StaticFindObject("/Script/Engine.StaticMeshComponent")
+        if Valid(smCls) and a.K2_GetComponentsByClass then
+            local comps = a:K2_GetComponentsByClass(smCls)
+            if comps then
+                for i = 1, comps:Num() do
+                    local comp = comps[i]
+                    if Valid(comp) then
+                        comp:SetVisibility(false, false)
+                        comp:SetHiddenInGame(true, true)
+                        pcall(function() comp:SetCollisionEnabled(0) end)
+                    end
+                end
+            end
+        end
+        local caCls = StaticFindObject("/Script/Engine.ChildActorComponent")
+        if Valid(caCls) and a.K2_GetComponentsByClass then
+            local comps = a:K2_GetComponentsByClass(caCls)
+            if comps then
+                for i = 1, comps:Num() do
+                    local comp = comps[i]
+                    if Valid(comp) then
+                        comp:SetVisibility(false, false)
+                        comp:SetHiddenInGame(true, true)
+                        pcall(function()
+                            local child = comp.ChildActor
+                            if Valid(child) then
+                                child:SetActorHiddenInGame(true)
+                                child:SetActorEnableCollision(false)
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+        if Valid(a.RootComponent) and a.RootComponent.GetChildrenComponents then
+            local children = a.RootComponent:GetChildrenComponents(true)
+            if children then
+                for i = 1, children:Num() do
+                    local c = children[i]
+                    if Valid(c) and c ~= a.Mesh then
+                        local cname = ClassName(c):lower()
+                        if cname:find("staticmesh") or cname:find("childactor") or cname:find("crate") or cname:find("box") then
+                            c:SetVisibility(false, false)
+                            c:SetHiddenInGame(true, true)
+                            pcall(function() c:SetCollisionEnabled(0) end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
 local function SpawnNPC(bpPath, r, movable, origMesh)
     local pc, pawn = Pawn()
     if not pawn then return nil, "not in world" end
@@ -589,12 +653,7 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
                         a.RootComponent:SetMobility(2)
                     end
                 end)
-                for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
-                    pcall(function()
-                        local comp = a[prop]
-                        if Valid(comp) then comp:SetVisibility(false, false) end
-                    end)
-                end
+                CleanNPCComponents(a)
                 pcall(function()
                     if Valid(a.Mesh) then
                         a.Mesh:SetVisibility(true, true)
@@ -896,6 +955,33 @@ function FindAllCompanions()
 
     for _, a in ipairs(TestProps or {}) do
         if Valid(a) then addActor(a) end
+    end
+
+    -- Search world for rogue/orphaned NPC companion actors near the player
+    local _, pawn = Pawn()
+    local pLoc = Valid(pawn) and pawn:K2_GetActorLocation() or nil
+    local companionClasses = {
+        "BP_NPC_Vannaka_FTUE_C", "BP_NPC_Vannaka_Quest_C", "BP_NPC_Vannaka_Fellhollow_C",
+        "BP_NPC_Zanik_C", "BP_NPC_Zanik_Fellhollow_C", "BP_NPC_Doric_C", "BP_NPC_WiseOldMan_C",
+        "BP_NPC_Cook_C", "BP_NPC_Death_C", "BP_NPC_PostiePete_C", "BP_NPC_Quest_Chicken_C",
+        "BP_NPC_Quest_Cow_C", "BP_NPC_Elder_Garou_C", "BP_NPC_KotHaarBouncer_C", "BP_NPC_SW_Zilyana_C"
+    }
+    for _, clsName in ipairs(companionClasses) do
+        local ok, found = pcall(FindAllOf, clsName)
+        if ok and found then
+            for _, a in ipairs(found) do
+                if Valid(a) then
+                    local okL, loc = pcall(function() return a:K2_GetActorLocation() end)
+                    if okL and loc and pLoc then
+                        if Dist(loc, pLoc) < 15000 then
+                            addActor(a)
+                        end
+                    else
+                        addActor(a)
+                    end
+                end
+            end
+        end
     end
 
     return companions
@@ -1890,12 +1976,21 @@ end
 local GhostLoop = nil
 
 local function GhostStep()
+    if ModRef then
+        local ok, val = pcall(function() return ModRef:GetSharedVariable("CustomBuilds.Enabled") end)
+        if ok and val == "0" then return end
+    end
     local pc = GetPC()
     if not Valid(pc) then return end
     local _, pawn = Pawn()
     if not Valid(pawn) then return end
 
     local now = os.clock()
+    -- Performance throttle: if not actively positioning a model (Skin == nil), run at 1.5s interval
+    if not Skin and (now - (SyncState.LastIdleTick or 0) < 1.5) then
+        return
+    end
+    SyncState.LastIdleTick = now
     if now - (SyncState.At or 0) > 2 then
         SyncState.At = now
         if CheckWorld() then
@@ -1976,12 +2071,29 @@ end
 
 local function RemoveLookedAt(radius)
     local id = FindLookedAt(radius)
-    if not id then return nil end
-    Remember({ Kind = "delete", Id = id, R = Placed[id] })
-    DestroyProp(id)
-    Placed[id] = nil
-    SavePlaced()
-    return "Removed the model"
+    if id then
+        Remember({ Kind = "delete", Id = id, R = Placed[id] })
+        DestroyProp(id)
+        Placed[id] = nil
+        SavePlaced()
+        return "Removed the model"
+    end
+    -- Fallback: If looking directly at an actor (e.g. rogue/orphaned NPC or prop not in Placed)
+    local _, _, hitActor = CrosshairHit()
+    if Valid(hitActor) then
+        local cname = ClassName(hitActor):lower()
+        local aname = NameOf(hitActor):lower()
+        if cname:find("bp_npc_") or aname:find("bp_npc_") or cname:find("staticmeshactor") or cname:find("companion") then
+            local addr = hitActor:GetAddress()
+            if BaseNPCs[addr] then BaseNPCs[addr] = nil end
+            for pid, pa in pairs(Props or {}) do
+                if pa == hitActor then Props[pid] = nil end
+            end
+            pcall(function() hitActor:K2_DestroyActor() end)
+            return "Destroyed rogue actor: " .. NameOf(hitActor)
+        end
+    end
+    return nil
 end
 
 local function ModelForMesh(mesh)
@@ -5207,6 +5319,9 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
             local a, why = SpawnModel(m.Mesh, { X = loc.X + fwd.X * 400, Y = loc.Y + fwd.Y * 400, Z = loc.Z - 90 })
             if a then TestProps[#TestProps + 1] = a; Say("Spawned " .. m.Name .. " 4 m in front of you (test only, not saved)")
             else Say(tostring(why)) end
+        elseif cmd == "kill" or cmd == "delete" or cmd == "del" then
+            local res = RemoveLookedAt(500)
+            Say(res or "No custom model or rogue NPC found under crosshair")
         elseif cmd == "clear" then
             for _, a in ipairs(TestProps) do if Valid(a) then pcall(function() a:K2_DestroyActor() end) end end
             TestProps = {}

@@ -2033,6 +2033,19 @@ end
 
 local FirstTickCleanupDone = false
 local function RunMinimapTick()
+    if ModRef then
+        local ok, val = pcall(function() return ModRef:GetSharedVariable("OSRSMinimap.Enabled") end)
+        if ok and val == "0" then
+            if MinimapWidget and MinimapWidget:IsValid() then
+                pcall(function() MinimapWidget:SetVisibility(1) end)
+            end
+            return
+        elseif ok and val == "1" then
+            if MinimapWidget and MinimapWidget:IsValid() and MinimapWidget:GetVisibility() ~= 0 then
+                pcall(function() MinimapWidget:SetVisibility(0) end)
+            end
+        end
+    end
     UpdateTick = UpdateTick + 1
     if not FirstTickCleanupDone then
         FirstTickCleanupDone = true
