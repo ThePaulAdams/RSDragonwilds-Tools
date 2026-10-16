@@ -887,23 +887,6 @@ function FindAllCompanions()
         companions[#companions + 1] = a
     end
 
-    for _, cls in ipairs(CompanionClassNames) do
-        local ok, list = pcall(function() return FindAllOf(cls) end)
-        if ok and list then
-            for _, a in ipairs(list) do
-                if Valid(a) then
-                    local name = NameOf(a):lower()
-                    local cname = ClassName(a):lower()
-                    if cls:find("^BP_NPC_") or cls:find("Chinchompa") or cls:find("TrainingDummy") or cls:find("ArmourMannequin") then
-                        addActor(a)
-                    elseif name:find("doric") or cname:find("doric") or name:find("companion") or cname:find("companion") then
-                        addActor(a)
-                    end
-                end
-            end
-        end
-    end
-
     for _, info in pairs(BaseNPCs or {}) do
         if info and Valid(info.Actor) then addActor(info.Actor) end
     end
@@ -919,6 +902,29 @@ function FindAllCompanions()
         if Valid(a) then addActor(a) end
     end
 
+    if #companions == 0 then
+        local specificClasses = {
+            "BP_NPC_Doric_C",
+            "BP_NPC_WiseOldMan_C",
+            "BP_NPC_Vannaka_Fellhollow_C",
+            "BP_NPC_Zanik_Fellhollow_C",
+            "BP_NPC_Cook_C",
+            "BP_NPC_Death_C",
+            "BP_NPC_PostiePete_C",
+            "BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+        }
+        for _, cls in ipairs(specificClasses) do
+            local ok, list = pcall(function() return FindAllOf(cls) end)
+            if ok and list then
+                for _, a in ipairs(list) do
+                    if Valid(a) and not NameOf(a):find("^Default__") then
+                        addActor(a)
+                    end
+                end
+            end
+        end
+    end
+
     return companions
 end
 
@@ -927,12 +933,29 @@ function CleanupCompanions(keepSingle)
     local destroyed = 0
     local kept = 0
 
+    local function safeDestroy(a)
+        if not Valid(a) then return false end
+        local isOurs = false
+        pcall(function()
+            if a.Tags then
+                for i = 1, a.Tags:Num() do
+                    if a.Tags[i]:ToString() == "BaseCompanion" then isOurs = true; break end
+                end
+            end
+        end)
+        for _, tp in ipairs(TestProps or {}) do
+            if tp == a then isOurs = true; break end
+        end
+        if isOurs then
+            pcall(function() a:K2_DestroyActor() end)
+            return true
+        end
+        return false
+    end
+
     if not keepSingle then
         for _, a in ipairs(companions) do
-            if Valid(a) then
-                pcall(function() a:K2_DestroyActor() end)
-                destroyed = destroyed + 1
-            end
+            if safeDestroy(a) then destroyed = destroyed + 1 end
         end
         BaseNPCs = {}
         TestProps = {}
@@ -987,29 +1010,9 @@ function CleanupCompanions(keepSingle)
             end
         end
 
-        if #placedNPCs == 0 then
-            local keptClasses = {}
-            for _, a in ipairs(companions) do
-                if Valid(a) then
-                    local cname = ClassName(a)
-                    if not keptClasses[cname] then
-                        keptClasses[cname] = a
-                        claimedActors[a:GetAddress()] = true
-                        kept = kept + 1
-                        BaseNPCs[a:GetAddress()] = {
-                            Actor = a,
-                            Name = NameOf(a),
-                            Key = "doric"
-                        }
-                    end
-                end
-            end
-        end
-
         for _, a in ipairs(companions) do
             if Valid(a) and not claimedActors[a:GetAddress()] then
-                pcall(function() a:K2_DestroyActor() end)
-                destroyed = destroyed + 1
+                if safeDestroy(a) then destroyed = destroyed + 1 end
             end
         end
     end
@@ -1082,75 +1085,38 @@ local function AdoptExisting()
 end
 
 local GameWorld = nil
+local IsRestoring = false
 
 local function Restore(at)
+    if IsRestoring then return 0, 0 end
+    IsRestoring = true
     local spawned, removed = 0, 0
-    if not Manager() then return 0, 0 end
-    GameWorld = WorldKey()
-    pcall(AdoptExisting)
-    pcall(function() CleanupCompanions(true) end)
+    local ok, err = pcall(function()
+        if not Manager() then return end
+        GameWorld = WorldKey()
+        pcall(AdoptExisting)
+        pcall(function() CleanupCompanions(true) end)
 
-    for id, r in pairs(Placed) do
-        local exists = id:find("^m") and true or PieceExists(id)
-        if exists == false and at and Dist(at, r) <= 300 then
-            DestroyProp(id)
-            Placed[id] = nil
-            removed = removed + 1
-        elseif exists == true and not Valid(Props[id]) then
-            local bpPath = ResolveNPCBlueprint(r.Mesh)
-            if bpPath then
-                local targetLoc = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset }
-                local allComps = FindAllCompanions()
-                local bestActor = nil
-                local bestDist = 9999999
-                local duplicates = {}
-
-                for _, a in ipairs(allComps) do
-                    if Valid(a) then
-                        local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
-                        if ok and loc then
-                            local d = Dist(loc, targetLoc)
-                            if d < 1500 then
-                                if not bestActor or d < bestDist then
-                                    if bestActor then duplicates[#duplicates + 1] = bestActor end
-                                    bestActor = a
-                                    bestDist = d
-                                else
-                                    duplicates[#duplicates + 1] = a
-                                end
-                            end
-                        end
-                    end
-                end
-
-                for _, dup in ipairs(duplicates) do
-                    pcall(function() dup:K2_DestroyActor() end)
-                end
-
-                if bestActor then
-                    Props[id] = bestActor
-                    BaseNPCs[bestActor:GetAddress()] = {
-                        Key = (r.Mesh or "doric"):lower(),
-                        Name = NameOf(bestActor),
-                        Actor = bestActor,
-                        Mesh = r.Mesh,
-                        Role = r.Role,
-                        HomeX = r.X,
-                        HomeY = r.Y,
-                        HomeZ = r.Z + Config.ZOffset + 88,
-                        HomeYaw = YawOf(r)
-                    }
-                else
-                    local a, err = SpawnModel(r.Mesh, r)
-                    if a then Props[id] = a; spawned = spawned + 1 else Log("Restore " .. id .. ": " .. tostring(err)) end
-                end
-            else
+        for id, r in pairs(Placed) do
+            local exists = id:find("^m") and true or PieceExists(id)
+            if exists == false and at and Dist(at, r) <= 300 then
+                DestroyProp(id)
+                Placed[id] = nil
+                removed = removed + 1
+            elseif exists == true and not Valid(Props[id]) then
                 local a, err = SpawnModel(r.Mesh, r)
-                if a then Props[id] = a; spawned = spawned + 1 else Log("Restore " .. id .. ": " .. tostring(err)) end
+                if a then
+                    Props[id] = a
+                    spawned = spawned + 1
+                else
+                    Log("Restore " .. id .. ": " .. tostring(err))
+                end
             end
         end
-    end
-    if removed > 0 then SavePlaced() end
+        if removed > 0 then SavePlaced() end
+    end)
+    IsRestoring = false
+    if not ok then Log("Restore error: " .. tostring(err)) end
     return spawned, removed
 end
 
@@ -1223,9 +1189,15 @@ local SyncAt = 0
 local function SyncPlaced()
     local curWorld = WorldKey()
     if not curWorld then return end
-    if GameWorld ~= curWorld then
-        GameWorld = curWorld
-        pcall(Restore)
+    if not GameWorld or GameWorld ~= curWorld then
+        local _, pawn = Pawn()
+        if Valid(pawn) then
+            GameWorld = curWorld
+            Later(2500, function()
+                if GameWorld == WorldKey() then pcall(Restore) end
+            end)
+        end
+        return
     end
     local _, pawn = Pawn()
     if pawn then
@@ -5200,20 +5172,7 @@ end
 function SeedGarrisonPoolsOnce()
     if GarrisonSeeded then return end
     GarrisonSeeded = true
-    pcall(function()
-        for _, a in ipairs(FindAllOf("DominionAICharacter") or {}) do
-            if IsWorldActor(a) and not NameOf(a):find("^Default__") then
-                GarrisonHostiles[a:GetAddress()] = a
-            end
-        end
-    end)
-    pcall(function()
-        for _, a in ipairs(FindAllOf("WorldItem") or {}) do
-            if IsWorldActor(a) and not NameOf(a):find("^Default__") then
-                GarrisonWorldItems[a:GetAddress()] = a
-            end
-        end
-    end)
+    -- Event-driven pools populated safely via NotifyOnNewObject
 end
 
 function IsHostileThreat(actor)
