@@ -372,15 +372,17 @@ local NPCMeshToBlueprint = {
     -- Wise Old Man
     ["/Game/Art/Skeleton/NPC/Humanoid/WiseOldMan_01/SK_WiseOldMan_01.SK_WiseOldMan_01"] = "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C",
     -- Vannaka
-    ["/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01"] = "/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C",
+    ["/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01"] = "/Game/Gameplay/NPCs/BP_NPC_Vannaka_FTUE.BP_NPC_Vannaka_FTUE_C",
     -- Zanik
-    ["/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01"] = "/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C",
+    ["/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01"] = "/Game/Gameplay/NPCs/BP_NPC_Zanik.BP_NPC_Zanik_C",
     -- Cook (Goblin Chef)
     ["/Game/Art/Skeleton/NPC/Humanoid/M_MED_Goblin_Ranged_01/SK_M_MED_Goblin_Ranged_01.SK_M_MED_Goblin_Ranged_01"] = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Cook.BP_NPC_Cook_C",
     -- Death
-    ["/Game/Art/Skeleton/NPC/Humanoid/Death_01/SK_Death_01.SK_Death_01"] = "/Game/Gameplay/NPCs/BP_NPC_Death.BP_NPC_Death_C",
+    ["/Game/Art/Skeleton/NPC/Humanoid/Death_01/SK_Death_01.SK_Death_01"] = "/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_Death.BP_NPC_Death_C",
     -- Postie Pete
-    ["/Game/Art/Skeleton/NPC/Hybrid/Postie_Pete_01/SK_Postie_Pete_01.SK_Postie_Pete_01"] = "/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C",
+    ["/Game/Art/Skeleton/NPC/Hybrid/Postie_Pete_01/SK_Postie_Pete_01.SK_Postie_Pete_01"] = "/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C",
+    -- KotHaar Bouncer / Guard
+    ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_KotHaar_Ket_01/SK_M_MED_KotHaar_Ket_01.SK_M_MED_KotHaar_Ket_01"] = "/Game/Gameplay/NPCs/UmS_NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
     -- Chicken
     ["/Game/Art/Skeleton/NPC/Avian/Chicken_01/SK_Chicken_01.SK_Chicken_01"] = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Chicken.BP_NPC_Quest_Chicken_C",
     -- Cow
@@ -393,8 +395,10 @@ local NPCMeshToBlueprint = {
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_05.SK_M_MED_MoonGarou_01_Outfit_05"] = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C", -- Lagra The Hunter
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_07.SK_M_MED_MoonGarou_01_Outfit_07"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
     ["/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_08.SK_M_MED_MoonGarou_01_Outfit_08"] = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
+    -- Commander Zilyana
+    ["/ScornedWilderness/Art/Skeleton/NPC/Humanoid/Zilyana_01/SK_Zilyana_01.SK_Zilyana_01"] = "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C",
     -- Chinchompas
-    ["/Game/Art/Skeleton/NPC/Creatures/Chinchompa_01/SK_Chinchompa_01.SK_Chinchompa_01"] = "/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+    ["/Game/Art/Skeleton/NPC/Creatures/Chinchompa_01/SK_Chinchompa_01.SK_Chinchompa_01"] = "/Game/Gameplay/AI/Chinchompa/BP_AI_Chinchompa_Character.BP_AI_Chinchompa_Character_C",
     ["/DowdunReach/Art/Skeleton/NPC/Creatures/Chinchompa_Carnivorous_01/SK_Chinchompa_Carnivorous_01.SK_Chinchompa_Carnivorous_01"] = "/Game/Gameplay/AI/Chinchompa/BP_AI_Chinchompa_Character.BP_AI_Chinchompa_Character_C",
     -- Base Props & Training
     ["/Game/Art/Skeleton/NPC/Mechanical/TrainingDummy_01/SK_TrainingDummy_01.SK_TrainingDummy_01"] = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_TrainingDummy.BP_BaseBuilding_TrainingDummy_C",
@@ -490,18 +494,21 @@ local NPCBarks = {
 local NPCBlueprintToFallbackMesh = {
     ["/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Doric_01/SK_Doric_01.SK_Doric_01",
     ["/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C"] = "/Game/Art/Skeleton/NPC/Humanoid/WiseOldMan_01/SK_WiseOldMan_01.SK_WiseOldMan_01",
-    ["/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01",
-    ["/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Vannaka_FTUE.BP_NPC_Vannaka_FTUE_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Vannaka_Quest.BP_NPC_Vannaka_Quest_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01",
+    ["/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Zanik.BP_NPC_Zanik_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01",
+    ["/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01",
     ["/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Cook.BP_NPC_Cook_C"] = "/Game/Art/Skeleton/NPC/Humanoid/M_MED_Goblin_Ranged_01/SK_M_MED_Goblin_Ranged_01.SK_M_MED_Goblin_Ranged_01",
-    ["/Game/Gameplay/NPCs/BP_NPC_Death.BP_NPC_Death_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Death_01/SK_Death_01.SK_Death_01",
-    ["/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C"] = "/Game/Art/Skeleton/NPC/Hybrid/Postie_Pete_01/SK_Postie_Pete_01.SK_Postie_Pete_01",
+    ["/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_Death.BP_NPC_Death_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Death_01/SK_Death_01.SK_Death_01",
+    ["/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C"] = "/Game/Art/Skeleton/NPC/Hybrid/Postie_Pete_01/SK_Postie_Pete_01.SK_Postie_Pete_01",
     ["/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_01.SK_M_MED_MoonGarou_01_Outfit_01",
     ["/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_03.SK_M_MED_MoonGarou_01_Outfit_03",
     ["/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_04.SK_M_MED_MoonGarou_01_Outfit_04",
     ["/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_05.SK_M_MED_MoonGarou_01_Outfit_05",
-    ["/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_KotHaar_Ket_01/SK_M_MED_KotHaar_Ket_01.SK_M_MED_KotHaar_Ket_01",
+    ["/Game/Gameplay/NPCs/UmS_NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_KotHaar_Ket_01/SK_M_MED_KotHaar_Ket_01.SK_M_MED_KotHaar_Ket_01",
     ["/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C"] = "/ScornedWilderness/Art/Skeleton/NPC/Humanoid/Zilyana_01/SK_Zilyana_01.SK_Zilyana_01",
-    ["/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C"] = "/Game/Art/Skeleton/NPC/Creatures/Chinchompa_01/SK_Chinchompa_01.SK_Chinchompa_01",
+    ["/Game/Gameplay/AI/Chinchompa/BP_AI_Chinchompa_Character.BP_AI_Chinchompa_Character_C"] = "/Game/Art/Skeleton/NPC/Creatures/Chinchompa_01/SK_Chinchompa_01.SK_Chinchompa_01",
 }
 
 local function ResolveNPCBlueprint(path)
@@ -511,40 +518,23 @@ local function ResolveNPCBlueprint(path)
     for k, v in pairs(NPCMeshToBlueprint) do
         if k:lower() == lower or k:lower():find(lower, 1, true) then return v end
     end
-    if lower:find("vannaka") then return "/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C" end
+    if lower:find("vannaka") then return "/Game/Gameplay/NPCs/BP_NPC_Vannaka_FTUE.BP_NPC_Vannaka_FTUE_C" end
     if lower:find("zilyana") then return "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C" end
     if lower:find("doric") then return "/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C" end
     if lower:find("wiseoldman") or lower:find("wise_old") then return "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C" end
-    if lower:find("zanik") then return "/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C" end
-    if lower:find("postie") or lower:find("parcel_pete") then return "/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C" end
-    if lower:find("kothaarbouncer") or lower:find("kothaar_ket") then return "/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C" end
-    if lower:find("moongarou_01_outfit_03") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C" end
-    if lower:find("moongarou_01_outfit_04") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C" end
-    if lower:find("moongarou_01_outfit_05") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C" end
+    if lower:find("zanik") then return "/Game/Gameplay/NPCs/BP_NPC_Zanik.BP_NPC_Zanik_C" end
+    if lower:find("postie") or lower:find("parcel_pete") then return "/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C" end
+    if lower:find("kothaarbouncer") or lower:find("kothaar_ket") or lower:find("bouncer") then return "/Game/Gameplay/NPCs/UmS_NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C" end
+    if lower:find("death") and not lower:find("cow") and not lower:find("chicken") then return "/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_Death.BP_NPC_Death_C" end
+    if lower:find("moongarou_01_outfit_01") or lower:find("elder_garou") then return "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C" end
+    if lower:find("moongarou_01_outfit_03") or lower:find("trader_hawker") or lower:find("domri") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C" end
+    if lower:find("moongarou_01_outfit_04") or lower:find("trader_smith") or lower:find("valas") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C" end
+    if lower:find("moongarou_01_outfit_05") or lower:find("trader_hunter") or lower:find("lagra") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C" end
     if path:find("BP_NPC_") or path:find("_Character_C") then return path end
     return nil
 end
 
 local function TraceGroundZ(x, y, z, ignoreActor)
-    local pc, pawn = Pawn()
-    local world = nil
-    if Valid(pc) then pcall(function() world = pc:GetWorld() end) end
-    if not Valid(world) and Valid(pawn) then pcall(function() world = pawn:GetWorld() end) end
-    if not Valid(world) then return nil end
-
-    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
-    if not Valid(ksl) then return nil end
-
-    local start = { X = x, Y = y, Z = z + 500.0 }
-    local finish = { X = x, Y = y, Z = z - 2000.0 }
-    local outHit = {}
-    local ignoreList = ignoreActor and { ignoreActor } or {}
-    local ok, hit = pcall(function()
-        return ksl:LineTraceSingle(world, start, finish, 0, false, ignoreList, 0, outHit, false, {}, {}, 0.0)
-    end)
-    if ok and hit and outHit.Location then
-        return outHit.Location.Z
-    end
     return nil
 end
 
@@ -568,12 +558,7 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
     end
     local s = r.Scale or 1
 
-    -- Terrain raycast snapping to prevent floating or sunken actors on slopes
     local spawnZ = r.Z + Config.ZOffset
-    local groundZ = TraceGroundZ(r.X, r.Y, r.Z, pawn)
-    if groundZ then
-        spawnZ = groundZ + Config.ZOffset
-    end
 
     local xf = {
         Rotation = RotToQuat(r.Pitch or 0, yaw, r.Roll or 0),
@@ -609,16 +594,6 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
             pcall(function() a.Tags:Add("BaseCompanion") end)
 
             a = gs:FinishSpawningActor(a, xf, 0)
-
-            -- Isolate companion from vanilla Fellhollow quest trees
-            if Valid(a) then
-                pcall(function()
-                    local conv = a:GetComponentByClass(StaticFindObject("/Script/Dominion.DomConversationParticipant"))
-                    if Valid(conv) then
-                        conv:K2_DestroyComponent(conv)
-                    end
-                end)
-            end
         end
     end
 
@@ -902,29 +877,6 @@ function FindAllCompanions()
         if Valid(a) then addActor(a) end
     end
 
-    if #companions == 0 then
-        local specificClasses = {
-            "BP_NPC_Doric_C",
-            "BP_NPC_WiseOldMan_C",
-            "BP_NPC_Vannaka_Fellhollow_C",
-            "BP_NPC_Zanik_Fellhollow_C",
-            "BP_NPC_Cook_C",
-            "BP_NPC_Death_C",
-            "BP_NPC_PostiePete_C",
-            "BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
-        }
-        for _, cls in ipairs(specificClasses) do
-            local ok, list = pcall(function() return FindAllOf(cls) end)
-            if ok and list then
-                for _, a in ipairs(list) do
-                    if Valid(a) and not NameOf(a):find("^Default__") then
-                        addActor(a)
-                    end
-                end
-            end
-        end
-    end
-
     return companions
 end
 
@@ -1023,65 +975,7 @@ function CleanupCompanions(keepSingle)
 end
 
 local function AdoptExisting()
-    local missing = {}
-    for id, r in pairs(Placed) do
-        if not Valid(Props[id]) then missing[#missing + 1] = id end
-    end
-    if #missing == 0 then return end
-    for _, a in ipairs(FindAllOf("StaticMeshActor") or {}) do
-        if Valid(a) and NameOf(a):find("^StaticMeshActor_") then
-            local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
-            if ok and loc then
-                for _, id in ipairs(missing) do
-                    local r = Placed[id]
-                    if not Valid(Props[id]) and Dist(loc, { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset }) < 2 then
-                        local meshPath = ""
-                        pcall(function()
-                            local sm = a.StaticMeshComponent.StaticMesh
-                            if Valid(sm) then meshPath = sm:GetFullName() end
-                        end)
-                        if meshPath:find(r.Mesh:match("[^/]+$"), 1, true) then Props[id] = a end
-                    end
-                end
-            end
-        end
-    end
-
-    local allComps = FindAllCompanions()
-    for _, id in ipairs(missing) do
-        local r = Placed[id]
-        if ResolveNPCBlueprint(r.Mesh) and not Valid(Props[id]) then
-            local targetLoc = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset }
-            local bestActor = nil
-            local bestDist = 9999999
-            for _, a in ipairs(allComps) do
-                if Valid(a) then
-                    local ok, loc = pcall(function() return a:K2_GetActorLocation() end)
-                    if ok and loc then
-                        local d = Dist(loc, targetLoc)
-                        if d < 1500 and d < bestDist then
-                            bestActor = a
-                            bestDist = d
-                        end
-                    end
-                end
-            end
-            if bestActor then
-                Props[id] = bestActor
-                BaseNPCs[bestActor:GetAddress()] = {
-                    Key = (r.Mesh or "doric"):lower(),
-                    Name = NameOf(bestActor),
-                    Actor = bestActor,
-                    Mesh = r.Mesh,
-                    Role = r.Role,
-                    HomeX = r.X,
-                    HomeY = r.Y,
-                    HomeZ = r.Z + Config.ZOffset + 88,
-                    HomeYaw = YawOf(r)
-                }
-            end
-        end
-    end
+    -- Disabled: props and NPCs are spawned cleanly via SpawnModel without sweeping GUObjectArray
 end
 
 local GameWorld = nil
@@ -1189,14 +1083,17 @@ local SyncAt = 0
 local function SyncPlaced()
     local curWorld = WorldKey()
     if not curWorld then return end
-    if not GameWorld or GameWorld ~= curWorld then
-        local _, pawn = Pawn()
-        if Valid(pawn) then
-            GameWorld = curWorld
-            Later(2500, function()
-                if GameWorld == WorldKey() then pcall(Restore) end
-            end)
-        end
+    if not GameWorld then
+        GameWorld = curWorld
+        return
+    end
+    if GameWorld ~= curWorld then
+        GameWorld = curWorld
+        Props = {}
+        BaseNPCs = {}
+        Later(5000, function()
+            if GameWorld == WorldKey() then pcall(Restore) end
+        end)
         return
     end
     local _, pawn = Pawn()
@@ -1205,7 +1102,6 @@ local function SyncPlaced()
         local _, _, rot = CameraView()
         local yaw = rot and rot.Yaw or 0
         WriteText("player.txt", string.format("%.2f|%.2f|%.2f|%.2f\n", loc.X, loc.Y, loc.Z, yaw))
-        ExportNativePieces(loc)
 
         -- Live world & save tracking
         pcall(function()
@@ -1303,11 +1199,6 @@ OnWorldChange[#OnWorldChange + 1] = function()
     CachedInstanceComps = nil
     CachedInstanceCompsAt = -1
 end
-pcall(function()
-    NotifyOnNewObject("/Script/Dominion.BuildingHISMC", function()
-        CachedInstanceCompsAt = -1
-    end)
-end)
 
 -- Instanced mesh components that may draw building pieces: the game's own
 -- BuildingHISMC first, then any other (hierarchical) instanced component, skipping
@@ -4468,190 +4359,7 @@ function HideAllQuestMarkers()
 end
 
 function UpdateQuestWorldMarkers()
-    local pc = GetPC()
-    if not Valid(pc) then
-        HideAllQuestMarkers()
-        return
-    end
-
-    local _, pawn = Pawn()
-    if not Valid(pawn) then
-        HideAllQuestMarkers()
-        return
-    end
-
-    local pLoc = nil
-    local okLoc, locRes = pcall(function() return pawn:K2_GetActorLocation() end)
-    if okLoc and locRes then pLoc = locRes end
-    if not pLoc then return end
-
-    local nowClock = os.clock()
-    if nowClock - LastDailyCheckTime > 5.0 then
-        LastDailyCheckTime = nowClock
-        pcall(CheckAllDailyQuests)
-    end
-
-    local updateMinimap = false
-    if nowClock - LastMinimapCheckTime > 1.0 then
-        LastMinimapCheckTime = nowClock
-        updateMinimap = true
-    end
-
-    local checkObjectives = false
-    if nowClock - LastObjectiveCheckTime > 0.5 then
-        LastObjectiveCheckTime = nowClock
-        checkObjectives = true
-    end
-
-    local companions = {}
-    for _, info in pairs(BaseNPCs or {}) do
-        if info and Valid(info.Actor) then companions[#companions + 1] = info end
-    end
-    if #companions == 0 then
-        if nowClock - LastCompanionScanTime > 5.0 then
-            LastCompanionScanTime = nowClock
-            CachedWorldCompanions = FindAllCompanions()
-        end
-        for _, a in ipairs(CachedWorldCompanions or {}) do
-            if Valid(a) then
-                companions[#companions + 1] = { Actor = a, Name = "Doric", Key = "doric" }
-            end
-        end
-    end
-
-    local seenMarkers = {}
-    local timeSec = os.clock()
-
-    for _, info in ipairs(companions) do
-        local actor = info.Actor
-        if Valid(actor) then
-            local addr = nil
-            pcall(function() addr = actor:GetAddress() end)
-            if addr then
-                local quest = QuestForNPC(info)
-                if quest then
-                    local qid = quest.id
-                    local st = QuestStates[qid] and QuestStates[qid].state or "unstarted"
-                    local markerType = nil
-
-                    if st == "unstarted" then
-                        markerType = "available"
-                    elseif st == "active" then
-                        if checkObjectives or LastObjectiveResult[qid] == nil then
-                            LastObjectiveResult[qid] = CheckQuestObjective(quest)
-                        end
-                        if LastObjectiveResult[qid] then
-                            markerType = "turnin"
-                        else
-                            markerType = "active"
-                        end
-                    end
-
-                    if updateMinimap then
-                        pcall(EnsureCompanionMinimapIcon, actor, quest, markerType)
-                    end
-
-                    local m = EnsureQuestMarkerWidget(addr, pc)
-                    if m and markerType then
-                        seenMarkers[addr] = true
-                        local aLoc = nil
-                        pcall(function() aLoc = actor:K2_GetActorLocation() end)
-
-                        if aLoc then
-                            local dist = Dist(aLoc, pLoc)
-                            if dist <= 3500 then
-                                local bob = math.sin(timeSec * 3.8) * 7.0
-                                local offsetZ = 85.0
-                                pcall(function()
-                                    if Valid(actor.CapsuleComponent) then
-                                        local hh = actor.CapsuleComponent:GetScaledCapsuleHalfHeight()
-                                        if hh and hh > 30.0 then offsetZ = hh + 25.0 end
-                                    end
-                                end)
-                                local headLoc = { X = aLoc.X, Y = aLoc.Y, Z = aLoc.Z + offsetZ + bob }
-
-                                local okP, retP, scrPos = pcall(function()
-                                    return pc:ProjectWorldLocationToScreen(headLoc, false)
-                                end)
-
-                                if okP and retP == true and scrPos and scrPos.X and scrPos.Y then
-                                    local lay = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
-                                    local dpi = 1.0
-                                    if Valid(lay) then
-                                        local s = lay:GetViewportScale(pc)
-                                        if s and s > 0 then dpi = s end
-                                    end
-                                    local sx = scrPos.X / dpi
-                                    local sy = scrPos.Y / dpi
-
-                                    local scale = math.max(0.8, math.min(1.2, 1.25 - (dist / 3500) * 0.45))
-                                    local bw = math.floor(52 * scale)
-                                    local bh = math.floor(48 * scale)
-
-                                    local w = m.Widget
-                                    if Valid(w) then
-                                        w:SetAlignmentInViewport({ X = 0.5, Y = 1.0 })
-                                        w:SetAnchorsInViewport({ Minimum = { X = 0.0, Y = 0.0 }, Maximum = { X = 0.0, Y = 0.0 } })
-                                        w:SetPositionInViewport({ X = sx, Y = sy }, false)
-                                        w:SetDesiredSizeInViewport({ X = bw, Y = bh })
-
-                                        local symbol = "!"
-                                        if markerType == "available" then
-                                            symbol = "!"
-                                        elseif markerType == "active" then
-                                            symbol = "?"
-                                        elseif markerType == "turnin" then
-                                            symbol = "?"
-                                        end
-
-                                        pcall(function()
-                                            if Valid(w.LabelText) then
-                                                w.LabelText:SetText(Text(symbol))
-                                            elseif Valid(w.ButtonLabel) then
-                                                w.ButtonLabel:SetText(Text(symbol))
-                                            else
-                                                w:SetLabelText(Text(symbol))
-                                            end
-                                        end)
-
-                                        pcall(function()
-                                            local txt = Valid(w.LabelText) and w.LabelText or (Valid(w.ButtonLabel) and w.ButtonLabel or nil)
-                                            if Valid(txt) then
-                                                local col = { R = 1.0, G = 0.85, B = 0.15, A = 1.0 }
-                                                if markerType == "active" then
-                                                    col = { R = 0.75, G = 0.8, B = 0.85, A = 0.95 }
-                                                elseif markerType == "turnin" then
-                                                    local pulse = 0.8 + 0.2 * math.sin(timeSec * 6.0)
-                                                    col = { R = 1.0, G = pulse, B = 0.1, A = 1.0 }
-                                                end
-                                                txt:SetColorAndOpacity({ SpecifiedColor = col, ColorUseRule = 0 })
-                                            end
-                                        end)
-
-                                        pcall(function() w:SetVisibility(0) end) -- VISIBLE
-                                        m.Visible = true
-                                    end
-                                else
-                                    if Valid(m.Widget) then pcall(function() m.Widget:SetVisibility(1) end) end
-                                    m.Visible = false
-                                end
-                            else
-                                if Valid(m.Widget) then pcall(function() m.Widget:SetVisibility(1) end) end
-                                m.Visible = false
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    for addr, m in pairs(QuestMarkerUI.Markers) do
-        if not seenMarkers[addr] and m.Visible then
-            if Valid(m.Widget) then pcall(function() m.Widget:SetVisibility(1) end) end
-            m.Visible = false
-        end
-    end
+    -- Safely disabled: 2D screen projection of world markers is prone to native crashes in UE4SS
 end
 
 -- Key bindings for dialogue choices
@@ -5109,12 +4817,12 @@ end
 --   * caretaker : Sweeps loose WorldItem drops near base into player inventory / storage
 --   * banker    : Provides quick restock / heal / repair blessing when interacted with
 -- -------------------------------------------------------------------------
-GarrisonEnabled = true
+GarrisonEnabled = false
 LastGarrisonTick = 0
 RaidRallyTarget = nil
 RaidRallyUntil = 0
-GarrisonHostiles = {} -- addr -> actor (event-driven pool)
-GarrisonWorldItems = {} -- addr -> actor (event-driven pool)
+GarrisonHostiles = {}
+GarrisonWorldItems = {}
 GarrisonSeeded = false
 
 OnWorldChange[#OnWorldChange + 1] = function()
@@ -5131,19 +4839,6 @@ function IsWorldActor(a)
     end)
     return ok and res
 end
-
-pcall(function()
-    NotifyOnNewObject("/Script/Dominion.DominionAICharacter", function(actor)
-        if IsWorldActor(actor) then
-            pcall(function() GarrisonHostiles[actor:GetAddress()] = actor end)
-        end
-    end)
-    NotifyOnNewObject("/Script/Dominion.WorldItem", function(actor)
-        if IsWorldActor(actor) then
-            pcall(function() GarrisonWorldItems[actor:GetAddress()] = actor end)
-        end
-    end)
-end)
 
 if ModCore and ModCore.On then
     ModCore.On("RaidDetected", function(data)
@@ -5515,19 +5210,20 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
                 doric = "/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C",
                 wise = "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C",
                 wiseoldman = "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C",
-                vannaka = "/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C",
-                zanik = "/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C",
+                vannaka = "/Game/Gameplay/NPCs/BP_NPC_Vannaka_FTUE.BP_NPC_Vannaka_FTUE_C",
+                zanik = "/Game/Gameplay/NPCs/BP_NPC_Zanik.BP_NPC_Zanik_C",
                 cook = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Cook.BP_NPC_Cook_C",
-                death = "/Game/Gameplay/NPCs/BP_NPC_Death.BP_NPC_Death_C",
-                pete = "/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C",
+                death = "/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_Death.BP_NPC_Death_C",
+                pete = "/Game/Gameplay/NPCs/Fellhollow_NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C",
                 chicken = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Chicken.BP_NPC_Quest_Chicken_C",
                 cow = "/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Quest_Cow.BP_NPC_Quest_Cow_C",
                 garou = "/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C",
-                chin = "/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
-                pet_chin = "/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C",
+                chin = "/Game/Gameplay/AI/Chinchompa/BP_AI_Chinchompa_Character.BP_AI_Chinchompa_Character_C",
+                pet_chin = "/Game/Gameplay/AI/Chinchompa/BP_AI_Chinchompa_Character.BP_AI_Chinchompa_Character_C",
                 dummy = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_TrainingDummy.BP_BaseBuilding_TrainingDummy_C",
                 mannequin = "/Game/Gameplay/BaseBuilding/Actors/Props/BP_BaseBuilding_ArmourMannequin.BP_BaseBuilding_ArmourMannequin_C",
-                guard = "/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
+                guard = "/Game/Gameplay/NPCs/UmS_NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
+                bouncer = "/Game/Gameplay/NPCs/UmS_NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C",
                 zilyana = "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C",
                 domri = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C",
                 merchant = "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C",
