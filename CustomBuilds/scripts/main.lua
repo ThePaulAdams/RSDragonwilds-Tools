@@ -1824,7 +1824,7 @@ local function UpdateGhost()
     end
     pcall(function() Ghost.Actor:SetActorHiddenInGame(false) end)
     Ghost.Actor:K2_SetActorLocationAndRotation({ X = pivot.X, Y = pivot.Y, Z = pivot.Z + Config.ZOffset },
-        { Pitch = spitch, Yaw = syaw, Roll = sroll }, false, {}, true)
+        { Pitch = spitch, Yaw = syaw, Roll = sroll }, false, nil, true)
     pcall(function() Ghost.Actor:SetActorScale3D({ X = o.Scale, Y = o.Scale, Z = o.Scale }) end)
 end
 
@@ -4892,7 +4892,8 @@ pcall(function() ModCore = require("ModCore") end)
 function ToastMsg(msg, col, dur)
     Say(msg)
     if ModCore and ModCore.Toast then
-        pcall(function() ModCore.Toast("[CustomBuilds] " .. tostring(msg), col or "GOLD", dur or 4000) end)
+        local sec = (type(dur) == "number" and dur > 50) and (dur / 1000) or (type(dur) == "number" and dur) or 4.0
+        pcall(function() ModCore.Toast(tostring(msg), sec, "CustomBuilds") end)
     end
 end
 
@@ -5151,14 +5152,22 @@ OnWorldChange[#OnWorldChange + 1] = function()
     RaidRallyTarget = nil
 end
 
+function IsWorldActor(a)
+    if not Valid(a) then return false end
+    local ok, res = pcall(function()
+        return not a:HasAnyFlags(EObjectFlags.RF_ClassDefaultObject | EObjectFlags.RF_ArchetypeObject)
+    end)
+    return ok and res
+end
+
 pcall(function()
     NotifyOnNewObject("/Script/Dominion.DominionAICharacter", function(actor)
-        if Valid(actor) then
+        if IsWorldActor(actor) then
             pcall(function() GarrisonHostiles[actor:GetAddress()] = actor end)
         end
     end)
     NotifyOnNewObject("/Script/Dominion.WorldItem", function(actor)
-        if Valid(actor) then
+        if IsWorldActor(actor) then
             pcall(function() GarrisonWorldItems[actor:GetAddress()] = actor end)
         end
     end)
@@ -5193,14 +5202,14 @@ function SeedGarrisonPoolsOnce()
     GarrisonSeeded = true
     pcall(function()
         for _, a in ipairs(FindAllOf("DominionAICharacter") or {}) do
-            if Valid(a) and not NameOf(a):find("^Default__") then
+            if IsWorldActor(a) and not NameOf(a):find("^Default__") then
                 GarrisonHostiles[a:GetAddress()] = a
             end
         end
     end)
     pcall(function()
         for _, a in ipairs(FindAllOf("WorldItem") or {}) do
-            if Valid(a) and not NameOf(a):find("^Default__") then
+            if IsWorldActor(a) and not NameOf(a):find("^Default__") then
                 GarrisonWorldItems[a:GetAddress()] = a
             end
         end
@@ -5208,7 +5217,7 @@ function SeedGarrisonPoolsOnce()
 end
 
 function IsHostileThreat(actor)
-    if not Valid(actor) then return false end
+    if not IsWorldActor(actor) then return false end
     local addr = actor:GetAddress()
     if BaseNPCs and BaseNPCs[addr] then return false end
     local cname = ClassName(actor):lower()
@@ -5233,124 +5242,140 @@ function UpdateGarrison(now)
     if not Valid(pawn) then return end
 
     for addr, npc in pairs(BaseNPCs) do
-        local a = npc.Actor
-        if Valid(a) then
-            local role = InferNPCRole(npc)
-            local nLoc = nil
-            pcall(function() nLoc = a:K2_GetActorLocation() end)
+        pcall(function()
+            local a = npc.Actor
+            if Valid(a) then
+                local role = InferNPCRole(npc)
+                local nLoc = nil
+                pcall(function() nLoc = a:K2_GetActorLocation() end)
 
-            if nLoc then
-                local homeX = npc.HomeX or nLoc.X
-                local homeY = npc.HomeY or nLoc.Y
-                local homeZ = npc.HomeZ or nLoc.Z
+                if nLoc then
+                    local homeX = npc.HomeX or nLoc.X
+                    local homeY = npc.HomeY or nLoc.Y
+                    local homeZ = npc.HomeZ or nLoc.Z
 
-                if role == "guard" then
-                    -- Find closest hostile within 30m of Guard's home post
-                    local bestEnemy, bestDist = nil, 3000
-                    for hAddr, hActor in pairs(GarrisonHostiles) do
-                        if not Valid(hActor) then
-                            GarrisonHostiles[hAddr] = nil
-                        elseif IsHostileThreat(hActor) then
-                            local eLoc = nil
-                            pcall(function() eLoc = hActor:K2_GetActorLocation() end)
-                            if eLoc then
-                                local d = Dist(eLoc, { X = homeX, Y = homeY, Z = homeZ })
-                                if d < bestDist then
-                                    bestDist = d
-                                    bestEnemy = { Actor = hActor, Loc = eLoc, Addr = hAddr }
+                    if role == "guard" then
+                        -- Find closest hostile within 30m of Guard's home post
+                        local bestEnemy, bestDist = nil, 3000
+                        for hAddr, hActor in pairs(GarrisonHostiles) do
+                            if not Valid(hActor) then
+                                GarrisonHostiles[hAddr] = nil
+                            elseif IsHostileThreat(hActor) then
+                                local eLoc = nil
+                                pcall(function() eLoc = hActor:K2_GetActorLocation() end)
+                                if eLoc then
+                                    local d = Dist(eLoc, { X = homeX, Y = homeY, Z = homeZ })
+                                    if d < bestDist then
+                                        bestDist = d
+                                        bestEnemy = { Actor = hActor, Loc = eLoc, Addr = hAddr }
+                                    end
                                 end
                             end
                         end
-                    end
 
-                    if bestEnemy then
-                        local eLoc = bestEnemy.Loc
-                        local dx, dy = eLoc.X - nLoc.X, eLoc.Y - nLoc.Y
-                        local distToEnemy = math.sqrt(dx * dx + dy * dy)
-                        local faceYaw = math.deg(math.atan(dy, dx))
+                        if bestEnemy then
+                            local eLoc = bestEnemy.Loc
+                            local dx, dy = eLoc.X - nLoc.X, eLoc.Y - nLoc.Y
+                            local distToEnemy = math.sqrt(dx * dx + dy * dy)
+                            local faceYaw = math.deg(math.atan(dy, dx))
 
-                        if distToEnemy > 180 then
-                            -- Step toward enemy to intercept
-                            local step = math.min(220, distToEnemy - 140)
-                            local nx = nLoc.X + (dx / distToEnemy) * step
-                            local ny = nLoc.Y + (dy / distToEnemy) * step
-                            pcall(function()
-                                a:K2_SetActorLocationAndRotation({ X = nx, Y = ny, Z = eLoc.Z + 10 }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, {}, true)
-                            end)
-                        else
-                            pcall(function()
-                                a:K2_SetActorRotation({ Pitch = 0, Yaw = faceYaw, Roll = 0 }, false)
-                            end)
-                            -- Strike hostile enemy breaching the base
-                            pcall(function()
-                                local hComp = bestEnemy.Actor.HealthComponent or bestEnemy.Actor:GetComponentByClass(StaticFindObject("/Script/Dominion.HealthComponent"))
-                                if Valid(hComp) then
-                                    local curHP = tonumber(hComp.CurrentHealth) or 100
-                                    if curHP > 25 then
-                                        hComp.CurrentHealth = curHP - 25
-                                    else
-                                        bestEnemy.Actor:K2_DestroyActor()
-                                        GarrisonHostiles[bestEnemy.Addr] = nil
-                                        ToastMsg((npc.Name or "Garrison Guard") .. " defeated an invading hostile!", "GOLD", 3000)
-                                    end
-                                end
-                            end)
-                        end
-                    elseif now < RaidRallyUntil and RaidRallyTarget then
-                        -- Move toward raid rally point if within 45m of home post
-                        local dRally = Dist(RaidRallyTarget, { X = homeX, Y = homeY, Z = homeZ })
-                        if dRally < 4500 then
-                            local dx, dy = RaidRallyTarget.X - nLoc.X, RaidRallyTarget.Y - nLoc.Y
-                            local dist = math.sqrt(dx * dx + dy * dy)
-                            if dist > 250 then
-                                local faceYaw = math.deg(math.atan(dy, dx))
-                                local nx = nLoc.X + (dx / dist) * math.min(200, dist - 200)
-                                local ny = nLoc.Y + (dy / dist) * math.min(200, dist - 200)
+                            if distToEnemy > 180 then
+                                -- Step toward enemy to intercept
+                                local step = math.min(220, distToEnemy - 140)
+                                local nx = nLoc.X + (dx / distToEnemy) * step
+                                local ny = nLoc.Y + (dy / distToEnemy) * step
                                 pcall(function()
-                                    a:K2_SetActorLocationAndRotation({ X = nx, Y = ny, Z = nLoc.Z }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, {}, true)
+                                    a:K2_SetActorLocationAndRotation({ X = nx, Y = ny, Z = eLoc.Z + 10 }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, nil, true)
+                                end)
+                            else
+                                pcall(function()
+                                    a:K2_SetActorRotation({ Pitch = 0, Yaw = faceYaw, Roll = 0 }, false)
+                                end)
+                                -- Strike hostile enemy breaching the base
+                                pcall(function()
+                                    local hComp = bestEnemy.Actor.HealthComponent or bestEnemy.Actor:GetComponentByClass(StaticFindObject("/Script/Dominion.HealthComponent"))
+                                    if Valid(hComp) then
+                                        local curHP = tonumber(hComp.CurrentHealth) or 100
+                                        if curHP > 25 then
+                                            hComp.CurrentHealth = curHP - 25
+                                        else
+                                            bestEnemy.Actor:K2_DestroyActor()
+                                            GarrisonHostiles[bestEnemy.Addr] = nil
+                                            ToastMsg((npc.Name or "Garrison Guard") .. " defeated an invading hostile!", "GOLD", 3000)
+                                        end
+                                    end
+                                end)
+                            end
+                        elseif now < RaidRallyUntil and RaidRallyTarget then
+                            -- Move toward raid rally point if within 45m of home post
+                            local dRally = Dist(RaidRallyTarget, { X = homeX, Y = homeY, Z = homeZ })
+                            if dRally < 4500 then
+                                local dx, dy = RaidRallyTarget.X - nLoc.X, RaidRallyTarget.Y - nLoc.Y
+                                local dist = math.sqrt(dx * dx + dy * dy)
+                                if dist > 250 then
+                                    local faceYaw = math.deg(math.atan(dy, dx))
+                                    local nx = nLoc.X + (dx / dist) * math.min(200, dist - 200)
+                                    local ny = nLoc.Y + (dy / dist) * math.min(200, dist - 200)
+                                    pcall(function()
+                                        a:K2_SetActorLocationAndRotation({ X = nx, Y = ny, Z = nLoc.Z }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, nil, true)
+                                    end)
+                                end
+                            end
+                        else
+                            -- Return to home post if wandered > 1.5m away
+                            local dx, dy = homeX - nLoc.X, homeY - nLoc.Y
+                            local distHome = math.sqrt(dx * dx + dy * dy)
+                            if distHome > 150 then
+                                local faceYaw = npc.HomeYaw or 0
+                                pcall(function()
+                                    a:K2_SetActorLocationAndRotation({ X = homeX, Y = homeY, Z = homeZ }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, nil, true)
                                 end)
                             end
                         end
-                    else
-                        -- Return to home post if wandered > 1.5m away
-                        local dx, dy = homeX - nLoc.X, homeY - nLoc.Y
-                        local distHome = math.sqrt(dx * dx + dy * dy)
-                        if distHome > 150 then
-                            local faceYaw = npc.HomeYaw or 0
-                            pcall(function()
-                                a:K2_SetActorLocationAndRotation({ X = homeX, Y = homeY, Z = homeZ }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, {}, true)
-                            end)
-                        end
-                    end
 
-                elseif role == "caretaker" then
-                    -- Sweep nearby loose WorldItem drops within 25m of caretaker post
-                    for wAddr, wActor in pairs(GarrisonWorldItems) do
-                        if not Valid(wActor) then
-                            GarrisonWorldItems[wAddr] = nil
-                        else
-                            local wLoc = nil
-                            pcall(function() wLoc = wActor:K2_GetActorLocation() end)
-                            if wLoc and Dist(wLoc, { X = homeX, Y = homeY, Z = homeZ }) < 2500 then
-                                -- Face the dropped item and collect it for the player
-                                local dx, dy = wLoc.X - nLoc.X, wLoc.Y - nLoc.Y
-                                local faceYaw = math.deg(math.atan(dy, dx))
-                                pcall(function() a:K2_SetActorRotation({ Pitch = 0, Yaw = faceYaw, Roll = 0 }, false) end)
-                               -- Teleport drop directly to player pawn for instant pickup
-                                local pLoc = pawn:K2_GetActorLocation()
-                                if pLoc then
-                                    pcall(function()
-                                        wActor:K2_SetActorLocation({ X = pLoc.X, Y = pLoc.Y, Z = pLoc.Z + 20 }, false, {}, true)
-                                    end)
+                    elseif role == "caretaker" then
+                        -- Sweep nearby loose WorldItem drops within 25m of caretaker post
+                        for wAddr, wActor in pairs(GarrisonWorldItems) do
+                            if not Valid(wActor) then
+                                GarrisonWorldItems[wAddr] = nil
+                            elseif IsWorldActor(wActor) then
+                                local wLoc = nil
+                                pcall(function() wLoc = wActor:K2_GetActorLocation() end)
+                                if wLoc and Dist(wLoc, { X = homeX, Y = homeY, Z = homeZ }) < 2500 then
+                                    -- Face the dropped item and collect it for the player
+                                    local dx, dy = wLoc.X - nLoc.X, wLoc.Y - nLoc.Y
+                                    local faceYaw = math.deg(math.atan(dy, dx))
+                                    pcall(function() a:K2_SetActorRotation({ Pitch = 0, Yaw = faceYaw, Roll = 0 }, false) end)
+                                    -- Magnetize drop directly to player pawn for safe native pickup
+                                    local mag = nil
+                                    if wActor.GetMagneticComponent then
+                                        pcall(function() mag = wActor:GetMagneticComponent() end)
+                                    end
+                                    if not mag or not Valid(mag) then
+                                        mag = wActor.MagneticComponentGrantItem
+                                    end
+                                    if Valid(mag) then
+                                        pcall(function()
+                                            mag.bMagnetizeWithFullInventory = false
+                                            mag:BP_MagnetizeToPlayer(pawn, true)
+                                        end)
+                                    else
+                                        local pLoc = pawn:K2_GetActorLocation()
+                                        if pLoc then
+                                            pcall(function()
+                                                wActor:K2_SetActorLocation({ X = pLoc.X, Y = pLoc.Y, Z = pLoc.Z + 20 }, false, nil, true)
+                                            end)
+                                        end
+                                    end
                                     GarrisonWorldItems[wAddr] = nil
+                                    break
                                 end
-                                break
                             end
                         end
                     end
                 end
             end
-        end
+        end)
     end
 end
 
