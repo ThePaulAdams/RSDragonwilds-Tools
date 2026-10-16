@@ -96,6 +96,7 @@ end
 -- the mod drop all its references without touching them.
 local OnWorldChange = {}   -- functions that drop references
 local LastWorld = nil
+local LastWorldCheckTime = 0
 
 -- The local player controller, remembered when the player (re)spawns. Timers use only
 -- this reference and never scan the game's objects: while a world is being torn down
@@ -154,7 +155,10 @@ local function WorldKey()
     return key
 end
 
-local function CheckWorld()
+local function CheckWorld(force)
+    local now = os.clock()
+    if not force and now - LastWorldCheckTime < 1.0 and LastWorld then return LastWorld end
+    LastWorldCheckTime = now
     local key = WorldKey()
     if key ~= LastWorld then
         LastWorld = key
@@ -593,9 +597,6 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
                 end)
             end
 
-            -- Companion identification tag
-            pcall(function() a.Tags:Add("BaseCompanion") end)
-
             a = gs:FinishSpawningActor(a, xf, 0)
             if Valid(a) then
                 pcall(function()
@@ -630,7 +631,6 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
                         pcall(function() c.bNeverDistanceCull = true end)
                     end
                     pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
-                    pcall(function() a.Tags:Add("BaseCompanion") end)
                     a = gs:FinishSpawningActor(a, xf, 1)
                 end
             end
@@ -903,22 +903,14 @@ function CleanupCompanions(keepSingle)
 
     local function safeDestroy(a)
         if not Valid(a) then return false end
-        local isOurs = false
-        pcall(function()
-            if a.Tags then
-                for i = 1, a.Tags:Num() do
-                    if a.Tags[i]:ToString() == "BaseCompanion" then isOurs = true; break end
-                end
-            end
-        end)
-        for _, tp in ipairs(TestProps or {}) do
-            if tp == a then isOurs = true; break end
+        local addr = nil
+        pcall(function() addr = a:GetAddress() end)
+        if addr then BaseNPCs[addr] = nil end
+        for id, pActor in pairs(Props or {}) do
+            if pActor == a then Props[id] = nil end
         end
-        if isOurs then
-            pcall(function() a:K2_DestroyActor() end)
-            return true
-        end
-        return false
+        pcall(function() a:K2_DestroyActor() end)
+        return true
     end
 
     if not keepSingle then
@@ -999,6 +991,8 @@ local IsRestoring = false
 
 local function Restore(at)
     if IsRestoring then return 0, 0 end
+    local _, pawn = Pawn()
+    if not Valid(pawn) then return 0, 0 end
     IsRestoring = true
     local spawned, removed = 0, 0
     local ok, err = pcall(function()
@@ -1787,15 +1781,15 @@ local function CheckPortals()
                     local z = r.Z + 120
                     local ashesMesh = "/Game/Art/Env/Props/Env_Props/Human_Props/Campsite/SM_Campfire_01_Ashes.SM_Campfire_01_Ashes"
 
-                    if not Valid(Props[fxKey1]) then
+                    if Props[fxKey1] == nil then
                         local r1 = { X = r.X - fwdX * 8, Y = r.Y - fwdY * 8, Z = z, Pitch = -90, Roll = 0, Yaw = yaw, Scale = s }
                         local a1 = SpawnModel(ashesMesh, r1)
-                        if a1 then Props[fxKey1] = a1 end
+                        Props[fxKey1] = a1 or false
                     end
-                    if not Valid(Props[fxKey2]) then
+                    if Props[fxKey2] == nil then
                         local r2 = { X = r.X + fwdX * 8, Y = r.Y + fwdY * 8, Z = z, Pitch = 90, Roll = 0, Yaw = yaw, Scale = s }
                         local a2 = SpawnModel(ashesMesh, r2)
-                        if a2 then Props[fxKey2] = a2 end
+                        Props[fxKey2] = a2 or false
                     end
                 end
             end
@@ -5500,16 +5494,6 @@ pcall(LoadQuests)
 Log("Ready. F10 console: cb")
 ModReady = true
 
--- Loaded (or reloaded) while already in a world: put models back and keep bases hidden.
-ExecuteInGameThread(function()
-    GetPC()
-    if WorldKey() then
-        CheckWorld()
-        pcall(Restore)
-        pcall(function() CleanupCompanions(true) end)
-        StartHideTimer()
-    end
-end)
 
 -- The ghost's loop, created once here (never from inside another timer).
 if LoopInGameThreadWithDelay then
