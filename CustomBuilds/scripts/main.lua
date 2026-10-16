@@ -4886,10 +4886,10 @@ end
 -- =========================================================================
 -- Shared ModCore Integration, HISM Batching, Native Server Commit & Garrison
 -- =========================================================================
-local ModCore = nil
+ModCore = nil
 pcall(function() ModCore = require("ModCore") end)
 
-local function ToastMsg(msg, col, dur)
+function ToastMsg(msg, col, dur)
     Say(msg)
     if ModCore and ModCore.Toast then
         pcall(function() ModCore.Toast("[CustomBuilds] " .. tostring(msg), col or "GOLD", dur or 4000) end)
@@ -4901,7 +4901,7 @@ end
 -- Consolidates repeated static meshes in placed builds into instanced HISM
 -- components to drastically reduce draw calls on massive architectural builds.
 -- -------------------------------------------------------------------------
-local BatchedComps = {}   -- meshPath -> { Comp, Ids = {} }
+BatchedComps = {}   -- meshPath -> { Comp, Ids = {} }
 OnWorldChange[#OnWorldChange + 1] = function() BatchedComps = {} end
 
 function UnbatchPlacedMeshes()
@@ -5017,9 +5017,9 @@ end
 -- BuildModeComponent:Server_SpawnBuilding so unmodded multiplayer guests
 -- see them and they save natively into the game's .sav file.
 -- -------------------------------------------------------------------------
-local PieceAssetMap = nil -- shortMeshName -> assetName
+PieceAssetMap = nil -- shortMeshName -> assetName
 
-local function LoadPieceAssetMap()
+function LoadPieceAssetMap()
     if PieceAssetMap then return PieceAssetMap end
     PieceAssetMap = {}
     local text = ReadFile(ModDir .. "pieces_map.txt")
@@ -5037,7 +5037,7 @@ local function LoadPieceAssetMap()
     return PieceAssetMap
 end
 
-local function BuildPieceIndexTable()
+function BuildPieceIndexTable()
     local byName = {}
     for _, d in ipairs(FindAllOf("BuildingPieceData") or {}) do
         if Valid(d) and not NameOf(d):find("^Default__") then
@@ -5052,7 +5052,7 @@ local function BuildPieceIndexTable()
     return byName
 end
 
-local function ResolvePieceDataIndex(meshPath)
+function ResolvePieceDataIndex(meshPath)
     if not meshPath then return nil, nil end
     local map = LoadPieceAssetMap()
     local idxByName = BuildPieceIndexTable()
@@ -5136,13 +5136,13 @@ end
 --   * caretaker : Sweeps loose WorldItem drops near base into player inventory / storage
 --   * banker    : Provides quick restock / heal / repair blessing when interacted with
 -- -------------------------------------------------------------------------
-local GarrisonEnabled = true
-local LastGarrisonTick = 0
-local RaidRallyTarget = nil
-local RaidRallyUntil = 0
-local GarrisonHostiles = {} -- addr -> actor (event-driven pool)
-local GarrisonWorldItems = {} -- addr -> actor (event-driven pool)
-local GarrisonSeeded = false
+GarrisonEnabled = true
+LastGarrisonTick = 0
+RaidRallyTarget = nil
+RaidRallyUntil = 0
+GarrisonHostiles = {} -- addr -> actor (event-driven pool)
+GarrisonWorldItems = {} -- addr -> actor (event-driven pool)
+GarrisonSeeded = false
 
 OnWorldChange[#OnWorldChange + 1] = function()
     GarrisonHostiles = {}
@@ -5174,7 +5174,7 @@ if ModCore and ModCore.On then
     end)
 end
 
-local function InferNPCRole(npc)
+function InferNPCRole(npc)
     if not npc then return "companion" end
     if npc.Role and npc.Role ~= "" then return npc.Role:lower() end
     local k = (npc.Key or npc.Name or ""):lower()
@@ -5188,7 +5188,7 @@ local function InferNPCRole(npc)
     return "companion"
 end
 
-local function SeedGarrisonPoolsOnce()
+function SeedGarrisonPoolsOnce()
     if GarrisonSeeded then return end
     GarrisonSeeded = true
     pcall(function()
@@ -5207,7 +5207,7 @@ local function SeedGarrisonPoolsOnce()
     end)
 end
 
-local function IsHostileThreat(actor)
+function IsHostileThreat(actor)
     if not Valid(actor) then return false end
     local addr = actor:GetAddress()
     if BaseNPCs and BaseNPCs[addr] then return false end
