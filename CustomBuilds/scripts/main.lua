@@ -582,23 +582,19 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
             a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
         end
         if Valid(a) then
-            -- Enable movable root mobility so rotation & interaction positioning are permitted
-            pcall(function()
-                if Valid(a.RootComponent) then
-                    a.RootComponent:SetMobility(2) -- EComponentMobility::Movable
-                end
-            end)
-
-            -- Automatically hide tutorial placeholder boxes/crates baked into FTUE character blueprints
-            for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
-                pcall(function()
-                    local comp = a[prop]
-                    if Valid(comp) then comp:SetVisibility(false, false) end
-                end)
-            end
-
             a = gs:FinishSpawningActor(a, xf, 0)
             if Valid(a) then
+                pcall(function()
+                    if Valid(a.RootComponent) then
+                        a.RootComponent:SetMobility(2)
+                    end
+                end)
+                for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
+                    pcall(function()
+                        local comp = a[prop]
+                        if Valid(comp) then comp:SetVisibility(false, false) end
+                    end)
+                end
                 pcall(function()
                     if Valid(a.Mesh) then
                         a.Mesh:SetVisibility(true, true)
@@ -624,14 +620,18 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
             if Valid(skCls) then
                 a = gs:BeginDeferredActorSpawnFromClass(pawn, skCls, xf, 1, nil, 1)
                 if Valid(a) then
-                    local c = a.SkeletalMeshComponent
-                    if Valid(c) then
-                        pcall(function() c:SetMobility(2) end)
-                        pcall(function() c:SetSkeletalMeshAsset(skMesh) end)
-                        pcall(function() c.bNeverDistanceCull = true end)
-                    end
-                    pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
                     a = gs:FinishSpawningActor(a, xf, 1)
+                    if Valid(a) then
+                        pcall(function()
+                            if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end
+                            local c = a.SkeletalMeshComponent
+                            if Valid(c) then
+                                c:SetMobility(2)
+                                c:SetSkeletalMeshAsset(skMesh)
+                                c.bNeverDistanceCull = true
+                            end
+                        end)
+                    end
                 end
             end
         end
@@ -692,14 +692,17 @@ local function SpawnModel(meshPath, r, movable)
         local cls = StaticFindObject("/Script/Engine.SkeletalMeshActor")
         local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
         if not Valid(a) then return nil, "skel spawn failed" end
-        local c = a.SkeletalMeshComponent
-        if movable then
-            pcall(function() c:SetMobility(2) end)
-            pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
-        end
-        pcall(function() c:SetSkeletalMeshAsset(mesh) end)
-        pcall(function() c.bNeverDistanceCull = true end)
         a = gs:FinishSpawningActor(a, xf, 1)
+        if not Valid(a) then return nil, "skel finish spawn failed" end
+        pcall(function()
+            if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end
+            local c = a.SkeletalMeshComponent
+            if Valid(c) then
+                c:SetMobility(2)
+                c:SetSkeletalMeshAsset(mesh)
+                c.bNeverDistanceCull = true
+            end
+        end)
         return a
     end
 
@@ -707,24 +710,18 @@ local function SpawnModel(meshPath, r, movable)
     local cls = StaticFindObject("/Script/Engine.StaticMeshActor")
     local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
     if not Valid(a) then return nil, "spawn failed" end
-    local c = a.StaticMeshComponent
-    if movable then
-        pcall(function() c:SetMobility(2) end)
-        pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
-    end
-    pcall(function() c:SetStaticMesh(mesh) end)
-    pcall(function() c.bNeverDistanceCull = true end)
-    pcall(function() c.bAllowCullDistanceVolume = false end)
-    pcall(function() c.LDMaxDrawDistance = 0.0 end)
-    pcall(function() c.CachedMaxDrawDistance = 0.0 end)
     a = gs:FinishSpawningActor(a, xf, 1)
     if not Valid(a) then return nil, "finish spawn failed" end
-    -- In case the spawn step reset the mesh.
     pcall(function()
-        local cur = a.StaticMeshComponent.StaticMesh
-        if not Valid(cur) then
-            a.StaticMeshComponent:SetMobility(2)
-            a.StaticMeshComponent:SetStaticMesh(mesh)
+        if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end
+        local c = a.StaticMeshComponent
+        if Valid(c) then
+            c:SetMobility(2)
+            c:SetStaticMesh(mesh)
+            c.bNeverDistanceCull = true
+            c.bAllowCullDistanceVolume = false
+            c.LDMaxDrawDistance = 0.0
+            c.CachedMaxDrawDistance = 0.0
         end
     end)
     return a
@@ -998,8 +995,6 @@ local function Restore(at)
     local ok, err = pcall(function()
         if not Manager() then return end
         GameWorld = WorldKey()
-        pcall(AdoptExisting)
-        pcall(function() CleanupCompanions(true) end)
 
         for id, r in pairs(Placed) do
             local exists = true
@@ -1096,17 +1091,8 @@ local SyncState = { At = 0, World = nil, Loc = nil, InvAt = 0 }
 local function SyncPlaced()
     local curWorld = WorldKey()
     if not curWorld then return end
-    if not GameWorld then
-        GameWorld = curWorld
-        return
-    end
     if GameWorld ~= curWorld then
         GameWorld = curWorld
-        Props = {}
-        BaseNPCs = {}
-        Later(5000, function()
-            if GameWorld == WorldKey() then pcall(Restore) end
-        end)
         return
     end
     local _, pawn = Pawn()
