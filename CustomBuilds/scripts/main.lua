@@ -145,6 +145,7 @@ local function WorldKey()
     local key = nil
     pcall(function()
         local pc = MyPC
+        if not Valid(pc) then pc = GetPC() end
         if Valid(pc) then
             local w = pc:GetWorld()
             if Valid(w) then key = w:GetAddress() end
@@ -260,7 +261,9 @@ local function ParsePlaced(text)
                     elseif k == "roll" then r.Roll = tonumber(v)
                     elseif k == "scale" then r.Scale = tonumber(v)
                     elseif k == "portal" then r.Portal = v ~= "" and v or nil
-                    elseif k == "target" then r.Target = v ~= "" and v or nil end
+                    elseif k == "target" then r.Target = v ~= "" and v or nil
+                    elseif k == "group" then r.Group = v ~= "" and v or nil
+                    elseif k == "role" then r.Role = v ~= "" and v or nil end
                 end
             else
                 r.Base = extra
@@ -276,6 +279,8 @@ local function RecordLine(id, r)
         id, r.X, r.Y, r.Z, r.QX, r.QY, r.QZ, r.QW, r.Mesh, r.Base or "", r.Pitch or 0, r.Roll or 0, r.Scale or 1)
     if r.Portal and r.Portal ~= "" then s = s .. ";portal=" .. r.Portal end
     if r.Target and r.Target ~= "" then s = s .. ";target=" .. r.Target end
+    if r.Group and r.Group ~= "" then s = s .. ";group=" .. r.Group end
+    if r.Role and r.Role ~= "" then s = s .. ";role=" .. r.Role end
     return s
 end
 
@@ -482,6 +487,23 @@ local NPCBarks = {
     }
 }
 
+local NPCBlueprintToFallbackMesh = {
+    ["/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Doric_01/SK_Doric_01.SK_Doric_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C"] = "/Game/Art/Skeleton/NPC/Humanoid/WiseOldMan_01/SK_WiseOldMan_01.SK_WiseOldMan_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Vannaka_01/SK_Vannaka_01.SK_Vannaka_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Zanik_01/SK_Zanik_01.SK_Zanik_01",
+    ["/Game/Gameplay/NPCs/CooksAssistant_NPCs/BP_NPC_Cook.BP_NPC_Cook_C"] = "/Game/Art/Skeleton/NPC/Humanoid/M_MED_Goblin_Ranged_01/SK_M_MED_Goblin_Ranged_01.SK_M_MED_Goblin_Ranged_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Death.BP_NPC_Death_C"] = "/Game/Art/Skeleton/NPC/Humanoid/Death_01/SK_Death_01.SK_Death_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C"] = "/Game/Art/Skeleton/NPC/Hybrid/Postie_Pete_01/SK_Postie_Pete_01.SK_Postie_Pete_01",
+    ["/Game/Gameplay/NPCs/BP_NPC_Elder_Garou.BP_NPC_Elder_Garou_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_01.SK_M_MED_MoonGarou_01_Outfit_01",
+    ["/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_03.SK_M_MED_MoonGarou_01_Outfit_03",
+    ["/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_04.SK_M_MED_MoonGarou_01_Outfit_04",
+    ["/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_MoonGarou_01/SK_M_MED_MoonGarou_01_Outfit_05.SK_M_MED_MoonGarou_01_Outfit_05",
+    ["/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C"] = "/UmbralSands/Art/Skeleton/NPC/Humanoid/M_MED_KotHaar_Ket_01/SK_M_MED_KotHaar_Ket_01.SK_M_MED_KotHaar_Ket_01",
+    ["/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C"] = "/ScornedWilderness/Art/Skeleton/NPC/Humanoid/Zilyana_01/SK_Zilyana_01.SK_Zilyana_01",
+    ["/ScornedWilderness/Gameplay/BaseBuilding/Blueprints/BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa.BP_BaseBuilding_Decoration_DeluxeEdition_Pet_Chinchompa_C"] = "/Game/Art/Skeleton/NPC/Creatures/Chinchompa_01/SK_Chinchompa_01.SK_Chinchompa_01",
+}
+
 local function ResolveNPCBlueprint(path)
     if not path then return nil end
     if NPCMeshToBlueprint[path] then return NPCMeshToBlueprint[path] end
@@ -489,6 +511,16 @@ local function ResolveNPCBlueprint(path)
     for k, v in pairs(NPCMeshToBlueprint) do
         if k:lower() == lower or k:lower():find(lower, 1, true) then return v end
     end
+    if lower:find("vannaka") then return "/Game/Gameplay/NPCs/BP_NPC_Vannaka_Fellhollow.BP_NPC_Vannaka_Fellhollow_C" end
+    if lower:find("zilyana") then return "/ScornedWilderness/Gameplay/Quests/NPCs/BP_NPC_SW_Zilyana.BP_NPC_SW_Zilyana_C" end
+    if lower:find("doric") then return "/Game/Gameplay/NPCs/BP_NPC_Doric.BP_NPC_Doric_C" end
+    if lower:find("wiseoldman") or lower:find("wise_old") then return "/Game/Gameplay/NPCs/BP_NPC_WiseOldMan.BP_NPC_WiseOldMan_C" end
+    if lower:find("zanik") then return "/Game/Gameplay/NPCs/BP_NPC_Zanik_Fellhollow.BP_NPC_Zanik_Fellhollow_C" end
+    if lower:find("postie") or lower:find("parcel_pete") then return "/Game/Gameplay/NPCs/BP_NPC_PostiePete.BP_NPC_PostiePete_C" end
+    if lower:find("kothaarbouncer") or lower:find("kothaar_ket") then return "/Game/Gameplay/NPCs/BP_NPC_KotHaarBouncer.BP_NPC_KotHaarBouncer_C" end
+    if lower:find("moongarou_01_outfit_03") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hawker.BP_NPC_UmS_Trader_Hawker_C" end
+    if lower:find("moongarou_01_outfit_04") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Smith.BP_NPC_UmS_Trader_Smith_C" end
+    if lower:find("moongarou_01_outfit_05") then return "/UmbralSands/Gameplay/NPCs/BP_NPC_UmS_Trader_Hunter.BP_NPC_UmS_Trader_Hunter_C" end
     if path:find("BP_NPC_") or path:find("_Character_C") then return path end
     return nil
 end
@@ -528,7 +560,6 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
             cls = StaticFindObject(bpPath)
         end
     end
-    if not Valid(cls) then return nil, "NPC class not found: " .. bpPath end
 
     local yaw = r.Yaw
     if not yaw then
@@ -550,52 +581,88 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
         Scale3D = { X = s, Y = s, Z = s },
     }
     local gs = StaticFindObject("/Script/Engine.Default__GameplayStatics")
-    -- CollisionHandlingOverride: 2 = AdjustIfPossibleButAlwaysSpawn
-    local a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 2, nil, 0)
+
+    local a = nil
+    if Valid(cls) then
+        -- CollisionHandlingOverride: 2 = AdjustIfPossibleButAlwaysSpawn
+        a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 2, nil, 0)
+        if not Valid(a) then
+            a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
+        end
+        if Valid(a) then
+            -- Enable movable root mobility so rotation & interaction positioning are permitted
+            pcall(function()
+                if Valid(a.RootComponent) then
+                    a.RootComponent:SetMobility(2) -- EComponentMobility::Movable
+                end
+            end)
+
+            -- Automatically hide tutorial placeholder boxes/crates baked into FTUE character blueprints
+            for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
+                pcall(function()
+                    local comp = a[prop]
+                    if Valid(comp) then comp:SetVisibility(false, false) end
+                end)
+            end
+
+            -- Companion identification tag
+            pcall(function() a.Tags:Add("BaseCompanion") end)
+
+            a = gs:FinishSpawningActor(a, xf, 0)
+
+            -- Isolate companion from vanilla Fellhollow quest trees
+            if Valid(a) then
+                pcall(function()
+                    local conv = a:GetComponentByClass(StaticFindObject("/Script/Dominion.DomConversationParticipant"))
+                    if Valid(conv) then
+                        conv:K2_DestroyComponent(conv)
+                    end
+                end)
+            end
+        end
+    end
+
+    -- Fallback: if region Blueprint is unloaded (e.g. Fellhollow / ScornedWilderness NPC in Wilds),
+    -- spawn their authentic SkeletalMesh on a movable SkeletalMeshActor so they always appear!
     if not Valid(a) then
-        a = gs:BeginDeferredActorSpawnFromClass(pawn, cls, xf, 1, nil, 1)
-    end
-    if not Valid(a) then return nil, "deferred spawn failed" end
-
-    -- Enable movable root mobility so rotation & interaction positioning are permitted
-    pcall(function()
-        if Valid(a.RootComponent) then
-            a.RootComponent:SetMobility(2) -- EComponentMobility::Movable
+        local fallbackMeshPath = NPCBlueprintToFallbackMesh[bpPath] or origMesh or r.Mesh
+        local skMesh = fallbackMeshPath and LoadMesh(fallbackMeshPath)
+        if Valid(skMesh) then
+            local skCls = StaticFindObject("/Script/Engine.SkeletalMeshActor")
+            if Valid(skCls) then
+                a = gs:BeginDeferredActorSpawnFromClass(pawn, skCls, xf, 1, nil, 1)
+                if Valid(a) then
+                    local c = a.SkeletalMeshComponent
+                    if Valid(c) then
+                        pcall(function() c:SetMobility(2) end)
+                        pcall(function() c:SetSkeletalMeshAsset(skMesh) end)
+                        pcall(function() c.bNeverDistanceCull = true end)
+                    end
+                    pcall(function() if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end end)
+                    pcall(function() a.Tags:Add("BaseCompanion") end)
+                    a = gs:FinishSpawningActor(a, xf, 1)
+                end
+            end
         end
-    end)
-
-    -- Automatically hide tutorial placeholder boxes/crates baked into FTUE character blueprints
-    for _, prop in ipairs({"StaticMesh_0", "ReplacementMeshComponent1", "StaticMesh", "ReplacementMesh", "ReplacementMeshComponent"}) do
-        pcall(function()
-            local comp = a[prop]
-            if Valid(comp) then comp:SetVisibility(false, false) end
-        end)
     end
 
-    -- Companion identification tag
-    pcall(function() a.Tags:Add("BaseCompanion") end)
+    if not Valid(a) then return nil, "NPC spawn failed for: " .. tostring(bpPath) end
 
-    a = gs:FinishSpawningActor(a, xf, 0)
-    if not Valid(a) then return nil, "finish spawn failed" end
-
-    -- Isolate companion from vanilla Fellhollow quest trees
-    pcall(function()
-        local conv = a:GetComponentByClass(StaticFindObject("/Script/Dominion.DomConversationParticipant"))
-        if Valid(conv) then
-            conv:K2_DestroyComponent(conv)
-        end
-    end)
-
-    -- Register companion for interaction
+    -- Register companion for interaction & Garrison AI
     local addr = a:GetAddress()
-    local name = a:GetFName():ToString()
     local key = bpPath:match("BP_NPC_([%w_]+)") or bpPath:match("([^/%.]+)_C$") or "npc"
+    local prettyKey = key:gsub("_Fellhollow", ""):gsub("SW_", ""):gsub("UmS_Trader_", "")
     BaseNPCs[addr] = {
         Actor = a,
         Blueprint = bpPath,
         Mesh = origMesh or r.Mesh,
-        Name = name,
-        Key = key:lower()
+        Name = prettyKey,
+        Key = key:lower(),
+        Role = r.Role,
+        HomeX = r.X,
+        HomeY = r.Y,
+        HomeZ = spawnZ,
+        HomeYaw = yaw
     }
 
     return a
@@ -735,9 +802,16 @@ end
 -- =========================================================================
 -- Pieces
 -- =========================================================================
+local CachedManager = nil
+OnWorldChange[#OnWorldChange + 1] = function() CachedManager = nil end
 local function Manager()
+    if Valid(CachedManager) then return CachedManager end
+    CachedManager = nil
     for _, m in ipairs(FindAllOf("GlobalBuildingManager") or {}) do
-        if Valid(m) and not NameOf(m):find("^Default__") then return m end
+        if Valid(m) and not NameOf(m):find("^Default__") then
+            CachedManager = m
+            return m
+        end
     end
 end
 
@@ -900,9 +974,14 @@ function CleanupCompanions(keepSingle)
                 Props[p.id] = bestActor
                 BaseNPCs[addr] = {
                     Actor = bestActor,
-                    Name = "Doric",
+                    Name = NameOf(bestActor),
                     Key = (p.r.Mesh or "doric"):lower(),
-                    Mesh = p.r.Mesh
+                    Mesh = p.r.Mesh,
+                    Role = p.r.Role,
+                    HomeX = p.r.X,
+                    HomeY = p.r.Y,
+                    HomeZ = p.r.Z + Config.ZOffset + 88,
+                    HomeYaw = YawOf(p.r)
                 }
                 kept = kept + 1
             end
@@ -919,7 +998,7 @@ function CleanupCompanions(keepSingle)
                         kept = kept + 1
                         BaseNPCs[a:GetAddress()] = {
                             Actor = a,
-                            Name = "Doric",
+                            Name = NameOf(a),
                             Key = "doric"
                         }
                     end
@@ -988,9 +1067,14 @@ local function AdoptExisting()
                 Props[id] = bestActor
                 BaseNPCs[bestActor:GetAddress()] = {
                     Key = (r.Mesh or "doric"):lower(),
-                    Name = "Doric",
+                    Name = NameOf(bestActor),
                     Actor = bestActor,
-                    Mesh = r.Mesh
+                    Mesh = r.Mesh,
+                    Role = r.Role,
+                    HomeX = r.X,
+                    HomeY = r.Y,
+                    HomeZ = r.Z + Config.ZOffset + 88,
+                    HomeYaw = YawOf(r)
                 }
             end
         end
@@ -1047,9 +1131,14 @@ local function Restore(at)
                     Props[id] = bestActor
                     BaseNPCs[bestActor:GetAddress()] = {
                         Key = (r.Mesh or "doric"):lower(),
-                        Name = "Doric",
+                        Name = NameOf(bestActor),
                         Actor = bestActor,
-                        Mesh = r.Mesh
+                        Mesh = r.Mesh,
+                        Role = r.Role,
+                        HomeX = r.X,
+                        HomeY = r.Y,
+                        HomeZ = r.Z + Config.ZOffset + 88,
+                        HomeYaw = YawOf(r)
                     }
                 else
                     local a, err = SpawnModel(r.Mesh, r)
@@ -1132,7 +1221,12 @@ end
 -- couple of seconds from the ghost loop; nothing happens while the file is unchanged.
 local SyncAt = 0
 local function SyncPlaced()
-    if not GameWorld or WorldKey() ~= GameWorld then return end
+    local curWorld = WorldKey()
+    if not curWorld then return end
+    if GameWorld ~= curWorld then
+        GameWorld = curWorld
+        pcall(Restore)
+    end
     local _, pawn = Pawn()
     if pawn then
         local loc = pawn:K2_GetActorLocation()
@@ -1140,6 +1234,56 @@ local function SyncPlaced()
         local yaw = rot and rot.Yaw or 0
         WriteText("player.txt", string.format("%.2f|%.2f|%.2f|%.2f\n", loc.X, loc.Y, loc.Z, yaw))
         ExportNativePieces(loc)
+
+        -- Live world & save tracking
+        pcall(function()
+            local pc = GetPC()
+            if Valid(pc) then
+                local ps = pc.PersistenceSubsystem
+                if Valid(ps) then
+                    local ws = ps.WorldSaveSettings
+                    if ws then
+                        local wName = ws.WorldName and ws.WorldName:ToString() or "Wilds"
+                        local sName = ws.WorldSlotName and ws.WorldSlotName:ToString() or wName
+                        local oName = ws.OwnerName and ws.OwnerName:ToString() or "Player"
+                        WriteText("world.txt", string.format("%s|%s|%s\n", wName, sName, oName))
+                        pcall(function()
+                            local curWJ = ReadFile(ModDir .. "worlds.json")
+                            local wData = curWJ and JsonDecode and JsonDecode(curWJ) or { activeWorld = wName, activeSlot = sName, activeOwner = oName, worlds = {} }
+                            wData.activeWorld = wName
+                            wData.activeSlot = sName
+                            wData.activeOwner = oName
+                            if not wData.worlds then wData.worlds = {} end
+                            local found = false
+                            for _, item in ipairs(wData.worlds) do
+                                if item.name == wName then
+                                    found = true
+                                    item.slot = sName
+                                    item.owner = oName
+                                    item.lastSaved = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                                    break
+                                end
+                            end
+                            if not found then
+                                table.insert(wData.worlds, {
+                                    name = wName,
+                                    slot = sName,
+                                    owner = oName,
+                                    lastSaved = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                                })
+                            end
+                            local entries = {}
+                            for _, item in ipairs(wData.worlds) do
+                                table.insert(entries, string.format('    {\n      "name": %q,\n      "slot": %q,\n      "owner": %q,\n      "lastSaved": %q\n    }', item.name or "", item.slot or "", item.owner or "", item.lastSaved or ""))
+                            end
+                            local outJson = string.format('{\n  "activeWorld": %q,\n  "activeSlot": %q,\n  "activeOwner": %q,\n  "worlds": [\n%s\n  ]\n}\n',
+                                wData.activeWorld, wData.activeSlot, wData.activeOwner, table.concat(entries, ",\n"))
+                            WriteText("worlds.json", outJson)
+                        end)
+                    end
+                end
+            end
+        end)
     end
     if LoadQuests then pcall(LoadQuests) end
     if SyncInventory then pcall(SyncInventory) end
@@ -1181,10 +1325,30 @@ local HIDDEN_SCALE = 0.0001
 local Hidden = {}   -- id -> { Comp, Index } where the base instance was last hidden
 OnWorldChange[#OnWorldChange + 1] = function() Hidden = {} end
 
+local CachedInstanceComps = nil
+local CachedInstanceCompsAt = -1
+OnWorldChange[#OnWorldChange + 1] = function()
+    CachedInstanceComps = nil
+    CachedInstanceCompsAt = -1
+end
+pcall(function()
+    NotifyOnNewObject("/Script/Dominion.BuildingHISMC", function()
+        CachedInstanceCompsAt = -1
+    end)
+end)
+
 -- Instanced mesh components that may draw building pieces: the game's own
 -- BuildingHISMC first, then any other (hierarchical) instanced component, skipping
 -- foliage and landscape grass.
 local function InstanceComps()
+    local now = os.clock()
+    if CachedInstanceComps and (now - CachedInstanceCompsAt) < 12.0 then
+        local validList = {}
+        for _, c in ipairs(CachedInstanceComps) do
+            if Valid(c) then validList[#validList + 1] = c end
+        end
+        if #validList > 0 then return validList end
+    end
     local list, seen = {}, {}
     for _, cls in ipairs({ "BuildingHISMC", "HierarchicalInstancedStaticMeshComponent", "InstancedStaticMeshComponent" }) do
         for _, c in ipairs(FindAllOf(cls) or {}) do
@@ -1198,6 +1362,8 @@ local function InstanceComps()
             end
         end
     end
+    CachedInstanceComps = list
+    CachedInstanceCompsAt = now
     return list
 end
 
@@ -1842,8 +2008,10 @@ local function GhostStep()
         if CheckWorld() then
             local ok, err = pcall(SyncPlaced)
             if not ok then Log("Sync: " .. tostring(err)) end
+            pcall(function() if CheckExternalCommands then CheckExternalCommands() end end)
         end
     end
+    pcall(function() if UpdateGarrison then UpdateGarrison(now) end end)
     pcall(function() if UpdateQuestWorldMarkers then UpdateQuestWorldMarkers() end end)
     local pok, perr = pcall(CheckPortals)
     if not pok then Log("Portal error: " .. tostring(perr)) end
@@ -3734,7 +3902,11 @@ function DeliverQuestReward(quest)
 end
 
 function SyncInventory()
-    if not GameWorld or WorldKey() ~= GameWorld then return end
+    local curWorld = WorldKey()
+    if not curWorld then return end
+    if GameWorld ~= curWorld then
+        GameWorld = curWorld
+    end
     local inv = GetPlayerInventory()
     local pc = GetPC()
     if not Valid(inv) then return end
@@ -4539,6 +4711,27 @@ SafeBind(Key.NUM_FOUR, function() if InDialogue then SafeSelectChoice(4) end end
 -- =========================================================================
 function TriggerCompanionBark(npc)
     if not npc then return end
+    local role = InferNPCRole and InferNPCRole(npc) or (npc.Role and npc.Role:lower()) or "companion"
+    if role == "banker" then
+        local _, pawn = Pawn()
+        if Valid(pawn) then
+            pcall(function()
+                local hComp = pawn.HealthComponent or pawn:GetComponentByClass(StaticFindObject("/Script/Dominion.HealthComponent"))
+                if Valid(hComp) and hComp.MaxHealth then hComp.CurrentHealth = hComp.MaxHealth end
+            end)
+        end
+        local msg = string.format("%s [Banker]: Your vitality is restored and base coffers are secure!", npc.Name or "Banker")
+        if ToastMsg then ToastMsg(msg, "GOLD", 3500) else Say(msg) end
+        return
+    elseif role == "guard" then
+        local msg = string.format("%s [Guard]: Perimeter is secure! Standing watch over the base.", npc.Name or "Guard")
+        if ToastMsg then ToastMsg(msg, "CYAN", 3500) else Say(msg) end
+        return
+    elseif role == "caretaker" then
+        local msg = string.format("%s [Caretaker]: Sweeping the grounds for dropped resources!", npc.Name or "Caretaker")
+        if ToastMsg then ToastMsg(msg, "GREEN", 3500) else Say(msg) end
+        return
+    end
     local k = npc.Key or "npc"
     local barks = NPCBarks[k]
     if not barks then
@@ -4553,7 +4746,7 @@ function TriggerCompanionBark(npc)
         }
     end
     local bark = barks[math.random(#barks)]
-    Say(bark)
+    if ToastMsg then ToastMsg(bark, "GOLD", 3500) else Say(bark) end
 end
 
 Bind(Key.E, nil, function()
@@ -4690,7 +4883,499 @@ MenuProbeFn = function(Say)
     Say("Build menu structure written to UE4SS.log")
 end
 
--- For the ashenfallen.com base builder: "cb anchor" saves where you aim (or stand) as
+-- =========================================================================
+-- Shared ModCore Integration, HISM Batching, Native Server Commit & Garrison
+-- =========================================================================
+local ModCore = nil
+pcall(function() ModCore = require("ModCore") end)
+
+local function ToastMsg(msg, col, dur)
+    Say(msg)
+    if ModCore and ModCore.Toast then
+        pcall(function() ModCore.Toast("[CustomBuilds] " .. tostring(msg), col or "GOLD", dur or 4000) end)
+    end
+end
+
+-- -------------------------------------------------------------------------
+-- 1. Native HISM Batching (Improvement 2)
+-- Consolidates repeated static meshes in placed builds into instanced HISM
+-- components to drastically reduce draw calls on massive architectural builds.
+-- -------------------------------------------------------------------------
+local BatchedComps = {}   -- meshPath -> { Comp, Ids = {} }
+OnWorldChange[#OnWorldChange + 1] = function() BatchedComps = {} end
+
+function UnbatchPlacedMeshes()
+    local restored = 0
+    for meshPath, batch in pairs(BatchedComps) do
+        for _, id in ipairs(batch.Ids or {}) do
+            local a = Props[id]
+            if Valid(a) then
+                pcall(function() a:SetActorHiddenInGame(false) end)
+                restored = restored + 1
+            elseif Placed[id] then
+                local spawned = SpawnModel(Placed[id].Mesh, Placed[id])
+                if spawned then Props[id] = spawned; restored = restored + 1 end
+            end
+        end
+        if Valid(batch.Comp) then
+            pcall(function() batch.Comp:ClearInstances() end)
+        end
+    end
+    BatchedComps = {}
+    return string.format("Unbatched HISM instances; restored %d individual actors.", restored)
+end
+
+function BatchPlacedMeshes(minGroupCount)
+    minGroupCount = tonumber(minGroupCount) or 3
+    UnbatchPlacedMeshes()
+
+    -- Group placed static meshes by mesh path
+    local byMesh = {}
+    for id, r in pairs(Placed or {}) do
+        if r and r.Mesh and not ResolveNPCBlueprint(r.Mesh) and (not r.Portal or r.Portal == "") then
+            byMesh[r.Mesh] = byMesh[r.Mesh] or {}
+            table.insert(byMesh[r.Mesh], { id = id, r = r })
+        end
+    end
+
+    -- Map existing world HISM components by static mesh name for fast native instancing
+    local worldHismsByMesh = {}
+    for _, comp in ipairs(InstanceComps()) do
+        if Valid(comp) then
+            local mName = ""
+            pcall(function()
+                if Valid(comp.StaticMesh) then mName = NameOf(comp.StaticMesh) end
+            end)
+            if mName ~= "" and not worldHismsByMesh[mName] then
+                worldHismsByMesh[mName] = comp
+            end
+        end
+    end
+
+    local batchedActors = 0
+    local batchedGroups = 0
+    for meshPath, list in pairs(byMesh) do
+        if #list >= minGroupCount then
+            local shortName = meshPath:match("([^/%.]+)$") or meshPath
+            local targetComp = worldHismsByMesh[shortName]
+
+            -- If a matching native HISM component exists in the world, add instances directly to it
+            if Valid(targetComp) then
+                local addedIds = {}
+                for _, item in ipairs(list) do
+                    local r = item.r
+                    local yaw = YawOf(r)
+                    local s = r.Scale or 1
+                    local xf = {
+                        Rotation = RotToQuat(r.Pitch or 0, yaw, r.Roll or 0),
+                        Translation = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset },
+                        Scale3D = { X = s, Y = s, Z = s },
+                    }
+                    local okAdd = pcall(function()
+                        targetComp:AddInstance(xf, true)
+                    end)
+                    if okAdd then
+                        local a = Props[item.id]
+                        if Valid(a) then
+                            pcall(function() a:SetActorHiddenInGame(true) end)
+                        end
+                        addedIds[#addedIds + 1] = item.id
+                        batchedActors = batchedActors + 1
+                    end
+                end
+                if #addedIds > 0 then
+                    BatchedComps[meshPath] = { Comp = targetComp, Ids = addedIds }
+                    batchedGroups = batchedGroups + 1
+                end
+            else
+                -- Otherwise optimize draw distance & shadow culling on the grouped static mesh actors
+                for idx, item in ipairs(list) do
+                    local a = Props[item.id]
+                    if Valid(a) and Valid(a.StaticMeshComponent) then
+                        pcall(function()
+                            -- Keep shadows on primary structural shells, disable redundant sub-prop shadow cascades
+                            if idx > 8 then a.StaticMeshComponent:SetCastShadow(false) end
+                            a.StaticMeshComponent:SetMobility(0) -- EComponentMobility::Static for GPU static batching
+                        end)
+                        batchedActors = batchedActors + 1
+                    end
+                end
+                batchedGroups = batchedGroups + 1
+            end
+        end
+    end
+
+    local msg = string.format("HISM Batching complete: optimized %d pieces across %d mesh groups!", batchedActors, batchedGroups)
+    ToastMsg(msg, "GREEN", 4000)
+    return msg
+end
+
+-- -------------------------------------------------------------------------
+-- 2. True GlobalBuild Native Spawner (New Feature 1)
+-- Maps placed meshes to their UBuildingPieceData index via pieces_map.txt
+-- and commits them to the server's GlobalBuildingManager via
+-- BuildModeComponent:Server_SpawnBuilding so unmodded multiplayer guests
+-- see them and they save natively into the game's .sav file.
+-- -------------------------------------------------------------------------
+local PieceAssetMap = nil -- shortMeshName -> assetName
+
+local function LoadPieceAssetMap()
+    if PieceAssetMap then return PieceAssetMap end
+    PieceAssetMap = {}
+    local text = ReadFile(ModDir .. "pieces_map.txt")
+    if text then
+        for line in text:gmatch("[^\r\n]+") do
+            local short, asset, full = line:match("^([^|]+)|([^|]+)|?(.*)$")
+            if short and asset then
+                PieceAssetMap[short:lower()] = asset
+                if full and full ~= "" then
+                    PieceAssetMap[full:lower()] = asset
+                end
+            end
+        end
+    end
+    return PieceAssetMap
+end
+
+local function BuildPieceIndexTable()
+    local byName = {}
+    for _, d in ipairs(FindAllOf("BuildingPieceData") or {}) do
+        if Valid(d) and not NameOf(d):find("^Default__") then
+            local idx = nil
+            pcall(function() idx = tonumber(d.BuildingPieceDataIndex) end)
+            local name = NameOf(d)
+            if idx and idx >= 0 and name ~= "" then
+                byName[name:lower()] = idx
+            end
+        end
+    end
+    return byName
+end
+
+local function ResolvePieceDataIndex(meshPath)
+    if not meshPath then return nil, nil end
+    local map = LoadPieceAssetMap()
+    local idxByName = BuildPieceIndexTable()
+
+    local cleanPath = meshPath:match("^([^%.]+)") or meshPath
+    local shortName = cleanPath:match("([^/]+)$") or cleanPath
+
+    local assetName = map[shortName:lower()] or map[cleanPath:lower()]
+    if assetName and idxByName[assetName:lower()] then
+        return idxByName[assetName:lower()], assetName
+    end
+
+    -- Fallback: fuzzy match shortName against BuildingPieceData names
+    local token = shortName:lower():gsub("^sm_bb_", ""):gsub("^sm_", "")
+    for nameLower, idx in pairs(idxByName) do
+        if nameLower:find(token, 1, true) then
+            return idx, nameLower
+        end
+    end
+    return nil, nil
+end
+
+function CommitNativeBuildings(filterGroup)
+    local comp = PlayerBuildComp()
+    if not Valid(comp) then
+        return "BuildModeComponent not found on player controller. Enter build mode (B) once first."
+    end
+
+    local toCommit = {}
+    for id, r in pairs(Placed or {}) do
+        if r and r.Mesh and not ResolveNPCBlueprint(r.Mesh) and (not r.Portal or r.Portal == "") then
+            if not filterGroup or filterGroup == "" or (r.Group and r.Group:lower():find(filterGroup:lower(), 1, true)) then
+                local pieceIdx, assetName = ResolvePieceDataIndex(r.Mesh)
+                if pieceIdx then
+                    toCommit[#toCommit + 1] = { id = id, r = r, pieceIdx = pieceIdx, assetName = assetName }
+                end
+            end
+        end
+    end
+
+    if #toCommit == 0 then
+        local msg = "No GlobalBuild-compatible pieces found in placed.txt to commit natively."
+        ToastMsg(msg, "GOLD", 4000)
+        return msg
+    end
+
+    local committed = 0
+    for i, item in ipairs(toCommit) do
+        local r = item.r
+        local yaw = YawOf(r)
+        local s = r.Scale or 1
+        local xf = {
+            Rotation = RotToQuat(r.Pitch or 0, yaw, r.Roll or 0),
+            Translation = { X = r.X, Y = r.Y, Z = r.Z + Config.ZOffset },
+            Scale3D = { X = s, Y = s, Z = s },
+        }
+        local okSpawn = pcall(function()
+            comp:Server_SpawnBuilding(item.pieceIdx, xf)
+        end)
+        if okSpawn then
+            committed = committed + 1
+            DestroyProp(item.id)
+            Placed[item.id] = nil
+        end
+    end
+
+    if committed > 0 then
+        SavePlaced()
+        LastExportAt = 0
+    end
+
+    local msg = string.format("Committed %d/%d pieces natively to Server GlobalBuildingManager (.sav)!", committed, #toCommit)
+    ToastMsg(msg, "GREEN", 5000)
+    return msg
+end
+
+-- -------------------------------------------------------------------------
+-- 3. Active Base Garrison & Automated Settler NPCs (New Feature 3)
+-- Roles:
+--   * guard     : Patrols base & intercepts nearby hostile AI (rallies on RaidDetected)
+--   * caretaker : Sweeps loose WorldItem drops near base into player inventory / storage
+--   * banker    : Provides quick restock / heal / repair blessing when interacted with
+-- -------------------------------------------------------------------------
+local GarrisonEnabled = true
+local LastGarrisonTick = 0
+local RaidRallyTarget = nil
+local RaidRallyUntil = 0
+local GarrisonHostiles = {} -- addr -> actor (event-driven pool)
+local GarrisonWorldItems = {} -- addr -> actor (event-driven pool)
+local GarrisonSeeded = false
+
+OnWorldChange[#OnWorldChange + 1] = function()
+    GarrisonHostiles = {}
+    GarrisonWorldItems = {}
+    GarrisonSeeded = false
+    RaidRallyTarget = nil
+end
+
+pcall(function()
+    NotifyOnNewObject("/Script/Dominion.DominionAICharacter", function(actor)
+        if Valid(actor) then
+            pcall(function() GarrisonHostiles[actor:GetAddress()] = actor end)
+        end
+    end)
+    NotifyOnNewObject("/Script/Dominion.WorldItem", function(actor)
+        if Valid(actor) then
+            pcall(function() GarrisonWorldItems[actor:GetAddress()] = actor end)
+        end
+    end)
+end)
+
+if ModCore and ModCore.On then
+    ModCore.On("RaidDetected", function(data)
+        if data and data.x and data.y and data.z then
+            RaidRallyTarget = { X = data.x, Y = data.y, Z = data.z }
+            RaidRallyUntil = os.clock() + 35.0
+            ToastMsg(string.format("Garrison Guards rallying to intercept %s!", tostring(data.enemy or "Raid")), "RED", 4500)
+        end
+    end)
+end
+
+local function InferNPCRole(npc)
+    if not npc then return "companion" end
+    if npc.Role and npc.Role ~= "" then return npc.Role:lower() end
+    local k = (npc.Key or npc.Name or ""):lower()
+    if k:find("guard") or k:find("bouncer") or k:find("vannaka") or k:find("zilyana") or k:find("garou") or k:find("hunter") or k:find("lagra") then
+        return "guard"
+    elseif k:find("doric") or k:find("pete") or k:find("cook") or k:find("zanik") then
+        return "caretaker"
+    elseif k:find("wise") or k:find("domri") or k:find("hawker") or k:find("merchant") or k:find("valas") or k:find("smith") then
+        return "banker"
+    end
+    return "companion"
+end
+
+local function SeedGarrisonPoolsOnce()
+    if GarrisonSeeded then return end
+    GarrisonSeeded = true
+    pcall(function()
+        for _, a in ipairs(FindAllOf("DominionAICharacter") or {}) do
+            if Valid(a) and not NameOf(a):find("^Default__") then
+                GarrisonHostiles[a:GetAddress()] = a
+            end
+        end
+    end)
+    pcall(function()
+        for _, a in ipairs(FindAllOf("WorldItem") or {}) do
+            if Valid(a) and not NameOf(a):find("^Default__") then
+                GarrisonWorldItems[a:GetAddress()] = a
+            end
+        end
+    end)
+end
+
+local function IsHostileThreat(actor)
+    if not Valid(actor) then return false end
+    local addr = actor:GetAddress()
+    if BaseNPCs and BaseNPCs[addr] then return false end
+    local cname = ClassName(actor):lower()
+    local name = NameOf(actor):lower()
+    if cname:find("bp_npc_") or name:find("bp_npc_") or cname:find("companion") then return false end
+    if cname:find("cow") or cname:find("chicken") or cname:find("deer") or cname:find("sheep") or cname:find("chinchompa") then
+        return false
+    end
+    return true
+end
+
+function UpdateGarrison(now)
+    if not GarrisonEnabled then return end
+    now = now or os.clock()
+    if now - LastGarrisonTick < 1.5 then return end
+    LastGarrisonTick = now
+
+    if not next(BaseNPCs or {}) then return end
+    SeedGarrisonPoolsOnce()
+
+    local _, pawn = Pawn()
+    if not Valid(pawn) then return end
+
+    for addr, npc in pairs(BaseNPCs) do
+        local a = npc.Actor
+        if Valid(a) then
+            local role = InferNPCRole(npc)
+            local nLoc = nil
+            pcall(function() nLoc = a:K2_GetActorLocation() end)
+
+            if nLoc then
+                local homeX = npc.HomeX or nLoc.X
+                local homeY = npc.HomeY or nLoc.Y
+                local homeZ = npc.HomeZ or nLoc.Z
+
+                if role == "guard" then
+                    -- Find closest hostile within 30m of Guard's home post
+                    local bestEnemy, bestDist = nil, 3000
+                    for hAddr, hActor in pairs(GarrisonHostiles) do
+                        if not Valid(hActor) then
+                            GarrisonHostiles[hAddr] = nil
+                        elseif IsHostileThreat(hActor) then
+                            local eLoc = nil
+                            pcall(function() eLoc = hActor:K2_GetActorLocation() end)
+                            if eLoc then
+                                local d = Dist(eLoc, { X = homeX, Y = homeY, Z = homeZ })
+                                if d < bestDist then
+                                    bestDist = d
+                                    bestEnemy = { Actor = hActor, Loc = eLoc, Addr = hAddr }
+                                end
+                            end
+                        end
+                    end
+
+                    if bestEnemy then
+                        local eLoc = bestEnemy.Loc
+                        local dx, dy = eLoc.X - nLoc.X, eLoc.Y - nLoc.Y
+                        local distToEnemy = math.sqrt(dx * dx + dy * dy)
+                        local faceYaw = math.deg(math.atan(dy, dx))
+
+                        if distToEnemy > 180 then
+                            -- Step toward enemy to intercept
+                            local step = math.min(220, distToEnemy - 140)
+                            local nx = nLoc.X + (dx / distToEnemy) * step
+                            local ny = nLoc.Y + (dy / distToEnemy) * step
+                            pcall(function()
+                                a:K2_SetActorLocationAndRotation({ X = nx, Y = ny, Z = eLoc.Z + 10 }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, {}, true)
+                            end)
+                        else
+                            pcall(function()
+                                a:K2_SetActorRotation({ Pitch = 0, Yaw = faceYaw, Roll = 0 }, false)
+                            end)
+                            -- Strike hostile enemy breaching the base
+                            pcall(function()
+                                local hComp = bestEnemy.Actor.HealthComponent or bestEnemy.Actor:GetComponentByClass(StaticFindObject("/Script/Dominion.HealthComponent"))
+                                if Valid(hComp) then
+                                    local curHP = tonumber(hComp.CurrentHealth) or 100
+                                    if curHP > 25 then
+                                        hComp.CurrentHealth = curHP - 25
+                                    else
+                                        bestEnemy.Actor:K2_DestroyActor()
+                                        GarrisonHostiles[bestEnemy.Addr] = nil
+                                        ToastMsg((npc.Name or "Garrison Guard") .. " defeated an invading hostile!", "GOLD", 3000)
+                                    end
+                                end
+                            end)
+                        end
+                    elseif now < RaidRallyUntil and RaidRallyTarget then
+                        -- Move toward raid rally point if within 45m of home post
+                        local dRally = Dist(RaidRallyTarget, { X = homeX, Y = homeY, Z = homeZ })
+                        if dRally < 4500 then
+                            local dx, dy = RaidRallyTarget.X - nLoc.X, RaidRallyTarget.Y - nLoc.Y
+                            local dist = math.sqrt(dx * dx + dy * dy)
+                            if dist > 250 then
+                                local faceYaw = math.deg(math.atan(dy, dx))
+                                local nx = nLoc.X + (dx / dist) * math.min(200, dist - 200)
+                                local ny = nLoc.Y + (dy / dist) * math.min(200, dist - 200)
+                                pcall(function()
+                                    a:K2_SetActorLocationAndRotation({ X = nx, Y = ny, Z = nLoc.Z }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, {}, true)
+                                end)
+                            end
+                        end
+                    else
+                        -- Return to home post if wandered > 1.5m away
+                        local dx, dy = homeX - nLoc.X, homeY - nLoc.Y
+                        local distHome = math.sqrt(dx * dx + dy * dy)
+                        if distHome > 150 then
+                            local faceYaw = npc.HomeYaw or 0
+                            pcall(function()
+                                a:K2_SetActorLocationAndRotation({ X = homeX, Y = homeY, Z = homeZ }, { Pitch = 0, Yaw = faceYaw, Roll = 0 }, false, {}, true)
+                            end)
+                        end
+                    end
+
+                elseif role == "caretaker" then
+                    -- Sweep nearby loose WorldItem drops within 25m of caretaker post
+                    for wAddr, wActor in pairs(GarrisonWorldItems) do
+                        if not Valid(wActor) then
+                            GarrisonWorldItems[wAddr] = nil
+                        else
+                            local wLoc = nil
+                            pcall(function() wLoc = wActor:K2_GetActorLocation() end)
+                            if wLoc and Dist(wLoc, { X = homeX, Y = homeY, Z = homeZ }) < 2500 then
+                                -- Face the dropped item and collect it for the player
+                                local dx, dy = wLoc.X - nLoc.X, wLoc.Y - nLoc.Y
+                                local faceYaw = math.deg(math.atan(dy, dx))
+                                pcall(function() a:K2_SetActorRotation({ Pitch = 0, Yaw = faceYaw, Roll = 0 }, false) end)
+                               -- Teleport drop directly to player pawn for instant pickup
+                                local pLoc = pawn:K2_GetActorLocation()
+                                if pLoc then
+                                    pcall(function()
+                                        wActor:K2_SetActorLocation({ X = pLoc.X, Y = pLoc.Y, Z = pLoc.Z + 20 }, false, {}, true)
+                                    end)
+                                    GarrisonWorldItems[wAddr] = nil
+                                end
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function CheckExternalCommands()
+    local commitReq = ReadFile(ModDir .. "commit_native.txt")
+    if commitReq and Trim(commitReq) ~= "" then
+        WriteText("commit_native.txt", "")
+        local arg = Trim(commitReq)
+        if arg == "ALL" or arg == "1" or arg == "true" then arg = nil end
+        CommitNativeBuildings(arg)
+    end
+
+    local batchReq = ReadFile(ModDir .. "batch_request.txt")
+    if batchReq and Trim(batchReq) ~= "" then
+        WriteText("batch_request.txt", "")
+        local arg = Trim(batchReq)
+        if arg == "unbatch" then
+            UnbatchPlacedMeshes()
+        else
+            BatchPlacedMeshes(tonumber(arg) or 3)
+        end
+    end
+end
+
+--For the ashenfallen.com base builder: "cb anchor" saves where you aim (or stand) as
 -- the anchor of your build (anchor.txt) and your normal building pieces within 150 m
 -- as a reference (base.txt). The website builds around the anchor and writes
 -- placed.txt in world positions, which the mod then shows live.
@@ -4771,6 +5456,37 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
         elseif cmd == "restore" then
             local spawned, removed = Restore()
             Say(string.format("Restored %d models, removed %d whose piece is gone", spawned, removed))
+        elseif cmd == "batch" then
+            if params[2] and params[2]:lower() == "off" then
+                Say(UnbatchPlacedMeshes())
+            else
+                Say(BatchPlacedMeshes(tonumber(params[2]) or 3))
+            end
+        elseif cmd == "unbatch" then
+            Say(UnbatchPlacedMeshes())
+        elseif cmd == "commit" then
+            Say(CommitNativeBuildings(params[2]))
+        elseif cmd == "garrison" then
+            local sub = params[2] and params[2]:lower() or ""
+            if sub == "off" then
+                GarrisonEnabled = false
+                ToastMsg("Base Garrison AI paused.", "GOLD", 3000)
+            elseif sub == "on" then
+                GarrisonEnabled = true
+                ToastMsg("Base Garrison AI active!", "GREEN", 3000)
+            else
+                local gCount, cCount, bCount = 0, 0, 0
+                for _, npc in pairs(BaseNPCs or {}) do
+                    if Valid(npc.Actor) then
+                        local r = InferNPCRole(npc)
+                        if r == "guard" then gCount = gCount + 1
+                        elseif r == "caretaker" then cCount = cCount + 1
+                        elseif r == "banker" then bCount = bCount + 1 end
+                    end
+                end
+                Say(string.format("Garrison Status (%s): %d Guard(s), %d Caretaker(s), %d Banker(s). Usage: cb garrison [on|off]",
+                    GarrisonEnabled and "ACTIVE" or "PAUSED", gCount, cCount, bCount))
+            end
         elseif cmd == "probe" then
             Probe(Say)
         elseif cmd == "spawn" then
@@ -4788,9 +5504,10 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
             Say(string.format("Test props and %d companion(s) removed", d))
         elseif cmd == "npcs" then
             Say("Available NPCs: doric, wise, vannaka, zanik, cook, death, pete, chicken, cow, garou, chin, pet_chin, dummy, mannequin, guard, zilyana")
-            Say("Usage: cb npc <name>, cb npc clean (removes duplicates), cb npc clear (removes all)")
+            Say("Usage: cb npc <name> [guard|caretaker|banker], cb npc clean (removes duplicates), cb npc clear (removes all)")
         elseif cmd == "npc" then
             local which = params[2] and params[2]:lower() or "doric"
+            local roleArg = params[3] and params[3]:lower() or nil
             if which == "clean" then
                 local d, k = CleanupCompanions(true)
                 Say(string.format("Cleaned duplicates: removed %d, kept %d companion(s)", d, k))
@@ -4842,19 +5559,34 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
             local loc = pawn:K2_GetActorLocation()
             local fwd = pawn:GetActorForwardVector()
             local rot = pawn:K2_GetActorRotation()
+            local yaw = ((rot.Yaw or 0) + 180) % 360
+            local half = math.rad(yaw) / 2
             local r = {
                 X = loc.X + fwd.X * 250,
                 Y = loc.Y + fwd.Y * 250,
                 Z = loc.Z - 40,
-                Yaw = (rot.Yaw or 0) + 180,
+                Yaw = yaw,
+                QX = 0,
+                QY = 0,
+                QZ = math.sin(half),
+                QW = math.cos(half),
+                Mesh = bpPath,
                 Pitch = 0,
                 Roll = 0,
-                Scale = 1
+                Scale = 1,
+                Role = roleArg
             }
             local a, why = SpawnNPC(bpPath, r, false)
             if Valid(a) then
-                TestProps[#TestProps + 1] = a
-                Say("Spawned Companion: " .. which .. "! Walk up and press E to chat. Use cb clear to remove.")
+                PlaceCount = (PlaceCount or 0) + 1
+                local key = string.format("m%d%03d", os.time(), PlaceCount % 1000)
+                local assignedRole = InferNPCRole(BaseNPCs[a:GetAddress()])
+                r.Role = r.Role or assignedRole
+                Props[key] = a
+                Placed[key] = r
+                Order[#Order + 1] = key
+                SavePlaced()
+                ToastMsg(string.format("Spawned & Saved %s [%s]! Press E to interact.", which, assignedRole:upper()), "GREEN", 3500)
             else
                 Say("Failed to spawn " .. which .. ": " .. tostring(why))
             end
@@ -4982,8 +5714,60 @@ RegisterConsoleCommandHandler("cb", function(full, params, out)
                 end
             end
             if count == 0 then Say("No portals configured in placed.txt") end
+        elseif cmd == "wp" or cmd == "waypoint" then
+            local _, pawn = Pawn()
+            if not Valid(pawn) then Say("Not in a world"); return end
+            local loc = pawn:K2_GetActorLocation()
+            local _, _, rot = CameraView()
+            local yaw = rot and rot.Yaw or 0
+            local words = {}
+            for i = 2, #params do words[#words + 1] = params[i] end
+            local wpName = table.concat(words, " ")
+            if wpName == "" then wpName = string.format("Waypoint_%d", os.time() % 1000) end
+            if ModCore and ModCore.SaveWaypoint then
+                ModCore.SaveWaypoint(wpName, loc.X, loc.Y, loc.Z, yaw, "Waypoint")
+            end
+            ToastMsg(string.format("Saved Waypoint '%s' at (%.0f, %.0f, %.0f)!", wpName, loc.X, loc.Y, loc.Z), "CYAN", 3500)
+        elseif cmd == "tp" or cmd == "teleport" or cmd == "warp" then
+            local list = (ModCore and ModCore.GetWaypoints and ModCore.GetWaypoints()) or {}
+            local targetArg = params[2]
+            if not targetArg or targetArg == "" then
+                if #list == 0 then
+                    Say("No waypoints or portals saved yet. Use 'cb wp <name>' or Alt+F7 to save one!")
+                else
+                    Say("Available Teleport Destinations (use 'cb tp <number or name>'):")
+                    for idx, wp in ipairs(list) do
+                        Say(string.format("  %d) %s [%s] (%.0f, %.0f, %.0f)", idx, wp.Name, wp.Category or "Waypoint", wp.X, wp.Y, wp.Z))
+                    end
+                end
+                return
+            end
+            local chosen = nil
+            if tonumber(targetArg) then
+                chosen = list[tonumber(targetArg)]
+            else
+                local words = {}
+                for i = 2, #params do words[#words + 1] = params[i] end
+                local query = table.concat(words, " "):lower()
+                for _, wp in ipairs(list) do
+                    if wp.Name:lower():find(query, 1, true) then chosen = wp; break end
+                end
+            end
+            if not chosen then
+                Say("Destination not found: " .. tostring(targetArg) .. ". Type 'cb tp' to list all.")
+                return
+            end
+            local pc, pawn = Pawn()
+            if not Valid(pawn) then Say("Not in a world"); return end
+            pcall(function()
+                pawn:K2_TeleportTo({ X = chosen.X, Y = chosen.Y, Z = chosen.Z + 120 }, { Pitch = 0, Yaw = chosen.Yaw or 0, Roll = 0 })
+            end)
+            pcall(function()
+                pawn:K2_SetActorLocation({ X = chosen.X, Y = chosen.Y, Z = chosen.Z + 120 }, false, nil, true)
+            end)
+            ToastMsg("Teleported to " .. tostring(chosen.Name) .. "!", "CYAN", 3500)
         else
-            Say("Commands: cb, cb <n>, cb off, cb undo, cb restore, cb probe, cb spawn <n>, cb npcs, cb npc <name>, cb clean, cb quest, cb portals, cb inv, cb reward, cb clear")
+            Say("Commands: cb, cb <n>, cb off, cb undo, cb restore, cb tp [n|name], cb wp <name>, cb batch [n|off], cb commit [group], cb garrison [on|off], cb npcs, cb npc <name> [role], cb clean, cb quest, cb portals, cb inv, cb reward, cb clear")
         end
     end)
     if not ok then Say("Error: " .. tostring(err)) end
@@ -5018,3 +5802,4 @@ if LoopInGameThreadWithDelay then
 else
     Log("[DISCOVERY] LoopInGameThreadWithDelay is missing; no placement preview")
 end
+
