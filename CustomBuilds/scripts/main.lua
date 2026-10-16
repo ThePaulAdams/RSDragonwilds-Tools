@@ -713,15 +713,23 @@ local function SpawnModel(meshPath, r, movable)
     a = gs:FinishSpawningActor(a, xf, 1)
     if not Valid(a) then return nil, "finish spawn failed" end
     pcall(function()
-        if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end
         local c = a.StaticMeshComponent
         if Valid(c) then
             c:SetMobility(2)
             c:SetStaticMesh(mesh)
-            c.bNeverDistanceCull = true
-            c.bAllowCullDistanceVolume = false
-            c.LDMaxDrawDistance = 0.0
-            c.CachedMaxDrawDistance = 0.0
+            if movable then
+                if Valid(a.RootComponent) then a.RootComponent:SetMobility(2) end
+                c.bNeverDistanceCull = true
+                c.bAllowCullDistanceVolume = false
+                c.LDMaxDrawDistance = 0.0
+                c.CachedMaxDrawDistance = 0.0
+            else
+                c.bNeverDistanceCull = false
+                c.LDMaxDrawDistance = 35000.0
+                c.CachedMaxDrawDistance = 35000.0
+                c:SetMobility(0)
+                if Valid(a.RootComponent) then a.RootComponent:SetMobility(0) end
+            end
         end
     end)
     return a
@@ -1016,6 +1024,11 @@ local function Restore(at)
             end
         end
         if removed > 0 then SavePlaced() end
+        if spawned > 0 then
+            Later(2000, function()
+                if BatchPlacedMeshes then pcall(BatchPlacedMeshes, 3) end
+            end)
+        end
     end)
     IsRestoring = false
     if not ok then Log("Restore error: " .. tostring(err)) end

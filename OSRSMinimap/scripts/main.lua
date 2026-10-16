@@ -2058,10 +2058,10 @@ local function RunMinimapTick()
 end
 
 if LoopInGameThreadWithDelay then
-    LoopInGameThreadWithDelay(50, RunMinimapTick)
+    LoopInGameThreadWithDelay(100, RunMinimapTick)
 else
     local function NextTick()
-        ExecuteWithDelay(50, function()
+        ExecuteWithDelay(100, function()
             ExecuteInGameThread(function()
                 RunMinimapTick()
                 NextTick()
