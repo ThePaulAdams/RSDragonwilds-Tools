@@ -515,6 +515,9 @@ local function ResolveNPCBlueprint(path)
     if not path then return nil end
     if NPCMeshToBlueprint[path] then return NPCMeshToBlueprint[path] end
     local lower = path:lower()
+    local isCharacterAsset = lower:find("/skeleton/npc/") or lower:find("sk_") or lower:find("bp_npc_") or lower:find("_character")
+    if not isCharacterAsset then return nil end
+
     for k, v in pairs(NPCMeshToBlueprint) do
         if k:lower() == lower or k:lower():find(lower, 1, true) then return v end
     end
@@ -594,6 +597,19 @@ local function SpawnNPC(bpPath, r, movable, origMesh)
             pcall(function() a.Tags:Add("BaseCompanion") end)
 
             a = gs:FinishSpawningActor(a, xf, 0)
+            if Valid(a) then
+                pcall(function()
+                    if Valid(a.Mesh) then
+                        a.Mesh:SetVisibility(true, true)
+                        a.Mesh:SetHiddenInGame(false, false)
+                        local fbMesh = NPCBlueprintToFallbackMesh[bpPath] or origMesh or r.Mesh
+                        if fbMesh and not Valid(a.Mesh.SkeletalMeshAsset) then
+                            local sk = LoadMesh(fbMesh)
+                            if Valid(sk) then a.Mesh:SetSkeletalMeshAsset(sk) end
+                        end
+                    end
+                end)
+            end
         end
     end
 
@@ -992,7 +1008,10 @@ local function Restore(at)
         pcall(function() CleanupCompanions(true) end)
 
         for id, r in pairs(Placed) do
-            local exists = id:find("^m") and true or PieceExists(id)
+            local exists = true
+            if at and not id:find("^m") then
+                exists = PieceExists(id)
+            end
             if exists == false and at and Dist(at, r) <= 300 then
                 DestroyProp(id)
                 Placed[id] = nil
@@ -1079,7 +1098,7 @@ end
 -- Live sync: when placed.txt is changed by something else (e.g. the ashenfallen.com
 -- base builder writing into this folder), make the world match it. Checked every
 -- couple of seconds from the ghost loop; nothing happens while the file is unchanged.
-local SyncAt = 0
+local SyncState = { At = 0, World = nil, Loc = nil, InvAt = 0 }
 local function SyncPlaced()
     local curWorld = WorldKey()
     if not curWorld then return end
@@ -1097,13 +1116,19 @@ local function SyncPlaced()
         return
     end
     local _, pawn = Pawn()
-    if pawn then
-        local loc = pawn:K2_GetActorLocation()
+    if not Valid(pawn) then return end
+
+    local loc = pawn:K2_GetActorLocation()
+    if loc then
         local _, _, rot = CameraView()
         local yaw = rot and rot.Yaw or 0
-        WriteText("player.txt", string.format("%.2f|%.2f|%.2f|%.2f\n", loc.X, loc.Y, loc.Z, yaw))
+        local pStr = string.format("%.2f|%.2f|%.2f|%.2f\n", loc.X, loc.Y, loc.Z, yaw)
+        if pStr ~= SyncState.Loc then
+            SyncState.Loc = pStr
+            WriteText("player.txt", pStr)
+        end
 
-        -- Live world & save tracking
+        -- Live world & save tracking: write only when world or slot changes
         pcall(function()
             local pc = GetPC()
             if Valid(pc) then
@@ -1114,47 +1139,55 @@ local function SyncPlaced()
                         local wName = ws.WorldName and ws.WorldName:ToString() or "Wilds"
                         local sName = ws.WorldSlotName and ws.WorldSlotName:ToString() or wName
                         local oName = ws.OwnerName and ws.OwnerName:ToString() or "Player"
-                        WriteText("world.txt", string.format("%s|%s|%s\n", wName, sName, oName))
-                        pcall(function()
-                            local curWJ = ReadFile(ModDir .. "worlds.json")
-                            local wData = curWJ and JsonDecode and JsonDecode(curWJ) or { activeWorld = wName, activeSlot = sName, activeOwner = oName, worlds = {} }
-                            wData.activeWorld = wName
-                            wData.activeSlot = sName
-                            wData.activeOwner = oName
-                            if not wData.worlds then wData.worlds = {} end
-                            local found = false
-                            for _, item in ipairs(wData.worlds) do
-                                if item.name == wName then
-                                    found = true
-                                    item.slot = sName
-                                    item.owner = oName
-                                    item.lastSaved = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                                    break
+                        local wKey = string.format("%s|%s|%s", wName, sName, oName)
+                        if wKey ~= SyncState.World then
+                            SyncState.World = wKey
+                            WriteText("world.txt", wKey .. "\n")
+                            pcall(function()
+                                local curWJ = ReadFile(ModDir .. "worlds.json")
+                                local wData = curWJ and JsonDecode and JsonDecode(curWJ) or { activeWorld = wName, activeSlot = sName, activeOwner = oName, worlds = {} }
+                                wData.activeWorld = wName
+                                wData.activeSlot = sName
+                                wData.activeOwner = oName
+                                if not wData.worlds then wData.worlds = {} end
+                                local found = false
+                                for _, item in ipairs(wData.worlds) do
+                                    if item.name == wName then
+                                        found = true
+                                        item.slot = sName
+                                        item.owner = oName
+                                        item.lastSaved = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                                        break
+                                    end
                                 end
-                            end
-                            if not found then
-                                table.insert(wData.worlds, {
-                                    name = wName,
-                                    slot = sName,
-                                    owner = oName,
-                                    lastSaved = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                                })
-                            end
-                            local entries = {}
-                            for _, item in ipairs(wData.worlds) do
-                                table.insert(entries, string.format('    {\n      "name": %q,\n      "slot": %q,\n      "owner": %q,\n      "lastSaved": %q\n    }', item.name or "", item.slot or "", item.owner or "", item.lastSaved or ""))
-                            end
-                            local outJson = string.format('{\n  "activeWorld": %q,\n  "activeSlot": %q,\n  "activeOwner": %q,\n  "worlds": [\n%s\n  ]\n}\n',
-                                wData.activeWorld, wData.activeSlot, wData.activeOwner, table.concat(entries, ",\n"))
-                            WriteText("worlds.json", outJson)
-                        end)
+                                if not found then
+                                    table.insert(wData.worlds, {
+                                        name = wName,
+                                        slot = sName,
+                                        owner = oName,
+                                        lastSaved = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                                    })
+                                end
+                                local entries = {}
+                                for _, item in ipairs(wData.worlds) do
+                                    table.insert(entries, string.format('    {\n      "name": %q,\n      "slot": %q,\n      "owner": %q,\n      "lastSaved": %q\n    }', item.name or "", item.slot or "", item.owner or "", item.lastSaved or ""))
+                                end
+                                local outJson = string.format('{\n  "activeWorld": %q,\n  "activeSlot": %q,\n  "activeOwner": %q,\n  "worlds": [\n%s\n  ]\n}\n',
+                                    wData.activeWorld, wData.activeSlot, wData.activeOwner, table.concat(entries, ",\n"))
+                                WriteText("worlds.json", outJson)
+                            end)
+                        end
                     end
                 end
             end
         end)
     end
-    if LoadQuests then pcall(LoadQuests) end
-    if SyncInventory then pcall(SyncInventory) end
+
+    local now = os.clock()
+    if now - SyncState.InvAt > 5 then
+        SyncState.InvAt = now
+        if SyncInventory then pcall(SyncInventory) end
+    end
     local text = ReadFile(ModDir .. "placed.txt")
     if not text or text == LastText then return end
     LastText = text
@@ -1699,11 +1732,13 @@ local PortalCooldownUntil = 0
 local LastTeleportedPortal = nil
 
 local function CheckPortals()
+    local now = os.clock()
+    if now - (SyncState.PortalAt or 0) < 0.25 then return end
+    SyncState.PortalAt = now
     if not Placed or not CheckWorld() then return end
     local pc, pawn = Pawn()
     if not Valid(pawn) or not Valid(pc) or IsGamePaused(pc) then return end
 
-    local now = os.clock()
     local pLoc = pawn:K2_GetActorLocation()
     if not pLoc then return end
 
@@ -1864,10 +1899,12 @@ local GhostLoop = nil
 local function GhostStep()
     local pc = GetPC()
     if not Valid(pc) then return end
+    local _, pawn = Pawn()
+    if not Valid(pawn) then return end
 
     local now = os.clock()
-    if now - SyncAt > 2 then
-        SyncAt = now
+    if now - (SyncState.At or 0) > 2 then
+        SyncState.At = now
         if CheckWorld() then
             local ok, err = pcall(SyncPlaced)
             if not ok then Log("Sync: " .. tostring(err)) end
@@ -1981,8 +2018,9 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self)
         local pc = self:get()
         if Valid(pc) and pc:IsLocalPlayerController() then MyPC = pc end
     end)
-    CheckWorld()
-    Later(5000, function()
+    -- Defer all world checks and prop restoration so ClientRestart UFunction finishes immediately
+    Later(4000, function()
+        CheckWorld()
         StartHideTimer()
         if Skin then StartGhost() end
         -- Props from a previous world are no longer valid, so Restore respawns them;
