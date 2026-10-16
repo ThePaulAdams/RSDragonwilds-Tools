@@ -1914,7 +1914,7 @@ local WasPaused = false
 local function UpdateMinimap()
     local PC = UEHelpers.GetPlayerController()
     local paused = PC and IsGamePaused(PC)
-    if (not paused and UpdateTick % 40 == 0) or (paused and UpdateTick % 600 == 0) then
+    if (not paused and UpdateTick % 12 == 0) or (paused and UpdateTick % 60 == 0) then
         Log(string.format("[HEARTBEAT] PC=%s, Paused=%s, Widget=%s",
             tostring(PC and PC:IsValid()),
             tostring(paused),
@@ -1929,9 +1929,9 @@ local function UpdateMinimap()
 
     if WasPaused then
         WasPaused = false
-        NextAiScanTick = UpdateTick + 30
-        NextResourceScanTick = UpdateTick + 50
-        NextLandmarkScanTick = UpdateTick + 70
+        NextAiScanTick = UpdateTick + 1
+        NextResourceScanTick = UpdateTick + 2
+        NextLandmarkScanTick = UpdateTick + 3
         Log("[PAUSE] Resumed from pause cleanly. Staggered background scans.")
     end
 
@@ -1949,7 +1949,7 @@ local function UpdateMinimap()
     local address = Pawn:GetAddress()
     if ReadyPawnAddress ~= address then
         ReadyPawnAddress = address
-        ReadyAfterTick = UpdateTick + 100 -- 5s delay
+        ReadyAfterTick = UpdateTick + 1 -- 5s delay
         TrackedResourceActors = {}
         TrackedAiActors = {}
         TrackedLandmarkActors = {}
@@ -1960,9 +1960,9 @@ local function UpdateMinimap()
         if official and official:IsValid() and official.ForgetDestroyedIcons then
             pcall(function() official:ForgetDestroyedIcons() end)
         end
-        NextResourceScanTick = ReadyAfterTick + 100
-        NextAiScanTick = ReadyAfterTick + 60
-        NextLandmarkScanTick = ReadyAfterTick + 80
+        NextResourceScanTick = ReadyAfterTick + 2
+        NextAiScanTick = ReadyAfterTick + 1
+        NextLandmarkScanTick = ReadyAfterTick + 3
     end
     if UpdateTick < ReadyAfterTick then return end
 
@@ -1971,7 +1971,7 @@ local function UpdateMinimap()
         or not CurrentPawn or not CurrentPawn:IsValid() or CurrentPawn:GetAddress() ~= Pawn:GetAddress())
     if ownerChanged or not MinimapWidget or not MinimapWidget:IsValid() then
         if UpdateTick < NextInitTick then return end
-        NextInitTick = UpdateTick + 20
+        NextInitTick = UpdateTick + 1
         if ownerChanged then
             CachedOfficialMap = nil
             NextOfficialSearchTick = 0
@@ -2012,21 +2012,21 @@ local function UpdateMinimap()
     CheckMainMapVisibility()
     UpdateMinimapTerrain(PC)
 
-    -- Live AI Monster / NPC Radar Scan every 2 seconds
+    -- Live AI Monster / NPC Radar Scan every 5 seconds (1 tick)
     if AiRadarEnabled and ResourceIconsEnabled and UpdateTick >= NextAiScanTick then
-        NextAiScanTick = UpdateTick + 40
+        NextAiScanTick = UpdateTick + 1
         pcall(ScanAndRegisterAI)
     end
 
-    -- Background Resource Scan every 5 seconds (local proximity only, CDOs filtered)
+    -- Background Resource Scan every 10 seconds (2 ticks)
     if ResourceIconsEnabled and UpdateTick >= NextResourceScanTick then
-        NextResourceScanTick = UpdateTick + 100
+        NextResourceScanTick = UpdateTick + 2
         pcall(ScanAndRegisterResources)
     end
 
-    -- Live Landmark Scan (Lodestones & Gravestones) every 5 seconds
+    -- Live Landmark Scan (Lodestones & Gravestones) every 15 seconds (3 ticks)
     if LandmarkIconsEnabled and UpdateTick >= NextLandmarkScanTick then
-        NextLandmarkScanTick = UpdateTick + 100
+        NextLandmarkScanTick = UpdateTick + 3
         pcall(ScanAndRegisterLandmarks)
     end
 end
@@ -2058,10 +2058,10 @@ local function RunMinimapTick()
 end
 
 if LoopInGameThreadWithDelay then
-    LoopInGameThreadWithDelay(100, RunMinimapTick)
+    LoopInGameThreadWithDelay(5000, RunMinimapTick)
 else
     local function NextTick()
-        ExecuteWithDelay(100, function()
+        ExecuteWithDelay(5000, function()
             ExecuteInGameThread(function()
                 RunMinimapTick()
                 NextTick()
